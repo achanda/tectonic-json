@@ -899,6 +899,10 @@ function buildSchemaDrivenClarificationSteps(schema, resolvedClarifications) {
       question: `If range operations are used, what range_format should apply (${meta.rangeFormats.join(', ')})?`,
       assumedValue: meta.rangeFormats[0],
       reason: 'Range format options are defined in schema enum.'
+      ,
+      extra: `Range format defaults:
+- ${meta.rangeFormats[0]} (default)
+${meta.rangeFormats.slice(1).map((v) => `- ${v}`).join('\n')}`
     });
   }
 
@@ -1111,8 +1115,20 @@ function inferExtraForField(name, meta) {
   if (name === 'selection' || name === 'selectivity' || name === 'op_count') {
     return buildDistributionHelp(meta);
   }
+  if (name === 'range_format' && meta.rangeFormats.length) {
+    return `Range format defaults:
+- ${meta.rangeFormats[0]} (default)
+${meta.rangeFormats.slice(1).map((v) => `- ${v}`).join('\n')}`;
+  }
   if (name === 'key' || name === 'val') {
-    return `Valid StringExpr variants from schema: ${meta.stringExprTypes.join(', ')}`;
+    const defaultsByType = {
+      uniform: 'uniform(len=20, character_set=alphanumeric)',
+      weighted: 'weighted([{weight:1,value:"user"},{weight:1,value:"post"}])',
+      segmented: 'segmented(separator=":", segments=["usertable", "user", uniform(len=20)])',
+      hot_range: 'hot_range(len=32, amount=100, probability=0.8)'
+    };
+    const lines = meta.stringExprTypes.map((t) => `- ${defaultsByType[t] || `${t}(schema-compatible defaults)`}`);
+    return `StringExpr defaults by variant:\n${lines.join('\n')}`;
   }
   return '';
 }
