@@ -1,0 +1,12 @@
+name = "json-schema-chat"
+main = "src/index.js"
+compatibility_date = "2025-01-15"
+
+[observability]
+enabled = true
+
+[vars]
+AI_NAME = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+
+[ai]
+binding = "AI"
