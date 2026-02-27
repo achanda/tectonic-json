@@ -277,7 +277,81 @@ const HTML = `<!DOCTYPE html>
       padding: 16px;
       border: 1px solid var(--border);
     }
-    
+
+    .section-viewer {
+      display: none;
+      flex: 1;
+      overflow: auto;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      gap: 8px;
+      flex-direction: column;
+    }
+
+    .section-viewer.show {
+      display: flex;
+    }
+
+    .section-item {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      overflow: hidden;
+    }
+
+    .section-header {
+      width: 100%;
+      cursor: pointer;
+      background: rgba(88, 166, 255, 0.08);
+      border: 0;
+      text-align: left;
+      padding: 10px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      border-bottom: 1px solid transparent;
+    }
+
+    .section-header::before {
+      content: '▶ ';
+      color: var(--accent);
+      margin-right: 4px;
+    }
+
+    .section-item.open .section-header {
+      border-bottom-color: var(--border);
+    }
+
+    .section-item.open .section-header::before {
+      content: '▼ ';
+    }
+
+    .section-body {
+      display: none;
+    }
+
+    .section-item.open .section-body {
+      display: block;
+    }
+
+    .section-body pre {
+      margin: 0;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--text);
+    }
+
+    .section-hint {
+      font-size: 11px;
+      color: var(--text-dim);
+      padding: 0 2px;
+    }
+
     .json-actions {
       display: flex;
       gap: 8px;
@@ -335,18 +409,18 @@ const HTML = `<!DOCTYPE html>
     <h1>JSON Schema Chat</h1>
   </header>
   <main>
-    <div class="panel left-panel">
-      <div class="panel-header">
-        <span class="panel-title">JSON Schema</span>
-        <span class="status status-pending" id="schemaStatus">
-          <span class="status-dot"></span>
-          <span id="schemaStatusText">Fixed schema</span>
-        </span>
-      </div>
-      <div class="panel-body">
-        <textarea id="schemaInput" spellcheck="false" readonly></textarea>
-      </div>
-    </div>
+	    <div class="panel left-panel">
+	      <div class="panel-header">
+	        <span class="panel-title">JSON Schema</span>
+	        <span class="status status-pending" id="schemaStatus">
+	          <span class="status-dot"></span>
+	          <span id="schemaStatusText">Fixed schema</span>
+	        </span>
+	      </div>
+	      <div class="panel-body">
+	        <textarea id="schemaInput" spellcheck="false" readonly></textarea>
+	      </div>
+	    </div>
     <div class="right-panel" style="display: flex; flex-direction: column; gap: 16px;">
       <div class="panel" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
         <div class="panel-header">
@@ -382,12 +456,14 @@ const HTML = `<!DOCTYPE html>
             <button class="btn btn-ghost" id="copyBtn">Copy</button>
           </div>
         </div>
-        <div class="panel-body">
-          <div class="json-output">
-            <textarea id="jsonOutput" readonly placeholder="Generated JSON will appear here..."></textarea>
-          </div>
-        </div>
-      </div>
+	        <div class="panel-body">
+	          <div class="json-output">
+              <div id="sectionViewer" class="section-viewer"></div>
+              <div id="sectionHint" class="section-hint" style="display:none;">Click a section header to expand/collapse.</div>
+	            <textarea id="jsonOutput" readonly placeholder="Generated JSON will appear here..."></textarea>
+	          </div>
+	        </div>
+	      </div>
     </div>
   </main>
 
@@ -403,6 +479,8 @@ const HTML = `<!DOCTYPE html>
     const operationChips = document.getElementById('operationChips');
     const chatMessages = document.getElementById('chatMessages');
     const jsonOutput = document.getElementById('jsonOutput');
+    const sectionViewer = document.getElementById('sectionViewer');
+    const sectionHint = document.getElementById('sectionHint');
     const validateBtn = document.getElementById('validateBtn');
     const copyBtn = document.getElementById('copyBtn');
     const validationResult = document.getElementById('validationResult');
@@ -626,9 +704,11 @@ const HTML = `<!DOCTYPE html>
 
           try {
             const json = JSON.parse(data.response);
-            jsonOutput.value = JSON.stringify(json, null, 2);
+            renderGeneratedJson(json);
             validationResult.className = 'validation-result';
           } catch (e) {
+            sectionViewer.classList.remove('show');
+            jsonOutput.style.display = 'block';
             jsonOutput.value = data.response;
           }
         }
@@ -652,6 +732,78 @@ const HTML = `<!DOCTYPE html>
       chatMessages.appendChild(div);
       chatMessages.scrollTop = chatMessages.scrollHeight;
       return div;
+    }
+
+    function renderGeneratedJson(json) {
+      const pretty = JSON.stringify(json, null, 2);
+      jsonOutput.value = pretty;
+
+      if (!json || typeof json !== 'object') {
+        sectionViewer.classList.remove('show');
+        sectionViewer.innerHTML = '';
+        sectionHint.style.display = 'none';
+        jsonOutput.style.display = 'block';
+        return;
+      }
+
+      sectionViewer.innerHTML = '';
+      if (Array.isArray(json.sections)) {
+        json.sections.forEach((section, index) => {
+          const item = document.createElement('div');
+          item.className = 'section-item' + (index === 0 ? ' open' : '');
+
+          const header = document.createElement('button');
+          header.type = 'button';
+          header.className = 'section-header';
+          const groups = Array.isArray(section?.groups) ? section.groups.length : 0;
+          header.textContent = 'Section ' + (index + 1) + ' (' + groups + ' group' + (groups === 1 ? '' : 's') + ')';
+
+          const body = document.createElement('div');
+          body.className = 'section-body';
+          const pre = document.createElement('pre');
+          pre.textContent = JSON.stringify(section, null, 2);
+
+          header.addEventListener('click', () => {
+            item.classList.toggle('open');
+          });
+
+          body.appendChild(pre);
+          item.appendChild(header);
+          item.appendChild(body);
+          sectionViewer.appendChild(item);
+        });
+        sectionHint.textContent = 'Click a section header to expand/collapse.';
+      } else {
+        const keys = Object.keys(json);
+        keys.forEach((key, index) => {
+          const item = document.createElement('div');
+          item.className = 'section-item' + (index === 0 ? ' open' : '');
+
+          const header = document.createElement('button');
+          header.type = 'button';
+          header.className = 'section-header';
+          header.textContent = key;
+
+          const body = document.createElement('div');
+          body.className = 'section-body';
+          const pre = document.createElement('pre');
+          pre.textContent = JSON.stringify(json[key], null, 2);
+
+          header.addEventListener('click', () => {
+            item.classList.toggle('open');
+          });
+
+          body.appendChild(pre);
+          item.appendChild(header);
+          item.appendChild(body);
+          sectionViewer.appendChild(item);
+        });
+        sectionHint.textContent = 'Click a key header to expand/collapse.';
+      }
+
+      sectionViewer.classList.add('show');
+      sectionHint.style.display = 'block';
+      jsonOutput.style.display = 'none';
     }
 
     function getCurrentAnswer() {
@@ -951,8 +1103,9 @@ Rules:
 4. You MUST use the resolved clarifications exactly as provided in the "Resolved clarifications" message.
 5. Treat user replies after clarifying questions as overrides to assumptions.
 6. If the user says "use assumption" (or "use assumptions"), apply the assumption from the prior assistant clarification message.
-7. If the user asks for something that cannot be represented by the schema, return empty JSON object {} or the closest valid representation
-8. Never wrap the JSON in code blocks or markdown`
+7. For any op_count_* clarification value using constant(N), output op_count as numeric literal N (not a distribution object).
+8. If the user asks for something that cannot be represented by the schema, return empty JSON object {} or the closest valid representation
+9. Never wrap the JSON in code blocks or markdown`
       : `You are a JSON generator. Given user requests, respond with valid JSON.
 
 Rules:
@@ -972,7 +1125,6 @@ Rules:
     ];
 
     let attemptMessages = baseGenerationMessages;
-    let didSchemaRepair = false;
     let lastError = 'Model returned invalid JSON (often due to truncation). Please try a shorter request and retry.';
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -989,20 +1141,8 @@ Rules:
       try {
         const parsedJson = JSON.parse(responseText);
 
-        if (parsedSchema && !didSchemaRepair && attempt < maxAttempts) {
-          // One repair pass to improve conformance on complex schemas.
-          didSchemaRepair = true;
-          attemptMessages = [
-            ...baseGenerationMessages,
-            {
-              role: 'user',
-              content: 'Regenerate the JSON and self-check it strictly against the provided response schema before returning. Return JSON only.'
-            }
-          ];
-          continue;
-        }
-
-        return Response.json({ mode: 'json', response: JSON.stringify(parsedJson, null, 2) });
+        const normalizedJson = applyResolvedConstantsToOpCounts(parsedJson, resolvedClarifications);
+        return Response.json({ mode: 'json', response: JSON.stringify(normalizedJson, null, 2) });
       } catch {
         lastError = 'Model returned invalid JSON. Regenerating once more.';
         if (attempt < maxAttempts) {
@@ -1063,6 +1203,43 @@ function extractClarificationAnswers(conversation) {
   return resolved;
 }
 
+function applyResolvedConstantsToOpCounts(jsonDoc, resolvedClarifications) {
+  const constantsByOp = {};
+  for (const [key, value] of Object.entries(resolvedClarifications || {})) {
+    if (!key.startsWith('op_count_') || typeof value !== 'string') {
+      continue;
+    }
+    const op = key.slice('op_count_'.length);
+    const match = value.trim().match(/^constant\(\s*([-+]?\d*\.?\d+(?:e[-+]?\d+)?)\s*\)$/i);
+    if (!match) {
+      continue;
+    }
+    const parsed = Number(match[1]);
+    if (Number.isFinite(parsed)) {
+      constantsByOp[op] = parsed;
+    }
+  }
+
+  if (!Object.keys(constantsByOp).length) {
+    return jsonDoc;
+  }
+
+  const sections = Array.isArray(jsonDoc?.sections) ? jsonDoc.sections : [];
+  for (const section of sections) {
+    const groups = Array.isArray(section?.groups) ? section.groups : [];
+    for (const group of groups) {
+      for (const [op, constantValue] of Object.entries(constantsByOp)) {
+        const opConfig = group?.[op];
+        if (opConfig && typeof opConfig === 'object') {
+          opConfig.op_count = constantValue;
+        }
+      }
+    }
+  }
+
+  return jsonDoc;
+}
+
 function buildSchemaDrivenClarificationSteps(schema, resolvedClarifications) {
   const meta = extractSchemaMeta(schema);
   const selectedOps = parseOperationsAnswer(
@@ -1112,7 +1289,7 @@ function buildSchemaDrivenClarificationSteps(schema, resolvedClarifications) {
     }
   }
 
-  if (meta.rangeFormats.length) {
+  if (meta.rangeFormats.length && selectedOps.some((op) => op === 'range_queries' || op === 'range_deletes')) {
     steps.push({
       assumptionKey: 'range_format_global',
       question: `If range operations are used, what range_format should apply (${meta.rangeFormats.join(', ')})?`,
@@ -1237,7 +1414,7 @@ function getOperationFieldInfo(schema, op, meta) {
   const fields = [];
   const required = Array.isArray(opSchema.required) ? opSchema.required : [];
   const props = opSchema.properties || {};
-  const candidateNames = [...new Set([...required, ...Object.keys(props)])];
+  const candidateNames = [...new Set(required)];
 
   for (const name of candidateNames) {
     if (name === 'character_set') {
