@@ -197,10 +197,55 @@ const HTML = `<!DOCTYPE html>
     
     .chat-input-area {
       display: flex;
+      flex-direction: column;
       gap: 10px;
       padding: 16px;
       border-top: 1px solid var(--border);
       flex-shrink: 0;
+    }
+
+    .answer-controls {
+      display: none;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .answer-controls.show {
+      display: flex;
+    }
+
+    .answer-select {
+      flex: 1;
+      padding: 10px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 14px;
+      outline: none;
+    }
+
+    .operation-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .op-chip {
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-dim);
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .op-chip.active {
+      border-color: var(--accent);
+      color: var(--text);
+      background: rgba(88, 166, 255, 0.12);
     }
     
     .chat-input {
@@ -316,8 +361,16 @@ const HTML = `<!DOCTYPE html>
           </div>
         </div>
         <div class="chat-input-area">
-	          <input type="text" class="chat-input" id="chatInput" value="generate a schema" placeholder="e.g., Create a user profile with name, email, and age...">
-          <button class="btn btn-primary" id="sendBtn">Send</button>
+          <div class="answer-controls" id="answerControls">
+            <select id="answerSelect" class="answer-select"></select>
+          </div>
+          <div class="answer-controls" id="operationControls">
+            <div class="operation-chips" id="operationChips"></div>
+          </div>
+          <div style="display: flex; gap: 10px;">
+            <input type="text" class="chat-input" id="chatInput" value="generate a schema" placeholder="e.g., Create a user profile with name, email, and age...">
+            <button class="btn btn-primary" id="sendBtn">Send</button>
+          </div>
         </div>
       </div>
       <div class="panel" style="height: 280px; flex-shrink: 0;">
@@ -344,6 +397,10 @@ const HTML = `<!DOCTYPE html>
     const schemaStatusText = document.getElementById('schemaStatusText');
     const chatInput = document.getElementById('chatInput');
     const sendBtn = document.getElementById('sendBtn');
+    const answerControls = document.getElementById('answerControls');
+    const answerSelect = document.getElementById('answerSelect');
+    const operationControls = document.getElementById('operationControls');
+    const operationChips = document.getElementById('operationChips');
     const chatMessages = document.getElementById('chatMessages');
     const jsonOutput = document.getElementById('jsonOutput');
     const validateBtn = document.getElementById('validateBtn');
@@ -352,6 +409,8 @@ const HTML = `<!DOCTYPE html>
 
     let schema = null;
     let chatHistory = [];
+    let currentQuestionKey = null;
+    let selectedOperations = new Set();
 
     const s = "https://json-schema.org/draft/2020-12/schema";
     const defaultSchema = {
@@ -517,12 +576,13 @@ const HTML = `<!DOCTYPE html>
     });
 
     async function sendMessage() {
-      const message = chatInput.value.trim();
+      const message = getCurrentAnswer();
       if (!message) return;
 
       chatInput.value = '';
       addMessage(message, 'user');
       chatHistory.push({ role: 'user', content: message });
+      clearAnswerOptions();
 
       const loading = addMessage('Thinking...', 'assistant', true);
 
@@ -551,14 +611,17 @@ const HTML = `<!DOCTYPE html>
           if (data.mode === 'question') {
             addMessage(data.response, 'assistant');
             chatHistory.push({ role: 'assistant', content: data.response });
+            setAnswerOptions(data.options || null, data.questionKey || null);
             return;
           }
 
           if (data.mode === 'json') {
             chatHistory.push({ role: 'assistant', content: '[JSON generated]' });
+            clearAnswerOptions();
           } else {
             addMessage(data.response, 'assistant');
             chatHistory.push({ role: 'assistant', content: data.response });
+            clearAnswerOptions();
           }
 
           try {
@@ -589,6 +652,154 @@ const HTML = `<!DOCTYPE html>
       chatMessages.appendChild(div);
       chatMessages.scrollTop = chatMessages.scrollHeight;
       return div;
+    }
+
+    function getCurrentAnswer() {
+      if (currentQuestionKey === 'operations' && operationControls.classList.contains('show')) {
+        const customSelected = selectedOperations.has('__custom__');
+        const ops = [...selectedOperations].filter((v) => v !== '__custom__');
+        if (ops.length > 0) {
+          return ops.join(' + ');
+        }
+        if (customSelected) {
+          return chatInput.value.trim();
+        }
+        return chatInput.value.trim();
+      }
+      if (!answerControls.classList.contains('show')) {
+        return chatInput.value.trim();
+      }
+      if (isParametricQuestionKey(currentQuestionKey)) {
+        const typed = chatInput.value.trim();
+        if (typed) return typed;
+      }
+      const selected = answerSelect.value;
+      if (!selected || selected === '__custom__') {
+        return chatInput.value.trim();
+      }
+      return selected.trim();
+    }
+
+    function setAnswerOptions(options, questionKey) {
+      currentQuestionKey = questionKey || null;
+      if (!Array.isArray(options) || options.length === 0) {
+        clearAnswerOptions();
+        return;
+      }
+      if (currentQuestionKey === 'operations') {
+        setOperationOptions(options);
+        return;
+      }
+      answerSelect.innerHTML = '';
+      for (const option of options) {
+        const el = document.createElement('option');
+        el.value = option;
+        el.textContent = option;
+        answerSelect.appendChild(el);
+      }
+      const custom = document.createElement('option');
+      custom.value = '__custom__';
+      custom.textContent = 'Custom input...';
+      answerSelect.appendChild(custom);
+
+      answerControls.classList.add('show');
+      answerSelect.value = options[0];
+      if (isParametricQuestionKey(currentQuestionKey)) {
+        chatInput.disabled = false;
+        chatInput.value = options[0] || '';
+        chatInput.placeholder = 'Edit parameters, or pick another preset...';
+      } else {
+        chatInput.value = '';
+        chatInput.placeholder = 'Type a custom value or use dropdown...';
+        chatInput.disabled = true;
+      }
+    }
+
+    function setOperationOptions(options) {
+      operationChips.innerHTML = '';
+      selectedOperations = new Set();
+      options.forEach((op) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'op-chip';
+        btn.textContent = op;
+        btn.dataset.value = op;
+        btn.addEventListener('click', () => {
+          if (selectedOperations.has(op)) {
+            selectedOperations.delete(op);
+            btn.classList.remove('active');
+          } else {
+            selectedOperations.add(op);
+            btn.classList.add('active');
+          }
+        });
+        operationChips.appendChild(btn);
+      });
+
+      const customBtn = document.createElement('button');
+      customBtn.type = 'button';
+      customBtn.className = 'op-chip';
+      customBtn.textContent = 'Custom input...';
+      customBtn.dataset.value = '__custom__';
+      customBtn.addEventListener('click', () => {
+        if (selectedOperations.has('__custom__')) {
+          selectedOperations.delete('__custom__');
+          customBtn.classList.remove('active');
+          chatInput.disabled = true;
+          chatInput.value = '';
+        } else {
+          selectedOperations.add('__custom__');
+          customBtn.classList.add('active');
+          chatInput.disabled = false;
+          chatInput.focus();
+        }
+      });
+      operationChips.appendChild(customBtn);
+
+      operationControls.classList.add('show');
+      answerControls.classList.remove('show');
+      chatInput.disabled = true;
+      chatInput.value = '';
+      chatInput.placeholder = 'Select one or more operations, or choose Custom input...';
+    }
+
+    function clearAnswerOptions() {
+      currentQuestionKey = null;
+      answerControls.classList.remove('show');
+      answerSelect.innerHTML = '';
+      operationControls.classList.remove('show');
+      operationChips.innerHTML = '';
+      selectedOperations = new Set();
+      if (chatInput.disabled) {
+        chatInput.disabled = false;
+      }
+      if (!chatInput.value) {
+        chatInput.placeholder = 'e.g., Create a user profile with name, email, and age...';
+      }
+    }
+
+    answerSelect.addEventListener('change', () => {
+      const customSelected = answerSelect.value === '__custom__';
+      if (isParametricQuestionKey(currentQuestionKey)) {
+        chatInput.disabled = false;
+        if (!customSelected) {
+          chatInput.value = answerSelect.value;
+        }
+      } else {
+        chatInput.disabled = !customSelected;
+      }
+      if (customSelected) {
+        chatInput.focus();
+      } else {
+        if (!isParametricQuestionKey(currentQuestionKey)) {
+          chatInput.value = '';
+        }
+      }
+    });
+
+    function isParametricQuestionKey(key) {
+      return typeof key === 'string' &&
+        (key.startsWith('op_count_') || key.startsWith('selection_') || key.startsWith('selectivity_'));
     }
 
     copyBtn.addEventListener('click', () => {
@@ -721,7 +932,12 @@ Why: ${step.reason}`;
             responseText += `\n\n${step.extra}`;
           }
           responseText += '\n\nReply with your value to override, or say "use assumption".';
-          return Response.json({ mode: 'question', response: responseText });
+          return Response.json({
+            mode: 'question',
+            response: responseText,
+            questionKey: step.assumptionKey,
+            options: step.options || null
+          });
         }
       }
     }
@@ -861,7 +1077,8 @@ function buildSchemaDrivenClarificationSteps(schema, resolvedClarifications) {
       ? 'inserts + point_queries'
       : (meta.operations.join(' + ') || 'inserts + point_queries'),
     reason: 'Operation set determines which operation schemas are active.',
-    extra: 'You can list multiple operations separated by "+" or commas.'
+    extra: 'You can list multiple operations separated by "+" or commas.',
+    options: meta.operations
   });
 
   if (meta.characterSets.length) {
@@ -869,7 +1086,8 @@ function buildSchemaDrivenClarificationSteps(schema, resolvedClarifications) {
       assumptionKey: 'character_set',
       question: `Which character_set should keys use (${meta.characterSets.join(', ')})?`,
       assumedValue: meta.characterSets.includes('alphanumeric') ? 'alphanumeric' : meta.characterSets[0],
-      reason: 'This enum comes directly from schema character set choices.'
+      reason: 'This enum comes directly from schema character set choices.',
+      options: meta.characterSets
     });
   }
 
@@ -888,7 +1106,8 @@ function buildSchemaDrivenClarificationSteps(schema, resolvedClarifications) {
         question: `How should ${op}.${field.name} be set?`,
         assumedValue: field.defaultValue,
         reason: field.reason,
-        extra: field.extra
+        extra: field.extra,
+        options: field.options
       });
     }
   }
@@ -902,7 +1121,8 @@ function buildSchemaDrivenClarificationSteps(schema, resolvedClarifications) {
       ,
       extra: `Range format defaults:
 - ${meta.rangeFormats[0]} (default)
-${meta.rangeFormats.slice(1).map((v) => `- ${v}`).join('\n')}`
+${meta.rangeFormats.slice(1).map((v) => `- ${v}`).join('\n')}`,
+      options: meta.rangeFormats
     });
   }
 
@@ -1028,7 +1248,8 @@ function getOperationFieldInfo(schema, op, meta) {
       name,
       defaultValue: inferDefaultFromField(name, fieldSchema, meta),
       reason: inferReasonForField(name),
-      extra: inferExtraForField(name, meta)
+      extra: inferExtraForField(name, meta),
+      options: inferOptionsForField(name, fieldSchema, meta)
     });
   }
 
@@ -1131,6 +1352,41 @@ ${meta.rangeFormats.slice(1).map((v) => `- ${v}`).join('\n')}`;
     return `StringExpr defaults by variant:\n${lines.join('\n')}`;
   }
   return '';
+}
+
+function inferOptionsForField(name, fieldSchema, meta) {
+  if (name === 'range_format' && meta.rangeFormats.length) {
+    return meta.rangeFormats;
+  }
+  if (name === 'character_set' && meta.characterSets.length) {
+    return meta.characterSets;
+  }
+  if (name === 'selection' || name === 'selectivity' || name === 'op_count') {
+    return distributionTemplateOptions(meta, name);
+  }
+  if (name === 'key' || name === 'val') {
+    return meta.stringExprTypes;
+  }
+  if (Array.isArray(fieldSchema?.enum)) {
+    return fieldSchema.enum.map((v) => String(v));
+  }
+  return null;
+}
+
+function distributionTemplateOptions(meta, fieldName) {
+  const options = [];
+  if (fieldName === 'op_count') {
+    options.push('constant(500000)');
+  }
+  for (const d of meta.distributionTypes) {
+    const defaults = distributionDefaults(d.name);
+    const params = orderDistributionParams(d.params).map((p) => {
+      const v = defaults[p];
+      return v !== undefined ? `${p}=${v}` : `${p}=<value>`;
+    });
+    options.push(`${d.name}(${params.join(', ')})`);
+  }
+  return options;
 }
 
 function parseOperationsAnswer(value) {
