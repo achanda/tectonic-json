@@ -278,80 +278,6 @@ const HTML = `<!DOCTYPE html>
       border: 1px solid var(--border);
     }
 
-    .section-viewer {
-      display: none;
-      flex: 1;
-      overflow: auto;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px;
-      gap: 8px;
-      flex-direction: column;
-    }
-
-    .section-viewer.show {
-      display: flex;
-    }
-
-    .section-item {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.03);
-      overflow: hidden;
-    }
-
-    .section-header {
-      width: 100%;
-      cursor: pointer;
-      background: rgba(88, 166, 255, 0.08);
-      border: 0;
-      text-align: left;
-      padding: 10px 12px;
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--text);
-      border-bottom: 1px solid transparent;
-    }
-
-    .section-header::before {
-      content: '▶ ';
-      color: var(--accent);
-      margin-right: 4px;
-    }
-
-    .section-item.open .section-header {
-      border-bottom-color: var(--border);
-    }
-
-    .section-item.open .section-header::before {
-      content: '▼ ';
-    }
-
-    .section-body {
-      display: none;
-    }
-
-    .section-item.open .section-body {
-      display: block;
-    }
-
-    .section-body pre {
-      margin: 0;
-      padding: 12px;
-      white-space: pre-wrap;
-      word-break: break-word;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px;
-      color: var(--text);
-    }
-
-    .section-hint {
-      font-size: 11px;
-      color: var(--text-dim);
-      padding: 0 2px;
-    }
-
     .json-actions {
       display: flex;
       gap: 8px;
@@ -409,18 +335,18 @@ const HTML = `<!DOCTYPE html>
     <h1>JSON Schema Chat</h1>
   </header>
   <main>
-	    <div class="panel left-panel">
-	      <div class="panel-header">
-	        <span class="panel-title">JSON Schema</span>
-	        <span class="status status-pending" id="schemaStatus">
-	          <span class="status-dot"></span>
-	          <span id="schemaStatusText">Fixed schema</span>
-	        </span>
-	      </div>
-	      <div class="panel-body">
-	        <textarea id="schemaInput" spellcheck="false" readonly></textarea>
-	      </div>
-	    </div>
+    <div class="panel left-panel">
+      <div class="panel-header">
+        <span class="panel-title">JSON Schema</span>
+        <span class="status status-pending" id="schemaStatus">
+          <span class="status-dot"></span>
+          <span id="schemaStatusText">Fixed schema</span>
+        </span>
+      </div>
+      <div class="panel-body">
+        <textarea id="schemaInput" spellcheck="false" readonly></textarea>
+      </div>
+    </div>
     <div class="right-panel" style="display: flex; flex-direction: column; gap: 16px;">
       <div class="panel" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
         <div class="panel-header">
@@ -456,14 +382,12 @@ const HTML = `<!DOCTYPE html>
             <button class="btn btn-ghost" id="copyBtn">Copy</button>
           </div>
         </div>
-	        <div class="panel-body">
-	          <div class="json-output">
-              <div id="sectionViewer" class="section-viewer"></div>
-              <div id="sectionHint" class="section-hint" style="display:none;">Click a section header to expand/collapse.</div>
-	            <textarea id="jsonOutput" readonly placeholder="Generated JSON will appear here..."></textarea>
-	          </div>
-	        </div>
-	      </div>
+        <div class="panel-body">
+          <div class="json-output">
+            <textarea id="jsonOutput" readonly placeholder="Generated JSON will appear here..."></textarea>
+          </div>
+        </div>
+      </div>
     </div>
   </main>
 
@@ -479,8 +403,6 @@ const HTML = `<!DOCTYPE html>
     const operationChips = document.getElementById('operationChips');
     const chatMessages = document.getElementById('chatMessages');
     const jsonOutput = document.getElementById('jsonOutput');
-    const sectionViewer = document.getElementById('sectionViewer');
-    const sectionHint = document.getElementById('sectionHint');
     const validateBtn = document.getElementById('validateBtn');
     const copyBtn = document.getElementById('copyBtn');
     const validationResult = document.getElementById('validationResult');
@@ -488,13 +410,11 @@ const HTML = `<!DOCTYPE html>
     let schema = null;
     let chatHistory = [];
     let currentQuestionKey = null;
-    let currentQuestionNumber = null;
-    let currentQuestionTotal = null;
     let selectedOperations = new Set();
 
-    const s = "https://json-schema.org/draft/2020-12/schema";
+    const schemaDraftUrl = 'https://json-schema.org/draft/2020-12/schema';
     const defaultSchema = {
-      "$schema": s,
+      "$schema": schemaDraftUrl,
       "title": "WorkloadSpec",
       "type": "object",
       "properties": {
@@ -687,12 +607,7 @@ const HTML = `<!DOCTYPE html>
           if (data.mode === 'question') {
             addMessage(data.response, 'assistant');
             chatHistory.push({ role: 'assistant', content: data.response });
-            setAnswerOptions(
-              data.options || null,
-              data.questionKey || null,
-              data.questionNumber ?? null,
-              data.totalQuestions ?? null
-            );
+            setAnswerOptions(data.options || null, data.questionKey || null);
             return;
           }
 
@@ -709,8 +624,12 @@ const HTML = `<!DOCTYPE html>
             const json = JSON.parse(data.response);
             renderGeneratedJson(removeSectionsWrapper(json));
             validationResult.className = 'validation-result';
+            if (data.mode === 'json') {
+              const completionMessage = 'JSON generation is done.';
+              addMessage(completionMessage, 'assistant');
+              chatHistory.push({ role: 'assistant', content: completionMessage });
+            }
           } catch (e) {
-            sectionViewer.classList.remove('show');
             jsonOutput.style.display = 'block';
             jsonOutput.value = data.response;
           }
@@ -750,14 +669,14 @@ const HTML = `<!DOCTYPE html>
     function renderGeneratedJson(json) {
       const pretty = JSON.stringify(json, null, 2);
       jsonOutput.value = pretty;
-      sectionViewer.classList.remove('show');
-      sectionViewer.innerHTML = '';
-      sectionHint.style.display = 'none';
       jsonOutput.style.display = 'block';
     }
 
     function getCurrentAnswer() {
-      if (currentQuestionKey === 'operations' && operationControls.classList.contains('show')) {
+      if (
+        currentQuestionKey === 'operations' &&
+        operationControls.classList.contains('show')
+      ) {
         const customSelected = selectedOperations.has('__custom__');
         const ops = [...selectedOperations].filter((v) => v !== '__custom__');
         if (ops.length > 0) {
@@ -782,10 +701,8 @@ const HTML = `<!DOCTYPE html>
       return selected.trim();
     }
 
-    function setAnswerOptions(options, questionKey, questionNumber, totalQuestions) {
+    function setAnswerOptions(options, questionKey) {
       currentQuestionKey = questionKey || null;
-      currentQuestionNumber = Number.isInteger(questionNumber) ? questionNumber : null;
-      currentQuestionTotal = Number.isInteger(totalQuestions) ? totalQuestions : null;
       if (!Array.isArray(options) || options.length === 0) {
         hideAnswerOptionControls();
         return;
@@ -869,8 +786,6 @@ const HTML = `<!DOCTYPE html>
 
     function clearAnswerOptions() {
       currentQuestionKey = null;
-      currentQuestionNumber = null;
-      currentQuestionTotal = null;
       hideAnswerOptionControls();
       if (!chatInput.value) {
         chatInput.placeholder = 'e.g., Create a user profile with name, email, and age...';
@@ -908,8 +823,14 @@ const HTML = `<!DOCTYPE html>
     });
 
     function isParametricQuestionKey(key) {
-      return typeof key === 'string' &&
-        (key.startsWith('op_count_') || key.startsWith('selection_') || key.startsWith('selectivity_'));
+      return (
+        typeof key === 'string' &&
+        (
+          key.startsWith('op_count_') ||
+          key.startsWith('selection_') ||
+          key.startsWith('selectivity_')
+        )
+      );
     }
 
     function toSchemaValidationShape(json, schemaDoc) {
@@ -992,10 +913,15 @@ async function handleChat(request, env) {
       return Response.json({ error: 'Message is required' }, { status: 400 });
     }
 
-    const safeHistory = history
-      .filter((m) => m && (m.role === 'user' || m.role === 'assistant'));
+    const safeHistory = history.filter(
+      (m) => m && (m.role === 'user' || m.role === 'assistant')
+    );
     const last = safeHistory[safeHistory.length - 1];
-    const fullConversation = (last && last.role === 'user' && last.content === message)
+    const fullConversation = (
+      last &&
+      last.role === 'user' &&
+      last.content === message
+    )
       ? safeHistory
       : [...safeHistory, { role: 'user', content: message }];
     let activeConversation = fullConversation;
@@ -1008,15 +934,20 @@ async function handleChat(request, env) {
     const parsedAttempts = parseInt(String(env.AI_RETRY_ATTEMPTS || '3'), 10);
     const maxAttempts = Number.isFinite(parsedAttempts) ? Math.max(1, parsedAttempts) : 3;
     const parsedMaxTokens = parseInt(String(env.AI_MAX_TOKENS || '1200'), 10);
-    const maxTokens = Number.isFinite(parsedMaxTokens) && parsedMaxTokens > 0 ? parsedMaxTokens : 1200;
+    const maxTokens = (
+      Number.isFinite(parsedMaxTokens) &&
+      parsedMaxTokens > 0
+    )
+      ? parsedMaxTokens
+      : 1200;
     const parsedTemperature = Number(env.AI_TEMPERATURE ?? '0');
     const temperature = Number.isFinite(parsedTemperature)
       ? Math.min(1, Math.max(0, parsedTemperature))
       : 0;
 
     if (!ai || typeof ai.run !== 'function') {
-      return Response.json({ 
-        error: 'Workers AI binding is not available. Ensure `[ai] binding = "AI"` is configured and redeploy.' 
+      return Response.json({
+        error: 'Workers AI binding is not available. Ensure `[ai] binding = "AI"` is configured and redeploy.'
       }, { status: 503 });
     }
 
@@ -1090,8 +1021,6 @@ Why: ${step.reason}`;
             : null,
           response: responseText,
           questionKey: step.assumptionKey,
-          questionNumber,
-          totalQuestions: runtimeClarificationSteps.length,
           options: step.options || null
         });
       }
@@ -1218,7 +1147,9 @@ function extractClarificationAnswers(conversation) {
       continue;
     }
 
-    const keyMatch = msg.content.match(/Assumption \(if you skip\):\s*([a-zA-Z0-9_]+)\s*=\s*(.+)/);
+    const keyMatch = msg.content.match(
+      /Assumption \(if you skip\):\s*([a-zA-Z0-9_]+)\s*=\s*(.+)/
+    );
     if (!keyMatch) {
       continue;
     }
@@ -1373,7 +1304,9 @@ function clonePlainJson(value) {
 }
 
 function extractInitialUserRequest(conversation) {
-  const firstUser = (conversation || []).find((m) => m && m.role === 'user' && typeof m.content === 'string' && m.content.trim());
+  const firstUser = (conversation || []).find(
+    (m) => m && m.role === 'user' && typeof m.content === 'string' && m.content.trim()
+  );
   return firstUser ? firstUser.content.trim() : 'Generate a valid JSON document.';
 }
 
@@ -1395,7 +1328,10 @@ function extractRequestForPlan(conversation, planIndex) {
 function buildFallbackJsonFromClarifications(schema, resolvedClarifications) {
   const meta = extractSchemaMeta(schema);
   const ops = parseOperationsAnswer(resolvedClarifications.operations || 'inserts + point_queries');
-  const sectionsCount = Math.max(1, Math.min(10, parseInt(String(resolvedClarifications.sections_count || '1'), 10) || 1));
+  const sectionsCount = Math.max(
+    1,
+    Math.min(10, parseInt(String(resolvedClarifications.sections_count || '1'), 10) || 1)
+  );
   const rangeFormat = meta.rangeFormats[0] || 'StartCount';
   const characterSet = resolvedClarifications.character_set || (meta.characterSets[0] || 'alphanumeric');
 
@@ -1452,7 +1388,10 @@ function buildSchemaDrivenClarificationSteps(schema, resolvedClarifications) {
   const meta = extractSchemaMeta(schema);
   const isPlanning = Object.keys(resolved).length === 0;
   const configureOptional = resolveBooleanChoice(resolved.configure_optional_fields, false);
-  const defaultOperationsAnswer = meta.operations.includes('inserts') && meta.operations.includes('point_queries')
+  const defaultOperationsAnswer = (
+    meta.operations.includes('inserts') &&
+    meta.operations.includes('point_queries')
+  )
     ? 'inserts + point_queries'
     : (meta.operations.join(' + ') || 'inserts + point_queries');
   const selectedOps = parseOperationsAnswer(
@@ -1571,7 +1510,14 @@ function extractSchemaMeta(schema) {
         .filter((v) => typeof v === 'string')
     : [];
 
-  return { operations, characterSets, stringExprTypes, distributionTypes, rangeFormats, hasSorted };
+  return {
+    operations,
+    characterSets,
+    stringExprTypes,
+    distributionTypes,
+    rangeFormats,
+    hasSorted
+  };
 }
 
 function buildDistributionHelp(meta) {
@@ -1779,7 +1725,9 @@ function normalizeVariantChoice(rawValue, variants, fallback) {
     return fallback;
   }
   const normalized = rawValue.trim().toLowerCase().replace(/[-\s]+/g, '_');
-  const match = variants.find((v) => v.toLowerCase().replace(/[-\s]+/g, '_') === normalized);
+  const match = variants.find(
+    (v) => v.toLowerCase().replace(/[-\s]+/g, '_') === normalized
+  );
   return match || fallback;
 }
 
@@ -1883,7 +1831,9 @@ ${meta.rangeFormats.slice(1).map((v) => `- ${v}`).join('\n')}`;
       segmented: 'segmented(separator=":", segments=["usertable", "user", uniform(len=20)])',
       hot_range: 'hot_range(len=32, amount=100, probability=0.8)'
     };
-    const lines = meta.stringExprTypes.map((t) => `- ${defaultsByType[t] || `${t}(schema-compatible defaults)`}`);
+    const lines = meta.stringExprTypes.map(
+      (t) => `- ${defaultsByType[t] || `${t}(schema-compatible defaults)`}`
+    );
     return `StringExpr defaults by variant:\n${lines.join('\n')}`;
   }
   return '';
@@ -1914,7 +1864,9 @@ function inferOptionsForField(name, fieldSchema, meta, selectedVariant) {
   if (name === 'selection') {
     if (selectedVariant && selectedVariant !== 'distribution') {
       const template = distributionTemplateForName(meta, selectedVariant);
-      return template ? [template] : distributionTemplateOptions(meta, name, { includeConstant: false });
+      return template
+        ? [template]
+        : distributionTemplateOptions(meta, name, { includeConstant: false });
     }
     return distributionTemplateOptions(meta, name, { includeConstant: false });
   }
@@ -2047,7 +1999,9 @@ function extractResponseText(result) {
   } else if (rawResponse && typeof rawResponse === 'object') {
     responseText = JSON.stringify(rawResponse);
   } else {
-    throw new Error(`Workers AI returned an unexpected response shape: ${JSON.stringify(result)}`);
+    throw new Error(
+      `Workers AI returned an unexpected response shape: ${JSON.stringify(result)}`
+    );
   }
 
   if (responseText.startsWith('```json')) {
