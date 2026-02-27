@@ -1135,15 +1135,29 @@ Rules:
     let lastError = 'Model returned invalid JSON (often due to truncation). Please try a shorter request and retry.';
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      const result = await ai.run(
-        modelName,
-        {
-          ...aiInputBase,
-          messages: attemptMessages
+      let responseText = '';
+      try {
+        const result = await ai.run(
+          modelName,
+          {
+            ...aiInputBase,
+            messages: attemptMessages
+          }
+        );
+        responseText = extractResponseText(result);
+      } catch (runError) {
+        lastError = `Model call failed (attempt ${attempt}/${maxAttempts}): ${runError?.message || 'Unknown error'}`;
+        if (attempt < maxAttempts) {
+          continue;
         }
-      );
+      }
 
-      const responseText = extractResponseText(result);
+      if (!responseText) {
+        if (attempt < maxAttempts) {
+          continue;
+        }
+        break;
+      }
 
       try {
         const parsedJson = JSON.parse(responseText);
@@ -1266,12 +1280,27 @@ function applyResolvedConstantsToOpCounts(jsonDoc, resolvedClarifications) {
       continue;
     }
     const op = key.slice('op_count_'.length);
-    const match = value.trim().match(/^constant\(\s*([-+]?\d*\.?\d+(?:e[-+]?\d+)?)\s*\)$/i);
-    if (!match) {
-      continue;
+    const trimmedValue = value.trim();
+    const variantKey = `variant_op_count_${op}`;
+    const variant = typeof resolvedClarifications?.[variantKey] === 'string'
+      ? resolvedClarifications[variantKey].trim().toLowerCase()
+      : '';
+
+    let parsed = null;
+    const constantMatch = trimmedValue.match(/^constant\(\s*([-+]?\d*\.?\d+(?:e[-+]?\d+)?)\s*\)$/i);
+    if (constantMatch) {
+      const constantNumber = Number(constantMatch[1]);
+      if (Number.isFinite(constantNumber)) {
+        parsed = constantNumber;
+      }
+    } else if (variant === 'constant') {
+      const numeric = Number(trimmedValue);
+      if (Number.isFinite(numeric)) {
+        parsed = numeric;
+      }
     }
-    const parsed = Number(match[1]);
-    if (Number.isFinite(parsed)) {
+
+    if (parsed !== null) {
       constantsByOp[op] = parsed;
     }
   }
