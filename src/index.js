@@ -1025,7 +1025,14 @@ async function handleChat(request, env) {
 
     const ai = env.AI;
     const modelName = env.AI_NAME || '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
-    const maxAttempts = Math.max(1, Number(env.AI_RETRY_ATTEMPTS || 2));
+    const parsedAttempts = parseInt(String(env.AI_RETRY_ATTEMPTS || '3'), 10);
+    const maxAttempts = Number.isFinite(parsedAttempts) ? Math.max(1, parsedAttempts) : 3;
+    const parsedMaxTokens = parseInt(String(env.AI_MAX_TOKENS || '1200'), 10);
+    const maxTokens = Number.isFinite(parsedMaxTokens) && parsedMaxTokens > 0 ? parsedMaxTokens : 1200;
+    const parsedTemperature = Number(env.AI_TEMPERATURE ?? '0');
+    const temperature = Number.isFinite(parsedTemperature)
+      ? Math.min(1, Math.max(0, parsedTemperature))
+      : 0;
 
     if (!ai || typeof ai.run !== 'function') {
       return Response.json({ 
@@ -1034,8 +1041,8 @@ async function handleChat(request, env) {
     }
 
     const aiInputBase = {
-      max_tokens: 1200,
-      temperature: 0.1
+      max_tokens: maxTokens,
+      temperature
     };
 
     let parsedSchema = null;

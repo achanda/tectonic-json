@@ -7,6 +7,9 @@ enabled = true
 
 [vars]
 AI_NAME = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+AI_TEMPERATURE = "0"
+AI_RETRY_ATTEMPTS = "3"
+AI_MAX_TOKENS = "1200"
 
 [ai]
 binding = "AI"
