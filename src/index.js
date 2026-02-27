@@ -651,28 +651,10 @@ const HTML = `<!DOCTYPE html>
       const message = getCurrentAnswer();
       if (!message) return;
 
-      const previousQuestionKey = currentQuestionKey;
-      const previousQuestionNumber = currentQuestionNumber;
-      const previousQuestionTotal = currentQuestionTotal;
-      const generationTransitionNotice = 'Phase 2 complete. Moving to Phase 3: final JSON generation.';
-      const answeredLastClarification = Boolean(previousQuestionKey) && (
-        previousQuestionKey === 'special_requirements' ||
-        (
-          Number.isInteger(previousQuestionNumber) &&
-          Number.isInteger(previousQuestionTotal) &&
-          previousQuestionNumber >= previousQuestionTotal
-        )
-      );
-
       chatInput.value = '';
       addMessage(message, 'user');
       chatHistory.push({ role: 'user', content: message });
       clearAnswerOptions();
-
-      if (answeredLastClarification) {
-        addMessage(generationTransitionNotice, 'assistant');
-        chatHistory.push({ role: 'assistant', content: generationTransitionNotice });
-      }
 
       const loading = addMessage('Thinking...', 'assistant', true);
 
@@ -698,9 +680,7 @@ const HTML = `<!DOCTYPE html>
         if (data.error) {
           addMessage(data.error, 'error');
         } else {
-          const isDuplicateGenerationTransition = answeredLastClarification &&
-            data.phaseNotice === generationTransitionNotice;
-          if (data.phaseNotice && !isDuplicateGenerationTransition) {
+          if (data.phaseNotice) {
             addMessage(data.phaseNotice, 'assistant');
             chatHistory.push({ role: 'assistant', content: data.phaseNotice });
           }
@@ -1261,12 +1241,20 @@ function findLastAssistantIndex(conversation, predicate) {
 }
 
 function formatPlanPhaseMessage(steps) {
-  const lines = (steps || []).map((step, idx) => `${idx + 1}. ${step.question}`);
+  const all = Array.isArray(steps) ? steps : [];
+  const mandatory = all.filter((step) => step?.questionType !== 'optional');
+  const optional = all.filter((step) => step?.questionType === 'optional');
+  const mandatoryLines = mandatory.map((step, idx) => `${idx + 1}. ${step.question}`);
+  const optionalLines = optional.map((step, idx) => `${idx + 1}. ${step.question}`);
   return `Plan Phase
 I read the schema and prepared the full question plan before generation.
 
 Questions I will ask next:
-${lines.join('\n')}
+Mandatory:
+${mandatoryLines.join('\n') || 'None'}
+
+Optional:
+${optionalLines.join('\n') || 'None'}
 
 Next: I will ask these one by one, collect your answers/overrides, then generate final JSON using the schema + all collected answers.`;
 }
@@ -1431,21 +1419,26 @@ function inferFallbackOpCount(answer) {
 }
 
 function buildSchemaDrivenClarificationSteps(schema, resolvedClarifications) {
+  const resolved = resolvedClarifications || {};
   const meta = extractSchemaMeta(schema);
+  const isPlanning = Object.keys(resolved).length === 0;
+  const configureOptional = resolveBooleanChoice(resolved.configure_optional_fields, false);
+  const defaultOperationsAnswer = meta.operations.includes('inserts') && meta.operations.includes('point_queries')
+    ? 'inserts + point_queries'
+    : (meta.operations.join(' + ') || 'inserts + point_queries');
   const selectedOps = parseOperationsAnswer(
-    resolvedClarifications.operations || (meta.operations.slice(0, 2).join(' + ') || 'inserts + point_queries')
+    resolved.operations || defaultOperationsAnswer
   );
 
   const steps = [];
   steps.push({
     assumptionKey: 'operations',
     question: `What operations should be included (${meta.operations.join(', ')})?`,
-    assumedValue: meta.operations.includes('inserts') && meta.operations.includes('point_queries')
-      ? 'inserts + point_queries'
-      : (meta.operations.join(' + ') || 'inserts + point_queries'),
+    assumedValue: defaultOperationsAnswer,
     reason: 'Operation set determines which operation schemas are active.',
     extra: 'You can list multiple operations separated by "+" or commas.',
-    options: meta.operations
+    options: meta.operations,
+    questionType: 'mandatory'
   });
 
   if (meta.characterSets.length) {
@@ -1454,7 +1447,8 @@ function buildSchemaDrivenClarificationSteps(schema, resolvedClarifications) {
       question: `Which character_set should keys use (${meta.characterSets.join(', ')})?`,
       assumedValue: meta.characterSets.includes('alphanumeric') ? 'alphanumeric' : meta.characterSets[0],
       reason: 'This enum comes directly from schema character set choices.',
-      options: meta.characterSets
+      options: meta.characterSets,
+      questionType: 'mandatory'
     });
   }
 
@@ -1462,52 +1456,54 @@ function buildSchemaDrivenClarificationSteps(schema, resolvedClarifications) {
     assumptionKey: 'sections_count',
     question: 'How many sections/phases should the workload have?',
     assumedValue: '1',
-    reason: 'Sections are the top-level array in the schema and define phase shifts.'
+    reason: 'Sections are the top-level array in the schema and define phase shifts.',
+    questionType: 'mandatory'
   });
 
+  // Required field questions first.
   for (const op of selectedOps) {
-    const opInfo = getOperationFieldInfo(schema, op, meta);
-    for (const field of opInfo) {
-      steps.push({
-        assumptionKey: `${field.name}_${op}`,
-        question: `How should ${op}.${field.name} be set?`,
-        assumedValue: field.defaultValue,
-        reason: field.reason,
-        extra: field.extra,
-        options: field.options
-      });
+    const opSteps = getOperationFieldInfo(schema, op, meta, resolved, isPlanning, 'required');
+    for (const step of opSteps) {
+      steps.push(step);
     }
   }
 
-  if (meta.rangeFormats.length && selectedOps.some((op) => op === 'range_queries' || op === 'range_deletes')) {
-    steps.push({
-      assumptionKey: 'range_format_global',
-      question: `If range operations are used, what range_format should apply (${meta.rangeFormats.join(', ')})?`,
-      assumedValue: meta.rangeFormats[0],
-      reason: 'Range format options are defined in schema enum.'
-      ,
-      extra: `Range format defaults:
-- ${meta.rangeFormats[0]} (default)
-${meta.rangeFormats.slice(1).map((v) => `- ${v}`).join('\n')}`,
-      options: meta.rangeFormats
-    });
-  }
-
-  if (meta.hasSorted) {
-    steps.push({
-      assumptionKey: 'sorted_settings',
-      question: 'Do you want sorted insert behavior (sorted.k and sorted.l)?',
-      assumedValue: 'none',
-      reason: 'Schema includes an optional sorted tuning block.'
-    });
-  }
-
+  // Optional gate: if user says "no", runtime skips all optional questions.
   steps.push({
-    assumptionKey: 'special_requirements',
-    question: 'Any additional schema-relevant constraints I should apply?',
-    assumedValue: 'none',
-    reason: 'Captures any remaining user constraints before generation.'
+    assumptionKey: 'configure_optional_fields',
+    question: 'Do you want to configure optional fields and variants?',
+    assumedValue: 'no',
+    reason: 'Skipping optional configuration moves directly to generation using defaults.',
+    options: ['no', 'yes'],
+    questionType: 'mandatory'
   });
+
+  if (isPlanning || configureOptional) {
+    for (const op of selectedOps) {
+      const opSteps = getOperationFieldInfo(schema, op, meta, resolved, isPlanning, 'optional');
+      for (const step of opSteps) {
+        steps.push(step);
+      }
+    }
+
+    if (meta.hasSorted) {
+      steps.push({
+        assumptionKey: 'sorted_settings',
+        question: 'Do you want sorted insert behavior (sorted.k and sorted.l)?',
+        assumedValue: 'none',
+        reason: 'Schema includes an optional sorted tuning block.',
+        questionType: 'optional'
+      });
+    }
+
+    steps.push({
+      assumptionKey: 'special_requirements',
+      question: 'Any additional schema-relevant constraints I should apply?',
+      assumedValue: 'none',
+      reason: 'Captures remaining optional constraints before generation.',
+      questionType: 'optional'
+    });
+  }
 
   return steps;
 }
@@ -1592,7 +1588,7 @@ function distributionDefaults(name) {
   return byName[name] || {};
 }
 
-function getOperationFieldInfo(schema, op, meta) {
+function getOperationFieldInfo(schema, op, meta, resolvedClarifications, isPlanning, mode = 'all') {
   const defs = schema?.$defs || {};
   const groupProps = defs?.WorkloadSpecGroup?.properties || {};
   const opProp = groupProps?.[op];
@@ -1601,26 +1597,78 @@ function getOperationFieldInfo(schema, op, meta) {
     return [];
   }
 
-  const fields = [];
+  const steps = [];
   const required = Array.isArray(opSchema.required) ? opSchema.required : [];
+  const requiredSet = new Set(required);
   const props = opSchema.properties || {};
-  const candidateNames = [...new Set(required)];
+  const requiredNames = Object.keys(props).filter((name) => requiredSet.has(name) && name !== 'character_set');
+  const optionalNames = Object.keys(props).filter((name) => !requiredSet.has(name) && name !== 'character_set');
+  const candidateNames = mode === 'required'
+    ? requiredNames
+    : mode === 'optional'
+      ? optionalNames
+      : [...requiredNames, ...optionalNames];
 
   for (const name of candidateNames) {
-    if (name === 'character_set') {
-      continue;
-    }
+    const questionType = mode === 'optional' ? 'optional' : 'mandatory';
     const fieldSchema = props[name];
-    fields.push({
-      name,
-      defaultValue: inferDefaultFromField(name, fieldSchema, meta),
+    const suffix = `${name}_${op}`;
+    const isRequired = requiredSet.has(name);
+
+    if (!isRequired) {
+      const includeKey = `include_${suffix}`;
+      const includeByDefault = optionalIncludeDefaultForField(name);
+      steps.push({
+        assumptionKey: includeKey,
+        question: `Should optional field ${op}.${name} be included?`,
+        assumedValue: includeByDefault ? 'yes' : 'no',
+        reason: 'This field is optional in the schema and can be omitted.',
+        options: ['yes', 'no'],
+        questionType: 'optional'
+      });
+
+      if (!isPlanning) {
+        const includeChoice = resolveBooleanChoice(resolvedClarifications?.[includeKey], includeByDefault);
+        if (!includeChoice) {
+          continue;
+        }
+      }
+    }
+
+    const variants = inferFieldVariants(name, fieldSchema, meta);
+    let selectedVariant = null;
+    if (variants && variants.length > 1) {
+      const variantKey = `variant_${suffix}`;
+      const defaultVariant = inferDefaultVariantForField(name, variants);
+      steps.push({
+        assumptionKey: variantKey,
+        question: `Which variant should ${op}.${name} use (${variants.join(', ')})?`,
+        assumedValue: defaultVariant,
+        reason: 'This field supports multiple schema variants and needs an explicit choice.',
+        options: variants,
+        questionType
+      });
+      selectedVariant = normalizeVariantChoice(
+        resolvedClarifications?.[variantKey],
+        variants,
+        defaultVariant
+      );
+    } else if (variants && variants.length === 1) {
+      selectedVariant = variants[0];
+    }
+
+    steps.push({
+      assumptionKey: suffix,
+      question: `How should ${op}.${name} be set?`,
+      assumedValue: inferDefaultFromField(name, fieldSchema, meta, selectedVariant),
       reason: inferReasonForField(name),
-      extra: inferExtraForField(name, meta),
-      options: inferOptionsForField(name, fieldSchema, meta)
+      extra: inferExtraForField(name, meta, selectedVariant),
+      options: inferOptionsForField(name, fieldSchema, meta, selectedVariant),
+      questionType
     });
   }
 
-  return fields;
+  return steps;
 }
 
 function resolveOperationSchema(opProp, defs) {
@@ -1652,24 +1700,109 @@ function resolveRef(ref, defs) {
   return defs?.[key] || null;
 }
 
-function inferDefaultFromField(name, fieldSchema, meta) {
+function optionalIncludeDefaultForField(name) {
+  if (name === 'selection') {
+    return true;
+  }
+  return false;
+}
+
+function resolveBooleanChoice(value, fallback) {
+  if (typeof value !== 'string') {
+    return Boolean(fallback);
+  }
+  const normalized = value.trim().toLowerCase();
+  if (/^(yes|y|true|1|include|included|on)$/.test(normalized)) {
+    return true;
+  }
+  if (/^(no|n|false|0|skip|omit|off)$/.test(normalized)) {
+    return false;
+  }
+  return Boolean(fallback);
+}
+
+function inferFieldVariants(name, fieldSchema, meta) {
+  if (name === 'op_count' || name === 'selectivity') {
+    return ['constant', 'distribution'];
+  }
+  if (name === 'selection') {
+    return meta.distributionTypes.map((d) => d.name);
+  }
+  if (name === 'key' || name === 'val') {
+    return ['literal', ...meta.stringExprTypes];
+  }
+  if (Array.isArray(fieldSchema?.oneOf) || Array.isArray(fieldSchema?.anyOf)) {
+    const variants = (fieldSchema.oneOf || fieldSchema.anyOf || [])
+      .map((item) => item?.const || null)
+      .filter((v) => typeof v === 'string');
+    if (variants.length > 1) {
+      return variants;
+    }
+  }
+  return null;
+}
+
+function normalizeVariantChoice(rawValue, variants, fallback) {
+  if (!Array.isArray(variants) || !variants.length) {
+    return fallback || null;
+  }
+  if (typeof rawValue !== 'string' || !rawValue.trim()) {
+    return fallback;
+  }
+  const normalized = rawValue.trim().toLowerCase().replace(/[-\s]+/g, '_');
+  const match = variants.find((v) => v.toLowerCase().replace(/[-\s]+/g, '_') === normalized);
+  return match || fallback;
+}
+
+function inferDefaultVariantForField(name, variants) {
   if (name === 'op_count') {
+    return variants.includes('constant') ? 'constant' : variants[0];
+  }
+  if (name === 'selectivity') {
+    return variants.includes('distribution') ? 'distribution' : variants[0];
+  }
+  if (name === 'selection') {
+    return variants.includes('uniform') ? 'uniform' : variants[0];
+  }
+  if (name === 'key' || name === 'val') {
+    return variants.includes('uniform') ? 'uniform' : variants[0];
+  }
+  return variants[0];
+}
+
+function inferDefaultFromField(name, fieldSchema, meta, selectedVariant) {
+  if (name === 'op_count') {
+    if (selectedVariant === 'distribution') {
+      return 'uniform(min=1, max=1000000)';
+    }
     return 'constant(500000)';
   }
   if (name === 'selection') {
+    if (selectedVariant && selectedVariant !== 'distribution') {
+      return distributionTemplateForName(meta, selectedVariant) || 'uniform(min=0, max=1)';
+    }
     return 'uniform(min=0, max=1)';
   }
   if (name === 'selectivity') {
+    if (selectedVariant === 'constant') {
+      return '0.01';
+    }
     return 'uniform(min=0.001, max=0.1)';
   }
   if (name === 'range_format' && meta.rangeFormats.length) {
     return meta.rangeFormats[0];
   }
   if (name === 'key') {
-    return 'uniform(len=20)';
+    if (selectedVariant) {
+      return stringExprTemplate(selectedVariant, 'key');
+    }
+    return stringExprTemplate('uniform', 'key');
   }
   if (name === 'val') {
-    return 'uniform(len=256)';
+    if (selectedVariant) {
+      return stringExprTemplate(selectedVariant, 'val');
+    }
+    return stringExprTemplate('uniform', 'val');
   }
   if (name === 'sorted') {
     return 'none';
@@ -1699,8 +1832,11 @@ function inferReasonForField(name) {
   return 'This field is needed for schema-conformant generation.';
 }
 
-function inferExtraForField(name, meta) {
+function inferExtraForField(name, meta, selectedVariant) {
   if (name === 'selection' || name === 'selectivity' || name === 'op_count') {
+    if (selectedVariant === 'constant') {
+      return 'Use a numeric constant when you want a fixed value instead of a distribution.';
+    }
     return buildDistributionHelp(meta);
   }
   if (name === 'range_format' && meta.rangeFormats.length) {
@@ -1709,6 +1845,9 @@ function inferExtraForField(name, meta) {
 ${meta.rangeFormats.slice(1).map((v) => `- ${v}`).join('\n')}`;
   }
   if (name === 'key' || name === 'val') {
+    if (selectedVariant && selectedVariant !== 'literal') {
+      return `Selected variant default: ${stringExprTemplate(selectedVariant, name)}`;
+    }
     const defaultsByType = {
       uniform: 'uniform(len=20, character_set=alphanumeric)',
       weighted: 'weighted([{weight:1,value:"user"},{weight:1,value:"post"}])',
@@ -1721,18 +1860,43 @@ ${meta.rangeFormats.slice(1).map((v) => `- ${v}`).join('\n')}`;
   return '';
 }
 
-function inferOptionsForField(name, fieldSchema, meta) {
+function inferOptionsForField(name, fieldSchema, meta, selectedVariant) {
   if (name === 'range_format' && meta.rangeFormats.length) {
     return meta.rangeFormats;
   }
   if (name === 'character_set' && meta.characterSets.length) {
     return meta.characterSets;
   }
-  if (name === 'selection' || name === 'selectivity' || name === 'op_count') {
+  if (name === 'op_count') {
+    if (selectedVariant === 'constant') {
+      return ['constant(500000)'];
+    }
+    if (selectedVariant === 'distribution') {
+      return distributionTemplateOptions(meta, name, { includeConstant: false });
+    }
     return distributionTemplateOptions(meta, name);
   }
+  if (name === 'selectivity') {
+    if (selectedVariant === 'constant') {
+      return ['0.01'];
+    }
+    return distributionTemplateOptions(meta, name, { includeConstant: false });
+  }
+  if (name === 'selection') {
+    if (selectedVariant && selectedVariant !== 'distribution') {
+      const template = distributionTemplateForName(meta, selectedVariant);
+      return template ? [template] : distributionTemplateOptions(meta, name, { includeConstant: false });
+    }
+    return distributionTemplateOptions(meta, name, { includeConstant: false });
+  }
   if (name === 'key' || name === 'val') {
-    return meta.stringExprTypes;
+    if (selectedVariant === 'literal') {
+      return [name === 'key' ? 'key' : 'value'];
+    }
+    if (selectedVariant) {
+      return [stringExprTemplate(selectedVariant, name)];
+    }
+    return [stringExprTemplate('uniform', name)];
   }
   if (Array.isArray(fieldSchema?.enum)) {
     return fieldSchema.enum.map((v) => String(v));
@@ -1740,20 +1904,56 @@ function inferOptionsForField(name, fieldSchema, meta) {
   return null;
 }
 
-function distributionTemplateOptions(meta, fieldName) {
-  const options = [];
-  if (fieldName === 'op_count') {
-    options.push('constant(500000)');
+function distributionTemplateOptions(meta, fieldName, config = {}) {
+  const includeConstant = config.includeConstant !== false;
+  const templates = [];
+  if (fieldName === 'op_count' && includeConstant) {
+    templates.push('constant(500000)');
   }
   for (const d of meta.distributionTypes) {
-    const defaults = distributionDefaults(d.name);
-    const params = orderDistributionParams(d.params).map((p) => {
-      const v = defaults[p];
-      return v !== undefined ? `${p}=${v}` : `${p}=<value>`;
-    });
-    options.push(`${d.name}(${params.join(', ')})`);
+    const template = distributionTemplateForName(meta, d.name);
+    if (template) {
+      templates.push(template);
+    }
   }
-  return options;
+  return templates;
+}
+
+function distributionTemplateForName(meta, distName) {
+  const dist = (meta?.distributionTypes || []).find((d) => d.name === distName);
+  if (!distName) {
+    return null;
+  }
+  const defaults = distributionDefaults(distName);
+  const params = orderDistributionParams(dist?.params || Object.keys(defaults));
+  if (!params.length) {
+    return `${distName}(<value>)`;
+  }
+  const rendered = params.map((p) => {
+    const v = defaults[p];
+    return v !== undefined ? `${p}=${v}` : `${p}=<value>`;
+  });
+  return `${distName}(${rendered.join(', ')})`;
+}
+
+function stringExprTemplate(variant, fieldName) {
+  const len = fieldName === 'key' ? 20 : 256;
+  if (variant === 'literal') {
+    return fieldName === 'key' ? 'key' : 'value';
+  }
+  if (variant === 'uniform') {
+    return `uniform(len=${len})`;
+  }
+  if (variant === 'weighted') {
+    return 'weighted([{weight=1,value="alpha"},{weight=1,value="beta"}])';
+  }
+  if (variant === 'segmented') {
+    return 'segmented(separator=":", segments=["prefix", uniform(len=8)])';
+  }
+  if (variant === 'hot_range') {
+    return `hot_range(len=${len}, amount=100, probability=0.8)`;
+  }
+  return `uniform(len=${len})`;
 }
 
 function parseOperationsAnswer(value) {
@@ -1772,6 +1972,11 @@ function parseOperationsAnswer(value) {
     return ['inserts', 'point_queries'];
   }
   const normalized = value.toLowerCase().replace(/[-\s]+/g, '_');
+  const hasWholeOp = (op) => {
+    const escaped = op.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(^|[^a-z_])${escaped}($|[^a-z_])`);
+    return re.test(normalized);
+  };
   const aliasPatterns = [
     { op: 'inserts', re: /\binsert(s)?\b/ },
     { op: 'updates', re: /\bupdate(s)?\b/ },
@@ -1783,7 +1988,7 @@ function parseOperationsAnswer(value) {
     { op: 'empty_point_deletes', re: /\bempty_?point_?delete(s)?\b/ },
     { op: 'merges', re: /\bmerge(s)?\b/ }
   ];
-  const picked = knownOps.filter((op) => normalized.includes(op));
+  const picked = knownOps.filter((op) => hasWholeOp(op));
   for (const alias of aliasPatterns) {
     if (alias.re.test(normalized) && !picked.includes(alias.op)) {
       picked.push(alias.op);
