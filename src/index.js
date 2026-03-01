@@ -1139,20 +1139,29 @@ Rules:
   }
 }
 
+const KEY_MATCH_REGEX = /Assumption \(if you skip\):\s*([a-zA-Z0-9_]+)\s*=\s*(.+)/;
+const USE_ASSUMPTION_REGEX = /^use assumptions?$/i;
+const OP_ALIAS_REGEXES = {
+  insert: /\binsert(s)?\b/,
+  update: /\bupdate(s)?\b/,
+  point_query: /\bpoint_?quer(y|ies)\b/,
+  range_query: /\brange_?quer(y|ies)\b/,
+  point_delete: /\bpoint_?delete(s)?\b/,
+  range_delete: /\brange_?delete(s)?\b/,
+  empty_point_query: /\bempty_?point_?quer(y|ies)\b/,
+  empty_point_delete: /\bempty_?point_?delete(s)?\b/,
+  merge: /\bmerge(s)?\b/
+};
+const OP_DELETE_REGEX = /\bdeletes?\b/;
+
 function extractClarificationAnswers(conversation) {
   const resolved = {};
   for (let i = 0; i < conversation.length; i += 1) {
     const msg = conversation[i];
-    if (!msg || msg.role !== 'assistant' || typeof msg.content !== 'string') {
-      continue;
-    }
+    if (!msg || msg.role !== 'assistant' || typeof msg.content !== 'string') continue;
 
-    const keyMatch = msg.content.match(
-      /Assumption \(if you skip\):\s*([a-zA-Z0-9_]+)\s*=\s*(.+)/
-    );
-    if (!keyMatch) {
-      continue;
-    }
+    const keyMatch = msg.content.match(KEY_MATCH_REGEX);
+    if (!keyMatch) continue;
 
     const key = keyMatch[1].trim();
     const assumedValue = keyMatch[2].split('\n')[0].trim();
@@ -1161,10 +1170,7 @@ function extractClarificationAnswers(conversation) {
     const nextUser = conversation[i + 1];
     if (nextUser && nextUser.role === 'user' && typeof nextUser.content === 'string') {
       const answer = nextUser.content.trim();
-      const useAssumption = /^use assumptions?$/i.test(answer);
-      if (answer && !useAssumption) {
-        chosenValue = answer;
-      }
+      if (answer && !USE_ASSUMPTION_REGEX.test(answer)) chosenValue = answer;
     }
 
     resolved[key] = chosenValue;
@@ -1206,19 +1212,20 @@ Next: I will ask these one by one, collect your answers/overrides, then generate
 
 function applyResolvedConstantsToOpCounts(jsonDoc, resolvedClarifications) {
   const constantsByOp = {};
-  for (const [key, value] of Object.entries(resolvedClarifications || {})) {
-    if (!key.startsWith('op_count_') || typeof value !== 'string') {
-      continue;
-    }
-    const op = key.slice('op_count_'.length);
-    const trimmedValue = value.trim();
-    const variantKey = `variant_op_count_${op}`;
-    const variant = typeof resolvedClarifications?.[variantKey] === 'string'
-      ? resolvedClarifications[variantKey].trim().toLowerCase()
-      : '';
+  const resolved = resolvedClarifications || {};
+  const opCountPrefix = 'op_count_';
+  const variantPrefix = 'variant_op_count_';
+  
+  for (const key of Object.keys(resolved)) {
+    if (!key.startsWith(opCountPrefix) || typeof resolved[key] !== 'string') continue;
+    
+    const op = key.slice(opCountPrefix.length);
+    const trimmedValue = resolved[key].trim();
+    const variantKey = variantPrefix + op;
+    const variant = typeof resolved[variantKey] === 'string' ? resolved[variantKey].trim().toLowerCase() : '';
 
     let parsed = null;
-    const constantMatch = trimmedValue.match(/^constant\(\s*([-+]?\d*\.?\d+(?:e[-+]?\d+)?)\s*\)$/i);
+    const constantMatch = trimmedValue.match(CONSTANT_REGEX);
     if (constantMatch) {
       const constantNumber = Number(constantMatch[1]);
       if (Number.isFinite(constantNumber)) {
@@ -1370,9 +1377,11 @@ function buildFallbackJsonFromClarifications(schema, resolvedClarifications) {
   };
 }
 
+const CONSTANT_REGEX = /^constant\(\s*([-+]?\d*\.?\d+(?:e[-+]?\d+)?)\s*\)$/i;
+
 function inferFallbackOpCount(answer) {
   if (typeof answer === 'string') {
-    const constant = answer.trim().match(/^constant\(\s*([-+]?\d*\.?\d+(?:e[-+]?\d+)?)\s*\)$/i);
+    const constant = answer.trim().match(CONSTANT_REGEX);
     if (constant) {
       const parsed = Number(constant[1]);
       if (Number.isFinite(parsed)) return parsed;
@@ -1937,51 +1946,26 @@ function stringExprTemplate(variant, fieldName) {
   return `uniform(len=${len})`;
 }
 
+const KNOWN_OPS = ['inserts', 'updates', 'point_queries', 'range_queries', 'point_deletes', 'range_deletes', 'empty_point_queries', 'empty_point_deletes', 'merges'];
+const DEFAULT_OPS = ['inserts', 'point_queries'];
+const DELETE_DEFAULT_OPS = ['inserts', 'point_queries', 'point_deletes'];
+
 function parseOperationsAnswer(value) {
-  const knownOps = [
-    'inserts',
-    'updates',
-    'point_queries',
-    'range_queries',
-    'point_deletes',
-    'range_deletes',
-    'empty_point_queries',
-    'empty_point_deletes',
-    'merges'
-  ];
-  if (!value || typeof value !== 'string') {
-    return ['inserts', 'point_queries'];
-  }
+  if (!value || typeof value !== 'string') return DEFAULT_OPS;
+  
   const normalized = value.toLowerCase().replace(/[-\s]+/g, '_');
-  const hasWholeOp = (op) => {
+  const picked = KNOWN_OPS.filter(op => {
     const escaped = op.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(`(^|[^a-z_])${escaped}($|[^a-z_])`);
-    return re.test(normalized);
-  };
-  const aliasPatterns = [
-    { op: 'inserts', re: /\binsert(s)?\b/ },
-    { op: 'updates', re: /\bupdate(s)?\b/ },
-    { op: 'point_queries', re: /\bpoint_?quer(y|ies)\b/ },
-    { op: 'range_queries', re: /\brange_?quer(y|ies)\b/ },
-    { op: 'point_deletes', re: /\bpoint_?delete(s)?\b/ },
-    { op: 'range_deletes', re: /\brange_?delete(s)?\b/ },
-    { op: 'empty_point_queries', re: /\bempty_?point_?quer(y|ies)\b/ },
-    { op: 'empty_point_deletes', re: /\bempty_?point_?delete(s)?\b/ },
-    { op: 'merges', re: /\bmerge(s)?\b/ }
-  ];
-  const picked = knownOps.filter((op) => hasWholeOp(op));
-  for (const alias of aliasPatterns) {
-    if (alias.re.test(normalized) && !picked.includes(alias.op)) {
-      picked.push(alias.op);
-    }
+    return new RegExp(`(^|[^a-z_])${escaped}($|[^a-z_])`).test(normalized);
+  });
+  
+  for (const [op, re] of Object.entries(OP_ALIAS_REGEXES)) {
+    if (re.test(normalized) && !picked.includes(op)) picked.push(op);
   }
-  if (picked.length) {
-    return picked;
-  }
-  if (/\bdeletes?\b/.test(normalized)) {
-    return ['inserts', 'point_queries', 'point_deletes'];
-  }
-  return ['inserts', 'point_queries'];
+  
+  if (picked.length) return picked;
+  if (OP_DELETE_REGEX.test(normalized)) return DELETE_DEFAULT_OPS;
+  return DEFAULT_OPS;
 }
 
 function extractResponseText(result) {
