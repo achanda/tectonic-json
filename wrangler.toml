@@ -2,6 +2,9 @@ name = "json-schema-chat"
 main = "src/index.js"
 compatibility_date = "2025-01-15"
 
+[placement]
+mode = "smart"
+
 [observability]
 enabled = true
 

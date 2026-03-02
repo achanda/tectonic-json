@@ -56,6 +56,10 @@ const HTML = `<!DOCTYPE html>
       font-size: 16px;
     }
     
+    header .btn {
+      margin-left: auto;
+    }
+    
     main {
       flex: 1;
       display: flex;
@@ -332,7 +336,8 @@ const HTML = `<!DOCTYPE html>
 </head>
 <body>
   <header>
-    <h1>JSON Schema Chat</h1>
+    <h1>Tectonic Workload Generator</h1>
+    <button class="btn btn-ghost" id="newWorkloadBtn">Clear Chat</button>
   </header>
   <main>
     <div class="panel left-panel">
@@ -406,6 +411,7 @@ const HTML = `<!DOCTYPE html>
     const validateBtn = document.getElementById('validateBtn');
     const copyBtn = document.getElementById('copyBtn');
     const validationResult = document.getElementById('validationResult');
+    const newWorkloadBtn = document.getElementById('newWorkloadBtn');
 
     let schema = null;
     let chatHistory = [];
@@ -560,6 +566,21 @@ const HTML = `<!DOCTYPE html>
     }
 
     sendBtn.addEventListener('click', sendMessage);
+    
+    newWorkloadBtn.addEventListener('click', () => {
+      chatHistory = [];
+      currentQuestionKey = null;
+      selectedOperations = new Set();
+      chatMessages.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg><p>Describe what JSON you want to generate</p></div>';
+      jsonOutput.value = '';
+      jsonViewer.innerHTML = '';
+      validationResult.className = 'validation-result';
+      hideAnswerOptionControls();
+      chatInput.value = '';
+      chatInput.placeholder = 'e.g., Create a user profile with name, email, and age...';
+      chatInput.disabled = false;
+    });
+
     chatInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
