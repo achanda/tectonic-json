@@ -991,25 +991,35 @@ async function handleChat(request, env) {
     }
 
     if (parsedSchema) {
+      let inferredClarifications = inferClarificationsFromRequest(cycleRequest, parsedSchema);
       const planIndex = findLastAssistantIndex(fullConversation, (content) => content.startsWith('Plan Phase'));
       const generatedIndex = findLastAssistantIndex(fullConversation, (content) => content === '[JSON generated]');
       const hasActivePlan = planIndex !== -1 && planIndex > generatedIndex;
 
-      const clarificationSteps = buildSchemaDrivenClarificationSteps(parsedSchema, {});
+      const clarificationSteps = buildSchemaDrivenClarificationSteps(parsedSchema, inferredClarifications);
+      const pendingPlanSteps = filterPendingClarificationSteps(
+        clarificationSteps,
+        inferredClarifications
+      );
 
       // Phase 1a: plan pass. List all schema-derived questions first.
       if (!hasActivePlan) {
         return Response.json({
           mode: 'question',
           phaseNotice: 'Phase 1 started: planning all schema-derived questions.',
-          response: formatPlanPhaseMessage(clarificationSteps)
+          response: formatPlanPhaseMessage(pendingPlanSteps)
         });
       }
 
       // Active question cycle starts after the latest plan message.
       activeConversation = fullConversation.slice(planIndex + 1);
       cycleRequest = extractRequestForPlan(fullConversation, planIndex);
-      resolvedClarifications = extractClarificationAnswers(activeConversation);
+      inferredClarifications = inferClarificationsFromRequest(cycleRequest, parsedSchema);
+      const answeredClarifications = extractClarificationAnswers(activeConversation);
+      resolvedClarifications = {
+        ...inferredClarifications,
+        ...answeredClarifications
+      };
       askedClarifications = activeConversation.filter(
         (m) => m.role === 'assistant' &&
           typeof m.content === 'string' &&
@@ -1017,10 +1027,11 @@ async function handleChat(request, env) {
       ).length;
 
       const runtimeClarificationSteps = buildSchemaDrivenClarificationSteps(parsedSchema, resolvedClarifications);
-      const unresolvedStep = runtimeClarificationSteps.find((step) => {
-        const resolvedValue = resolvedClarifications[step.assumptionKey];
-        return !(typeof resolvedValue === 'string' && resolvedValue.trim());
-      });
+      const pendingRuntimeSteps = filterPendingClarificationSteps(
+        runtimeClarificationSteps,
+        resolvedClarifications
+      );
+      const unresolvedStep = pendingRuntimeSteps[0] || null;
 
       // Phase 1b: ask each planned question one at a time.
       if (unresolvedStep) {
@@ -1117,7 +1128,9 @@ Rules:
         return Response.json({
           mode: 'json',
           phaseNotice: parsedSchema
-            ? 'Phase 2 complete. Moving to Phase 3: final JSON generation.'
+            ? (askedClarifications > 0
+                ? 'Phase 2 complete. Moving to Phase 3: final JSON generation.'
+                : 'Phase 2 skipped (no missing clarifications). Moving to Phase 3: final JSON generation.')
             : null,
           response: JSON.stringify(normalizedJson, null, 2)
         });
@@ -1141,7 +1154,9 @@ Rules:
       const normalizedFallback = applyResolvedSectionCount(fallback, resolvedClarifications);
       return Response.json({
         mode: 'json',
-        phaseNotice: 'Phase 2 complete. Moving to Phase 3: final JSON generation (fallback path).',
+        phaseNotice: askedClarifications > 0
+          ? 'Phase 2 complete. Moving to Phase 3: final JSON generation (fallback path).'
+          : 'Phase 2 skipped (no missing clarifications). Moving to Phase 3: final JSON generation (fallback path).',
         response: JSON.stringify(normalizedFallback, null, 2)
       });
     }
@@ -1163,17 +1178,30 @@ Rules:
 const KEY_MATCH_REGEX = /Assumption \(if you skip\):\s*([a-zA-Z0-9_]+)\s*=\s*(.+)/;
 const USE_ASSUMPTION_REGEX = /^use assumptions?$/i;
 const OP_ALIAS_REGEXES = {
-  insert: /\binsert(s)?\b/,
-  update: /\bupdate(s)?\b/,
-  point_query: /\bpoint_?quer(y|ies)\b/,
-  range_query: /\brange_?quer(y|ies)\b/,
-  point_delete: /\bpoint_?delete(s)?\b/,
-  range_delete: /\brange_?delete(s)?\b/,
-  empty_point_query: /\bempty_?point_?quer(y|ies)\b/,
-  empty_point_delete: /\bempty_?point_?delete(s)?\b/,
-  merge: /\bmerge(s)?\b/
+  inserts: /\binsert(s)?\b/,
+  updates: /\bupdate(s)?\b/,
+  point_queries: /\bpoint_?quer(y|ies)\b/,
+  range_queries: /\brange_?quer(y|ies)\b/,
+  point_deletes: /\bpoint_?delete(s)?\b/,
+  range_deletes: /\brange_?delete(s)?\b/,
+  empty_point_queries: /\bempty_?point_?quer(y|ies)\b/,
+  empty_point_deletes: /\bempty_?point_?delete(s)?\b/,
+  merges: /\bmerge(s)?\b/
 };
 const OP_DELETE_REGEX = /\bdeletes?\b/;
+const NUMBER_TOKEN_PATTERN = '\\d+(?:\\.\\d+)?(?:\\s*[kmb])?';
+const SIZE_TOKEN_PATTERN = '\\d+(?:\\.\\d+)?\\s*(?:b|bytes?|kb|kib|mb|mib)';
+const SIZE_UNIT_MULTIPLIERS = {
+  b: 1,
+  byte: 1,
+  bytes: 1,
+  kb: 1024,
+  kib: 1024,
+  mb: 1024 * 1024,
+  mib: 1024 * 1024
+};
+const OPS_WITH_KEY_FIELDS = new Set(['inserts', 'empty_point_queries', 'empty_point_deletes']);
+const OPS_WITH_VALUE_FIELDS = new Set(['inserts', 'updates', 'merges']);
 
 function extractClarificationAnswers(conversation) {
   const resolved = {};
@@ -1229,6 +1257,16 @@ Optional:
 ${optionalLines.join('\n') || 'None'}
 
 Next: I will ask these one by one, collect your answers/overrides, then generate final JSON using the schema + all collected answers.`;
+}
+
+function hasResolvedClarificationValue(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function filterPendingClarificationSteps(steps, resolvedClarifications) {
+  const all = Array.isArray(steps) ? steps : [];
+  const resolved = resolvedClarifications || {};
+  return all.filter((step) => !hasResolvedClarificationValue(resolved[step.assumptionKey]));
 }
 
 function applyResolvedConstantsToOpCounts(jsonDoc, resolvedClarifications) {
@@ -1351,6 +1389,252 @@ function extractRequestForPlan(conversation, planIndex) {
   }
 
   return extractInitialUserRequest(conversation);
+}
+
+function inferClarificationsFromRequest(requestText, schema) {
+  const inferred = {
+    configure_optional_fields: 'no'
+  };
+  if (typeof requestText !== 'string' || !requestText.trim()) {
+    return inferred;
+  }
+
+  const text = requestText.trim();
+  const lower = text.toLowerCase();
+  const meta = extractSchemaMeta(schema);
+  const explicitOps = parseExplicitOperationsFromText(text, meta.operations);
+  if (explicitOps.length) {
+    inferred.operations = explicitOps.join(' + ');
+  }
+
+  const sectionCount = parseSectionCountFromText(lower);
+  if (sectionCount !== null) {
+    inferred.sections_count = String(sectionCount);
+  }
+
+  const characterSet = parseCharacterSetFromText(lower, meta.characterSets);
+  if (characterSet) {
+    inferred.character_set = characterSet;
+  }
+
+  const opCounts = inferOpCountsFromText(text, meta.operations);
+  for (const [op, count] of Object.entries(opCounts)) {
+    inferred[`variant_op_count_${op}`] = 'constant';
+    inferred[`op_count_${op}`] = `constant(${count})`;
+  }
+
+  const sizeHints = inferKeyValueSizesFromText(lower);
+  const hintedOps = explicitOps.length ? explicitOps : Object.keys(opCounts);
+  if (hintedOps.length) {
+    for (const op of hintedOps) {
+      if (sizeHints.keyLen !== null && OPS_WITH_KEY_FIELDS.has(op)) {
+        inferred[`variant_key_${op}`] = 'uniform';
+        inferred[`key_${op}`] = `uniform(len=${sizeHints.keyLen})`;
+      }
+      if (sizeHints.valueLen !== null && OPS_WITH_VALUE_FIELDS.has(op)) {
+        inferred[`variant_val_${op}`] = 'uniform';
+        inferred[`val_${op}`] = `uniform(len=${sizeHints.valueLen})`;
+      }
+    }
+  }
+
+  return inferred;
+}
+
+function parseExplicitOperationsFromText(value, allowedOps) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return [];
+  }
+  const normalized = value.toLowerCase().replace(/[-\s]+/g, '_');
+  const opsFilter = new Set(Array.isArray(allowedOps) && allowedOps.length ? allowedOps : KNOWN_OPS);
+  const picked = KNOWN_OPS.filter((op) => hasWholeOperationMatch(normalized, op));
+
+  for (const [op, re] of Object.entries(OP_ALIAS_REGEXES)) {
+    if (re.test(normalized) && !picked.includes(op)) {
+      picked.push(op);
+    }
+  }
+
+  if (/(\bonly\s+insert(s)?\b)|(\binsert[_\s-]*only\b)/i.test(value)) {
+    return ['inserts'].filter((op) => opsFilter.has(op));
+  }
+  if (/(\bonly\s+update(s)?\b)|(\bupdate[_\s-]*only\b)/i.test(value)) {
+    return ['updates'].filter((op) => opsFilter.has(op));
+  }
+  if (/(\bonly\s+point[_\s-]*quer(y|ies)\b)|(\bpoint[_\s-]*quer(y|ies)[_\s-]*only\b)/i.test(value)) {
+    return ['point_queries'].filter((op) => opsFilter.has(op));
+  }
+
+  return picked.filter((op) => opsFilter.has(op));
+}
+
+function parseSectionCountFromText(lowerText) {
+  if (typeof lowerText !== 'string') {
+    return null;
+  }
+  const match = lowerText.match(/\b(\d+)\s*(sections?|phases?)\b/i);
+  if (!match) {
+    return null;
+  }
+  const parsed = parseInt(match[1], 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return null;
+  }
+  return Math.min(parsed, 50);
+}
+
+function parseCharacterSetFromText(lowerText, allowedCharacterSets) {
+  if (typeof lowerText !== 'string') {
+    return null;
+  }
+  const allowed = new Set(Array.isArray(allowedCharacterSets) ? allowedCharacterSets : []);
+  for (const candidate of ['alphanumeric', 'alphabetic', 'numeric']) {
+    if (lowerText.includes(candidate) && (!allowed.size || allowed.has(candidate))) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function inferOpCountsFromText(text, allowedOps) {
+  const counts = {};
+  const opsFilter = new Set(Array.isArray(allowedOps) && allowedOps.length ? allowedOps : KNOWN_OPS);
+
+  for (const op of KNOWN_OPS) {
+    if (!opsFilter.has(op)) {
+      continue;
+    }
+    const labels = operationLabelsForCountParsing(op);
+    let parsedCount = null;
+
+    for (const label of labels) {
+      const labelPattern = label.replace(/[-_\s]+/g, '[-_\\s]*');
+      const patterns = [
+        new RegExp(`(?:number|count|op[_\\s-]*count)\\s+of\\s+${labelPattern}(?:\\s+operations?)?\\s*(?:is|=|:)?\\s*(${NUMBER_TOKEN_PATTERN})\\b`, 'i'),
+        new RegExp(`${labelPattern}(?:\\s+operations?)?\\s*(?:is|=|:)?\\s*(${NUMBER_TOKEN_PATTERN})\\b`, 'i'),
+        new RegExp(`\\b(${NUMBER_TOKEN_PATTERN})\\s*${labelPattern}(?:\\s+operations?)?\\b`, 'i')
+      ];
+
+      for (const re of patterns) {
+        const match = text.match(re);
+        if (!match) {
+          continue;
+        }
+        const scaled = parseScaledNumberToken(match[1]);
+        if (scaled !== null) {
+          parsedCount = scaled;
+          break;
+        }
+      }
+      if (parsedCount !== null) {
+        break;
+      }
+    }
+
+    if (parsedCount !== null) {
+      counts[op] = parsedCount;
+    }
+  }
+
+  return counts;
+}
+
+function operationLabelsForCountParsing(op) {
+  const labels = {
+    inserts: ['insert', 'inserts'],
+    updates: ['update', 'updates'],
+    point_queries: ['point query', 'point queries'],
+    range_queries: ['range query', 'range queries'],
+    point_deletes: ['point delete', 'point deletes'],
+    range_deletes: ['range delete', 'range deletes'],
+    empty_point_queries: ['empty point query', 'empty point queries'],
+    empty_point_deletes: ['empty point delete', 'empty point deletes'],
+    merges: ['merge', 'merges', 'read modify write', 'read-modify-write']
+  };
+  return labels[op] || [op];
+}
+
+function parseScaledNumberToken(token) {
+  if (typeof token !== 'string') {
+    return null;
+  }
+  const normalized = token.replace(/,/g, '').trim().toLowerCase();
+  const match = normalized.match(/^([-+]?\d*\.?\d+)\s*([kmb])?$/);
+  if (!match) {
+    return null;
+  }
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  const suffix = match[2] || '';
+  const multiplier = suffix === 'k' ? 1e3 : suffix === 'm' ? 1e6 : suffix === 'b' ? 1e9 : 1;
+  const scaled = Math.round(value * multiplier);
+  return scaled > 0 ? scaled : null;
+}
+
+function parseSizeTokenToBytes(token) {
+  if (typeof token !== 'string') {
+    return null;
+  }
+  const normalized = token.trim().toLowerCase();
+  const match = normalized.match(/^(\d+(?:\.\d+)?)\s*(b|bytes?|kb|kib|mb|mib)$/);
+  if (!match) {
+    return null;
+  }
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  const unit = match[2];
+  const multiplier = SIZE_UNIT_MULTIPLIERS[unit];
+  if (!multiplier) {
+    return null;
+  }
+  return Math.max(1, Math.round(value * multiplier));
+}
+
+function inferKeyValueSizesFromText(lowerText) {
+  let keyLen = null;
+  let valueLen = null;
+  if (typeof lowerText !== 'string') {
+    return { keyLen, valueLen };
+  }
+
+  const bothPattern = new RegExp(
+    `(${SIZE_TOKEN_PATTERN})\\s*(?:key\\s*(?:and|&)\\s*value|key\\s*value|key[-\\s]*value|kv)\\s*size`,
+    'i'
+  );
+  const bothMatch = lowerText.match(bothPattern);
+  if (bothMatch) {
+    const bytes = parseSizeTokenToBytes(bothMatch[1]);
+    if (bytes !== null) {
+      keyLen = bytes;
+      valueLen = bytes;
+    }
+  }
+
+  if (keyLen === null) {
+    const keyMatchA = lowerText.match(new RegExp(`key\\s*size\\s*(?:is|=|:)?\\s*(${SIZE_TOKEN_PATTERN})`, 'i'));
+    const keyMatchB = lowerText.match(new RegExp(`(${SIZE_TOKEN_PATTERN})\\s*key\\s*size`, 'i'));
+    const keyMatchC = lowerText.match(new RegExp(`(${SIZE_TOKEN_PATTERN})\\s*key\\b`, 'i'));
+    const bytes = parseSizeTokenToBytes((keyMatchA || keyMatchB || keyMatchC || [])[1]);
+    if (bytes !== null) {
+      keyLen = bytes;
+    }
+  }
+
+  if (valueLen === null) {
+    const valMatchA = lowerText.match(new RegExp(`value\\s*size\\s*(?:is|=|:)?\\s*(${SIZE_TOKEN_PATTERN})`, 'i'));
+    const valMatchB = lowerText.match(new RegExp(`(${SIZE_TOKEN_PATTERN})\\s*value\\s*size`, 'i'));
+    const valMatchC = lowerText.match(new RegExp(`(${SIZE_TOKEN_PATTERN})\\s*value\\b`, 'i'));
+    const bytes = parseSizeTokenToBytes((valMatchA || valMatchB || valMatchC || [])[1]);
+    if (bytes !== null) {
+      valueLen = bytes;
+    }
+  }
+
+  return { keyLen, valueLen };
 }
 
 function buildFallbackJsonFromClarifications(schema, resolvedClarifications) {
@@ -1971,14 +2255,16 @@ const KNOWN_OPS = ['inserts', 'updates', 'point_queries', 'range_queries', 'poin
 const DEFAULT_OPS = ['inserts', 'point_queries'];
 const DELETE_DEFAULT_OPS = ['inserts', 'point_queries', 'point_deletes'];
 
+function hasWholeOperationMatch(normalizedText, op) {
+  const escaped = op.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^a-z_])${escaped}($|[^a-z_])`).test(normalizedText);
+}
+
 function parseOperationsAnswer(value) {
   if (!value || typeof value !== 'string') return DEFAULT_OPS;
   
   const normalized = value.toLowerCase().replace(/[-\s]+/g, '_');
-  const picked = KNOWN_OPS.filter(op => {
-    const escaped = op.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(^|[^a-z_])${escaped}($|[^a-z_])`).test(normalized);
-  });
+  const picked = KNOWN_OPS.filter((op) => hasWholeOperationMatch(normalized, op));
   
   for (const [op, re] of Object.entries(OP_ALIAS_REGEXES)) {
     if (re.test(normalized) && !picked.includes(op)) picked.push(op);
