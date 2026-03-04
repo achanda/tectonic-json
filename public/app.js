@@ -27,7 +27,8 @@
     const newWorkloadBtn = document.getElementById('newWorkloadBtn');
 
     const INITIAL_JSON_TEXT = '{}';
-    const OPERATION_ORDER = [
+    // Fallback ordering used only if schema-derived operation metadata is unavailable.
+    const DEFAULT_OPERATION_ORDER = [
       'inserts',
       'updates',
       'merges',
@@ -38,17 +39,7 @@
       'empty_point_queries',
       'empty_point_deletes'
     ];
-    const OPERATION_LABELS = {
-      inserts: 'Inserts',
-      updates: 'Updates',
-      merges: 'Merges',
-      point_queries: 'Point Queries',
-      range_queries: 'Range Queries',
-      point_deletes: 'Point Deletes',
-      range_deletes: 'Range Deletes',
-      empty_point_queries: 'Empty Point Queries',
-      empty_point_deletes: 'Empty Point Deletes'
-    };
+    // UI defaults stay product-defined (not schema-defined) so presets remain predictable.
     const OPERATION_DEFAULTS = {
       inserts: { op_count: 500000, key_len: 20, val_len: 1024 },
       updates: { op_count: 500000, val_len: 1024, selection_min: 0, selection_max: 1 },
@@ -60,9 +51,24 @@
       empty_point_queries: { op_count: 500000, key_len: 20 },
       empty_point_deletes: { op_count: 500000, key_len: 20 }
     };
-    const FORM_OPS_WITH_KEY_FIELDS = new Set(['inserts', 'empty_point_queries', 'empty_point_deletes']);
-    const FORM_OPS_WITH_VALUE_FIELDS = new Set(['inserts', 'updates', 'merges']);
-    const FORM_OPS_WITH_SELECTION_FIELDS = new Set([
+
+    function titleCaseFromSnake(value) {
+      return String(value || '')
+        .split('_')
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+    }
+
+    // Runtime metadata derived from the loaded schema.
+    let operationOrder = [...DEFAULT_OPERATION_ORDER];
+    let operationLabels = DEFAULT_OPERATION_ORDER.reduce((acc, op) => {
+      acc[op] = titleCaseFromSnake(op);
+      return acc;
+    }, {});
+    let formOpsWithKeyFields = new Set(['inserts', 'empty_point_queries', 'empty_point_deletes']);
+    let formOpsWithValueFields = new Set(['inserts', 'updates', 'merges']);
+    let formOpsWithSelectionFields = new Set([
       'updates',
       'merges',
       'point_queries',
@@ -70,7 +76,9 @@
       'range_queries',
       'range_deletes'
     ]);
-    const FORM_OPS_WITH_RANGE_FIELDS = new Set(['range_queries', 'range_deletes']);
+    let formOpsWithRangeFields = new Set(['range_queries', 'range_deletes']);
+    let characterSetEnum = ['alphanumeric', 'alphabetic', 'numeric'];
+    let rangeFormatEnum = ['StartCount', 'StartEnd'];
 
     let schema = null;
     const SCHEMA_ASSET_PATH = '/workload-schema.json';
@@ -92,6 +100,122 @@
       }
     }
 
+    // Derive UI structure from schema so we avoid hardcoding operation capabilities.
+    function deriveUiConfigFromSchema() {
+      if (!schema || typeof schema !== 'object') {
+        return;
+      }
+
+      const groupProperties = schema.$defs && schema.$defs.WorkloadSpecGroup && schema.$defs.WorkloadSpecGroup.properties
+        ? schema.$defs.WorkloadSpecGroup.properties
+        : null;
+
+      if (groupProperties && typeof groupProperties === 'object') {
+        const derivedOps = [];
+        const derivedLabels = {};
+        const derivedKeyFields = new Set();
+        const derivedValueFields = new Set();
+        const derivedSelectionFields = new Set();
+        const derivedRangeFields = new Set();
+
+        Object.entries(groupProperties).forEach(([op, rawNode]) => {
+          const resolvedNode = unwrapSchemaNode(rawNode);
+          if (!resolvedNode || typeof resolvedNode !== 'object' || !resolvedNode.properties) {
+            return;
+          }
+          // We treat operation blocks as group properties that define op_count.
+          if (!Object.prototype.hasOwnProperty.call(resolvedNode.properties, 'op_count')) {
+            return;
+          }
+
+          derivedOps.push(op);
+          derivedLabels[op] = titleCaseFromSnake(op);
+
+          if (Object.prototype.hasOwnProperty.call(resolvedNode.properties, 'key')) {
+            derivedKeyFields.add(op);
+          }
+          if (Object.prototype.hasOwnProperty.call(resolvedNode.properties, 'val')) {
+            derivedValueFields.add(op);
+          }
+          if (Object.prototype.hasOwnProperty.call(resolvedNode.properties, 'selection')) {
+            derivedSelectionFields.add(op);
+          }
+          if (
+            Object.prototype.hasOwnProperty.call(resolvedNode.properties, 'range_format') ||
+            Object.prototype.hasOwnProperty.call(resolvedNode.properties, 'selectivity')
+          ) {
+            derivedRangeFields.add(op);
+          }
+        });
+
+        if (derivedOps.length > 0) {
+          operationOrder = derivedOps;
+          operationLabels = derivedLabels;
+          formOpsWithKeyFields = derivedKeyFields;
+          formOpsWithValueFields = derivedValueFields;
+          formOpsWithSelectionFields = derivedSelectionFields;
+          formOpsWithRangeFields = derivedRangeFields;
+        }
+      }
+
+      const derivedCharacterSetEnum = schema.$defs && schema.$defs.CharacterSet && Array.isArray(schema.$defs.CharacterSet.enum)
+        ? schema.$defs.CharacterSet.enum.filter((value) => typeof value === 'string' && value.trim() !== '')
+        : [];
+      if (derivedCharacterSetEnum.length > 0) {
+        characterSetEnum = derivedCharacterSetEnum;
+      }
+
+      const rangeFormatVariants = schema.$defs && schema.$defs.RangeFormat && Array.isArray(schema.$defs.RangeFormat.oneOf)
+        ? schema.$defs.RangeFormat.oneOf
+        : [];
+      const derivedRangeFormatEnum = rangeFormatVariants
+        .map((entry) => (entry && typeof entry.const === 'string' ? entry.const : null))
+        .filter(Boolean);
+      if (derivedRangeFormatEnum.length > 0) {
+        rangeFormatEnum = derivedRangeFormatEnum;
+      }
+    }
+
+    // Keep the character-set dropdown aligned with schema enum values.
+    function populateCharacterSetOptions() {
+      if (!formCharacterSet) {
+        return;
+      }
+
+      const currentValue = formCharacterSet.value;
+      const values = Array.isArray(characterSetEnum) ? characterSetEnum : [];
+
+      formCharacterSet.innerHTML = '';
+      const unsetOption = document.createElement('option');
+      unsetOption.value = '';
+      unsetOption.textContent = '(unset)';
+      formCharacterSet.appendChild(unsetOption);
+
+      values.forEach((value) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        formCharacterSet.appendChild(option);
+      });
+
+      if (values.includes(currentValue)) {
+        formCharacterSet.value = currentValue;
+      } else {
+        formCharacterSet.value = '';
+      }
+    }
+
+    // Prefer historical default when present; otherwise use first schema enum value.
+    function getDefaultCharacterSetValue() {
+      if (!Array.isArray(characterSetEnum) || characterSetEnum.length === 0) {
+        return '';
+      }
+      if (characterSetEnum.includes('alphanumeric')) {
+        return 'alphanumeric';
+      }
+      return characterSetEnum[0];
+    }
+
     function reportUiIssue(prefix, errorLike) {
       const message = prefix + ': ' + (errorLike && errorLike.message ? errorLike.message : String(errorLike || 'Unknown error'));
       console.error(message, errorLike);
@@ -100,6 +224,9 @@
 
     async function initApp() {
       schema = await loadInitialSchema();
+      // Schema must be loaded before building controls/descriptions.
+      deriveUiConfigFromSchema();
+      populateCharacterSetOptions();
 
       try {
         applySchemaDescriptions();
@@ -261,7 +388,7 @@
 
     function applyPreset(presetName) {
       resetFormInterface();
-      formCharacterSet.value = 'alphanumeric';
+      formCharacterSet.value = getDefaultCharacterSetValue();
       formSections.value = '1';
       formGroups.value = '1';
 
@@ -273,7 +400,7 @@
       };
       const ops = presets[presetName] || presets.baseline;
 
-      OPERATION_ORDER.forEach((op) => {
+      operationOrder.forEach((op) => {
         const enabled = ops.includes(op);
         setOperationChecked(op, enabled);
         if (enabled) {
@@ -413,6 +540,14 @@
       return byConst;
     }
 
+    // Range-format options are schema-derived with a stable fallback.
+    function getRangeFormatValues() {
+      if (Array.isArray(rangeFormatEnum) && rangeFormatEnum.length > 0) {
+        return rangeFormatEnum;
+      }
+      return ['StartCount', 'StartEnd'];
+    }
+
     function combineDescriptions(parts) {
       const cleaned = (parts || []).map(normalizeDescription).filter(Boolean);
       return [...new Set(cleaned)].join(' ');
@@ -520,21 +655,17 @@
       }
       operationToggles.innerHTML = '';
       operationConfigContainer.innerHTML = '';
-      OPERATION_ORDER.forEach((op) => {
-        let toggle = null;
-        let card = null;
-        try {
-          toggle = createOperationToggle(op);
-        } catch (e) {
-          reportUiIssue('Failed to build operation toggle for ' + op, e);
-          toggle = createOperationToggleFallback(op);
-        }
-        try {
-          card = createOperationConfigCard(op);
-        } catch (e) {
-          reportUiIssue('Failed to build operation config for ' + op, e);
-          card = createOperationConfigCardFallback(op);
-        }
+      operationOrder.forEach((op) => {
+        const toggle = buildWithFallback(
+          () => createOperationToggle(op),
+          () => createOperationToggleFallback(op),
+          'Failed to build operation toggle for ' + op
+        );
+        const card = buildWithFallback(
+          () => createOperationConfigCard(op),
+          () => createOperationConfigCardFallback(op),
+          'Failed to build operation config for ' + op
+        );
         if (toggle) {
           operationToggles.appendChild(toggle);
         }
@@ -544,71 +675,28 @@
       });
     }
 
-    function createOperationToggleFallback(op) {
-      const label = document.createElement('label');
-      label.className = 'checkbox-item';
-      const input = document.createElement('input');
-      input.type = 'checkbox';
-      input.className = 'operation-toggle';
-      input.value = op;
-      label.appendChild(input);
-      const text = document.createElement('span');
-      text.className = 'checkbox-label-text';
-      text.textContent = OPERATION_LABELS[op] || op;
-      label.appendChild(text);
-      return label;
+    function buildWithFallback(primaryBuilder, fallbackBuilder, errorPrefix) {
+      try {
+        return primaryBuilder();
+      } catch (e) {
+        reportUiIssue(errorPrefix, e);
+        return fallbackBuilder();
+      }
     }
 
-    function createOperationConfigCardFallback(op) {
-      const defaults = OPERATION_DEFAULTS[op] || {};
-      const card = document.createElement('section');
-      card.className = 'op-config hidden';
-      card.id = getOperationCardId(op);
+    function getOperationLabel(op) {
+      return operationLabels[op] || titleCaseFromSnake(op);
+    }
 
-      const head = document.createElement('div');
-      head.className = 'op-config-head';
-      const title = document.createElement('div');
-      title.className = 'op-config-title';
-      title.textContent = (OPERATION_LABELS[op] || op) + ' settings';
-      head.appendChild(title);
-      const defaultsBtn = document.createElement('button');
-      defaultsBtn.type = 'button';
-      defaultsBtn.className = 'op-default-btn';
-      defaultsBtn.textContent = 'Apply defaults';
-      defaultsBtn.addEventListener('click', () => {
-        applyDefaultsToOperation(op);
-        updateJsonFromForm();
-      });
-      head.appendChild(defaultsBtn);
-      card.appendChild(head);
-
-      const grid = document.createElement('div');
-      grid.className = 'form-grid';
-      grid.appendChild(createNumberField(op, 'op_count', 'Op Count', defaults.op_count || 500000, '1', '0', ''));
-
-      if (FORM_OPS_WITH_KEY_FIELDS.has(op)) {
-        grid.appendChild(createNumberField(op, 'key_len', 'Key Length', defaults.key_len || 20, '1', '1', ''));
-      }
-      if (FORM_OPS_WITH_VALUE_FIELDS.has(op)) {
-        grid.appendChild(createNumberField(op, 'val_len', 'Value Length', defaults.val_len || 256, '1', '1', ''));
-      }
-      if (FORM_OPS_WITH_SELECTION_FIELDS.has(op)) {
-        const minDefault = defaults.selection_min === undefined || defaults.selection_min === null ? 0 : defaults.selection_min;
-        const maxDefault = defaults.selection_max === undefined || defaults.selection_max === null ? 1 : defaults.selection_max;
-        grid.appendChild(createNumberField(op, 'selection_min', 'Selection Min', minDefault, 'any', null, ''));
-        grid.appendChild(createNumberField(op, 'selection_max', 'Selection Max', maxDefault, 'any', null, ''));
-      }
-      if (FORM_OPS_WITH_RANGE_FIELDS.has(op)) {
-        const selectivityDefault = defaults.selectivity === undefined || defaults.selectivity === null ? 0.01 : defaults.selectivity;
-        grid.appendChild(createNumberField(op, 'selectivity', 'Selectivity', selectivityDefault, 'any', '0', ''));
-        grid.appendChild(createRangeFormatField(op, defaults.range_format || 'StartCount', ''));
-      }
-
-      card.appendChild(grid);
-      return card;
+    function createOperationToggleFallback(op) {
+      return createOperationToggleCore(op, false);
     }
 
     function createOperationToggle(op) {
+      return createOperationToggleCore(op, true);
+    }
+
+    function createOperationToggleCore(op, includeDescriptions) {
       const label = document.createElement('label');
       label.className = 'checkbox-item';
       const input = document.createElement('input');
@@ -616,12 +704,19 @@
       input.className = 'operation-toggle';
       input.value = op;
       label.appendChild(input);
+
       const textWrap = document.createElement('span');
       textWrap.className = 'checkbox-label-text';
+      if (!includeDescriptions) {
+        textWrap.textContent = getOperationLabel(op);
+        label.appendChild(textWrap);
+        return label;
+      }
+
       const titleRow = document.createElement('span');
       titleRow.className = 'field-row';
       const text = document.createElement('span');
-      text.textContent = OPERATION_LABELS[op] || op;
+      text.textContent = getOperationLabel(op);
       titleRow.appendChild(text);
       const opDescription = getOperationDescription(op);
       const helpDot = createHelpDot(opDescription);
@@ -639,7 +734,15 @@
       return label;
     }
 
+    function createOperationConfigCardFallback(op) {
+      return createOperationConfigCardCore(op, false);
+    }
+
     function createOperationConfigCard(op) {
+      return createOperationConfigCardCore(op, true);
+    }
+
+    function createOperationConfigCardCore(op, includeDescriptions) {
       const defaults = OPERATION_DEFAULTS[op] || {};
       const card = document.createElement('section');
       card.className = 'op-config hidden';
@@ -649,7 +752,7 @@
       head.className = 'op-config-head';
       const title = document.createElement('div');
       title.className = 'op-config-title';
-      title.textContent = (OPERATION_LABELS[op] || op) + ' settings';
+      title.textContent = getOperationLabel(op) + ' settings';
       head.appendChild(title);
       const defaultsBtn = document.createElement('button');
       defaultsBtn.type = 'button';
@@ -661,7 +764,8 @@
       });
       head.appendChild(defaultsBtn);
       card.appendChild(head);
-      const opDescription = getOperationDescription(op);
+
+      const opDescription = includeDescriptions ? getOperationDescription(op) : '';
       if (opDescription) {
         const opDesc = document.createElement('p');
         opDesc.className = 'field-description';
@@ -669,6 +773,7 @@
         card.appendChild(opDesc);
       }
 
+      const rangeFormatDefaults = getRangeFormatValues();
       const grid = document.createElement('div');
       grid.className = 'form-grid';
       grid.appendChild(
@@ -676,49 +781,51 @@
           op,
           'op_count',
           'Op Count',
-          defaults.op_count,
+          includeDescriptions ? defaults.op_count : (defaults.op_count || 500000),
           '1',
           '0',
-          getUiFieldDescription(op, 'op_count')
+          includeDescriptions ? getUiFieldDescription(op, 'op_count') : ''
         )
       );
 
-      if (FORM_OPS_WITH_KEY_FIELDS.has(op)) {
+      if (formOpsWithKeyFields.has(op)) {
         grid.appendChild(
           createNumberField(
             op,
             'key_len',
             'Key Length',
-            defaults.key_len,
+            includeDescriptions ? defaults.key_len : (defaults.key_len || 20),
             '1',
             '1',
-            getUiFieldDescription(op, 'key_len')
+            includeDescriptions ? getUiFieldDescription(op, 'key_len') : ''
           )
         );
       }
-      if (FORM_OPS_WITH_VALUE_FIELDS.has(op)) {
+      if (formOpsWithValueFields.has(op)) {
         grid.appendChild(
           createNumberField(
             op,
             'val_len',
             'Value Length',
-            defaults.val_len,
+            includeDescriptions ? defaults.val_len : (defaults.val_len || 256),
             '1',
             '1',
-            getUiFieldDescription(op, 'val_len')
+            includeDescriptions ? getUiFieldDescription(op, 'val_len') : ''
           )
         );
       }
-      if (FORM_OPS_WITH_SELECTION_FIELDS.has(op)) {
+      if (formOpsWithSelectionFields.has(op)) {
+        const minDefault = defaults.selection_min === undefined || defaults.selection_min === null ? 0 : defaults.selection_min;
+        const maxDefault = defaults.selection_max === undefined || defaults.selection_max === null ? 1 : defaults.selection_max;
         grid.appendChild(
           createNumberField(
             op,
             'selection_min',
             'Selection Min',
-            defaults.selection_min,
+            includeDescriptions ? defaults.selection_min : minDefault,
             'any',
             null,
-            getUiFieldDescription(op, 'selection_min')
+            includeDescriptions ? getUiFieldDescription(op, 'selection_min') : ''
           )
         );
         grid.appendChild(
@@ -726,30 +833,31 @@
             op,
             'selection_max',
             'Selection Max',
-            defaults.selection_max,
+            includeDescriptions ? defaults.selection_max : maxDefault,
             'any',
             null,
-            getUiFieldDescription(op, 'selection_max')
+            includeDescriptions ? getUiFieldDescription(op, 'selection_max') : ''
           )
         );
       }
-      if (FORM_OPS_WITH_RANGE_FIELDS.has(op)) {
+      if (formOpsWithRangeFields.has(op)) {
+        const selectivityDefault = defaults.selectivity === undefined || defaults.selectivity === null ? 0.01 : defaults.selectivity;
         grid.appendChild(
           createNumberField(
             op,
             'selectivity',
             'Selectivity',
-            defaults.selectivity,
+            includeDescriptions ? defaults.selectivity : selectivityDefault,
             'any',
             '0',
-            getUiFieldDescription(op, 'selectivity')
+            includeDescriptions ? getUiFieldDescription(op, 'selectivity') : ''
           )
         );
         grid.appendChild(
           createRangeFormatField(
             op,
-            defaults.range_format || 'StartCount',
-            getUiFieldDescription(op, 'range_format')
+            defaults.range_format || rangeFormatDefaults[0],
+            includeDescriptions ? getUiFieldDescription(op, 'range_format') : ''
           )
         );
       }
@@ -792,15 +900,12 @@
       select.dataset.op = op;
       select.dataset.field = 'range_format';
 
-      const startCount = document.createElement('option');
-      startCount.value = 'StartCount';
-      startCount.textContent = 'StartCount';
-      select.appendChild(startCount);
-
-      const startEnd = document.createElement('option');
-      startEnd.value = 'StartEnd';
-      startEnd.textContent = 'StartEnd';
-      select.appendChild(startEnd);
+      getRangeFormatValues().forEach((rangeFormatValue) => {
+        const option = document.createElement('option');
+        option.value = rangeFormatValue;
+        option.textContent = rangeFormatValue;
+        select.appendChild(option);
+      });
 
       select.value = defaultValue;
       label.appendChild(title);
@@ -875,21 +980,21 @@
         op_count: numberOrDefault(readOperationField(op, 'op_count'), defaults.op_count || 500000)
       };
 
-      if (FORM_OPS_WITH_KEY_FIELDS.has(op)) {
+      if (formOpsWithKeyFields.has(op)) {
         config.key = buildStringExpr(
           intOrDefault(readOperationField(op, 'key_len'), defaults.key_len || 20),
           characterSet
         );
       }
 
-      if (FORM_OPS_WITH_VALUE_FIELDS.has(op)) {
+      if (formOpsWithValueFields.has(op)) {
         config.val = buildStringExpr(
           intOrDefault(readOperationField(op, 'val_len'), defaults.val_len || 256),
           characterSet
         );
       }
 
-      if (FORM_OPS_WITH_SELECTION_FIELDS.has(op)) {
+      if (formOpsWithSelectionFields.has(op)) {
         const selectionMinDefault = defaults.selection_min === undefined || defaults.selection_min === null
           ? 0
           : defaults.selection_min;
@@ -904,12 +1009,13 @@
         };
       }
 
-      if (FORM_OPS_WITH_RANGE_FIELDS.has(op)) {
+      if (formOpsWithRangeFields.has(op)) {
         const selectivityDefault = defaults.selectivity === undefined || defaults.selectivity === null
           ? 0.01
           : defaults.selectivity;
+        const rangeFormatDefaults = getRangeFormatValues();
         config.selectivity = numberOrDefault(readOperationField(op, 'selectivity'), selectivityDefault);
-        config.range_format = readOperationField(op, 'range_format') || defaults.range_format || 'StartCount';
+        config.range_format = readOperationField(op, 'range_format') || defaults.range_format || rangeFormatDefaults[0];
       }
 
       return config;
@@ -1003,7 +1109,7 @@
 
     function resetFormInterface() {
       workloadForm.reset();
-      OPERATION_ORDER.forEach((op) => setOperationCardVisibility(op, false));
+      operationOrder.forEach((op) => setOperationCardVisibility(op, false));
       formSections.value = '';
       formGroups.value = '';
       const initial = JSON.parse(INITIAL_JSON_TEXT);
