@@ -167,18 +167,19 @@
     .hud {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
+      gap: 8px;
+      margin-bottom: 4px;
     }
 
     .hud-card {
       border: 1px solid var(--border);
       background: linear-gradient(165deg, #ffffff 0%, #f5fbfa 100%);
-      border-radius: 12px;
-      padding: 10px;
+      border-radius: 10px;
+      padding: 7px 8px;
       display: flex;
       flex-direction: column;
-      gap: 4px;
-      min-height: 62px;
+      gap: 2px;
+      min-height: 50px;
       justify-content: center;
       transition: box-shadow 0.2s ease;
     }
@@ -188,40 +189,21 @@
     }
 
     .hud-label {
-      font-size: 11px;
+      font-size: 10px;
+      line-height: 1.1;
       color: var(--text-dim);
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .hud-value {
-      font-size: 18px;
+      font-size: 16px;
+      line-height: 1.1;
       font-weight: 700;
       color: var(--text);
-    }
-
-    .progress-wrap { margin: 10px 0 14px; }
-
-    .progress-head {
-      display: flex;
-      justify-content: space-between;
-      font-size: 12px;
-      color: var(--text-dim);
-      margin-bottom: 6px;
-    }
-
-    .progress-bar {
-      height: 8px;
-      border-radius: 999px;
-      background: #e6edf2;
-      overflow: hidden;
-    }
-
-    .progress-fill {
-      width: 0;
-      height: 100%;
-      background: linear-gradient(90deg, #0f766e, #22c55e);
-      transition: width 0.2s ease;
     }
 
     .form-grid {
@@ -550,7 +532,6 @@
   <div class="app-shell">
     <header>
       <div class="header-actions">
-        <button class="btn btn-ghost" id="downloadLogBtn">Download Log</button>
         <button class="btn btn-ghost" id="newWorkloadBtn">Clear Form</button>
       </div>
       <h1>Workload Spec Generator</h1>
@@ -580,15 +561,6 @@
               <div class="hud-card">
                 <span class="hud-label">JSON Lines</span>
                 <span class="hud-value" id="hudLines">1</span>
-              </div>
-            </div>
-            <div class="progress-wrap">
-              <div class="progress-head">
-                <span>Form Completion</span>
-                <span id="progressText">0%</span>
-              </div>
-              <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
               </div>
             </div>
             <form id="workloadForm" class="workload-form">

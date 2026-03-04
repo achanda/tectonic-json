@@ -10,8 +10,6 @@
     const operationToggles = document.getElementById('operationToggles');
     const operationConfigContainer = document.getElementById('operationConfigContainer');
     const jsonOutput = document.getElementById('jsonOutput');
-    const progressFill = document.getElementById('progressFill');
-    const progressText = document.getElementById('progressText');
     const hudSections = document.getElementById('hudSections');
     const hudGroups = document.getElementById('hudGroups');
     const hudOps = document.getElementById('hudOps');
@@ -28,7 +26,6 @@
     const copyBtn = document.getElementById('copyBtn');
     const validationResult = document.getElementById('validationResult');
     const newWorkloadBtn = document.getElementById('newWorkloadBtn');
-    const downloadLogBtn = document.getElementById('downloadLogBtn');
 
     const INITIAL_JSON_TEXT = '{}';
     const OPERATION_ORDER = [
@@ -77,8 +74,6 @@
     const FORM_OPS_WITH_RANGE_FIELDS = new Set(['range_queries', 'range_deletes']);
 
     let schema = null;
-    let formChangeLog = [];
-
     const SCHEMA_ASSET_PATH = '/workload-schema.json';
 
     async function loadInitialSchema() {
@@ -126,9 +121,6 @@
       if (workloadForm) {
         workloadForm.addEventListener('input', onFormChange);
         workloadForm.addEventListener('change', onFormChange);
-      }
-      if (downloadLogBtn) {
-        downloadLogBtn.addEventListener('click', downloadChatLog);
       }
       if (downloadJsonBtn) {
         downloadJsonBtn.addEventListener('click', downloadGeneratedJson);
@@ -232,7 +224,6 @@
         }
       }
       updateJsonFromForm();
-      trackFormChange();
     }
 
     function getOperationToggle(op) {
@@ -303,7 +294,6 @@
       }
 
       updateJsonFromForm();
-      trackFormChange();
     }
 
     function normalizeDescription(text) {
@@ -596,7 +586,6 @@
       defaultsBtn.addEventListener('click', () => {
         applyDefaultsToOperation(op);
         updateJsonFromForm();
-        trackFormChange();
       });
       head.appendChild(defaultsBtn);
       card.appendChild(head);
@@ -677,7 +666,6 @@
       defaultsBtn.addEventListener('click', () => {
         applyDefaultsToOperation(op);
         updateJsonFromForm();
-        trackFormChange();
       });
       head.appendChild(defaultsBtn);
       card.appendChild(head);
@@ -992,26 +980,6 @@
       return new Intl.NumberFormat('en-US').format(n);
     }
 
-    function computeCompletionState() {
-      const selectedOps = getSelectedOperations();
-      const requiredTop = [
-        formCharacterSet.value.trim() !== '',
-        parsePositiveInt(formSections.value) !== null,
-        parsePositiveInt(formGroups.value) !== null,
-        selectedOps.length > 0
-      ];
-      const opChecks = selectedOps.map((op) => {
-        const value = readOperationField(op, 'op_count');
-        return value !== '';
-      });
-
-      const total = requiredTop.length + opChecks.length;
-      const completed = requiredTop.filter(Boolean).length + opChecks.filter(Boolean).length;
-      const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
-
-      return { total, completed, percent };
-    }
-
     function updateInteractiveStats(json) {
       const hasSections = json && Array.isArray(json.sections);
       const sectionsCount = hasSections ? json.sections.length : 0;
@@ -1031,10 +999,6 @@
       jsonSectionsPill.textContent = 'sections: ' + formatCount(sectionsCount);
       jsonOpsPill.textContent = 'ops: ' + formatCount(selectedOps.length);
       jsonBytesPill.textContent = 'bytes: ' + formatCount(bytes);
-
-      const completion = computeCompletionState();
-      progressFill.style.width = completion.percent + '%';
-      progressText.textContent = completion.percent + '%';
     }
 
     function updateJsonFromForm() {
@@ -1045,78 +1009,16 @@
       validationResult.textContent = '';
     }
 
-    function collectFormState() {
-      const operations = {};
-      const selectedOps = getSelectedOperations();
-      selectedOps.forEach((op) => {
-        operations[op] = {};
-        const selector = '[data-op="' + op + '"]';
-        operationConfigContainer.querySelectorAll(selector).forEach((el) => {
-          if (el.dataset && el.dataset.field) {
-            operations[op][el.dataset.field] = el.value;
-          }
-        });
-      });
-
-      return {
-        character_set: formCharacterSet.value || '',
-        sections: formSections.value || '',
-        groups_per_section: formGroups.value || '',
-        selected_operations: selectedOps,
-        operation_config: operations
-      };
-    }
-
-    function trackFormChange() {
-      formChangeLog.push({
-        at: new Date().toISOString(),
-        state: collectFormState()
-      });
-      if (formChangeLog.length > 200) {
-        formChangeLog = formChangeLog.slice(formChangeLog.length - 200);
-      }
-    }
-
     function resetFormInterface() {
       workloadForm.reset();
       OPERATION_ORDER.forEach((op) => setOperationCardVisibility(op, false));
       formSections.value = '';
       formGroups.value = '';
-      formChangeLog = [];
       const initial = JSON.parse(INITIAL_JSON_TEXT);
       renderGeneratedJson(initial);
       updateInteractiveStats(initial);
       validationResult.className = 'validation-result';
       validationResult.textContent = '';
-      trackFormChange();
-    }
-
-    function downloadChatLog() {
-      const payload = {
-        exported_at: new Date().toISOString(),
-        app: 'tectonic-json',
-        schema_status: schema ? 'Schema loaded from /workload-schema.json' : 'Schema unavailable',
-        schema_text: schema ? JSON.stringify(schema, null, 2) : '',
-        generated_json: jsonOutput.value || '',
-        validation_text: validationResult.textContent || '',
-        validation_class: validationResult.className || '',
-        form_state: collectFormState(),
-        form_change_log: formChangeLog
-      };
-
-      const blob = new Blob([JSON.stringify(payload, null, 2)], {
-        type: 'application/json'
-      });
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const filename = 'tectonic-chat-log-' + timestamp + '.json';
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
     }
 
     function downloadGeneratedJson() {
