@@ -100,7 +100,6 @@ const HTML = `<!DOCTYPE html>
       padding: 16px;
     }
     
-    .left-panel { width: 40%; min-width: 300px; }
     .right-panel { flex: 1; min-width: 0; }
     
     textarea {
@@ -332,7 +331,6 @@ const HTML = `<!DOCTYPE html>
     
     @media (max-width: 768px) {
       main { flex-direction: column; }
-      .left-panel { width: 100%; min-height: 300px; }
     }
   </style>
 </head>
@@ -345,18 +343,6 @@ const HTML = `<!DOCTYPE html>
     </div>
   </header>
   <main>
-    <div class="panel left-panel">
-      <div class="panel-header">
-        <span class="panel-title">JSON Schema</span>
-        <span class="status status-pending" id="schemaStatus">
-          <span class="status-dot"></span>
-          <span id="schemaStatusText">Fixed schema</span>
-        </span>
-      </div>
-      <div class="panel-body">
-        <textarea id="schemaInput" spellcheck="false" readonly></textarea>
-      </div>
-    </div>
     <div class="right-panel" style="display: flex; flex-direction: column; gap: 16px;">
       <div class="panel" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
         <div class="panel-header">
@@ -389,6 +375,7 @@ const HTML = `<!DOCTYPE html>
           <div class="json-actions">
             <div class="validation-result" id="validationResult"></div>
             <button class="btn btn-ghost" id="validateBtn">Validate</button>
+            <button class="btn btn-ghost" id="downloadJsonBtn">Download JSON</button>
             <button class="btn btn-ghost" id="copyBtn">Copy</button>
           </div>
         </div>
@@ -402,9 +389,6 @@ const HTML = `<!DOCTYPE html>
   </main>
 
   <script>
-    const schemaInput = document.getElementById('schemaInput');
-    const schemaStatus = document.getElementById('schemaStatus');
-    const schemaStatusText = document.getElementById('schemaStatusText');
     const chatInput = document.getElementById('chatInput');
     const sendBtn = document.getElementById('sendBtn');
     const answerControls = document.getElementById('answerControls');
@@ -414,6 +398,7 @@ const HTML = `<!DOCTYPE html>
     const chatMessages = document.getElementById('chatMessages');
     const jsonOutput = document.getElementById('jsonOutput');
     const validateBtn = document.getElementById('validateBtn');
+    const downloadJsonBtn = document.getElementById('downloadJsonBtn');
     const copyBtn = document.getElementById('copyBtn');
     const validationResult = document.getElementById('validationResult');
     const newWorkloadBtn = document.getElementById('newWorkloadBtn');
@@ -548,33 +533,7 @@ const HTML = `<!DOCTYPE html>
       }
     };
 
-    schemaInput.value = JSON.stringify(defaultSchema, null, 2);
-    validateSchema();
-
-    function validateSchema() {
-      const value = schemaInput.value.trim();
-      if (!value) {
-        schema = null;
-        setSchemaStatus('pending', 'Enter schema');
-        return;
-      }
-      try {
-        schema = JSON.parse(value);
-        if (!schema.$schema && !schema.type) {
-          setSchemaStatus('invalid', 'Invalid schema');
-          return;
-        }
-        setSchemaStatus('valid', 'Valid schema');
-      } catch (e) {
-        schema = null;
-        setSchemaStatus('invalid', 'Invalid JSON');
-      }
-    }
-
-    function setSchemaStatus(status, text) {
-      schemaStatus.className = 'status status-' + status;
-      schemaStatusText.textContent = text;
-    }
+    schema = defaultSchema;
 
     sendBtn.addEventListener('click', sendMessage);
     downloadLogBtn.addEventListener('click', downloadChatLog);
@@ -600,8 +559,8 @@ const HTML = `<!DOCTYPE html>
       const payload = {
         exported_at: new Date().toISOString(),
         app: 'tectonic-json',
-        schema_status: schemaStatusText.textContent || '',
-        schema_text: schemaInput.value || '',
+        schema_status: schema ? 'Fixed internal schema' : 'Schema unavailable',
+        schema_text: schema ? JSON.stringify(schema, null, 2) : '',
         generated_json: jsonOutput.value || '',
         validation_text: validationResult.textContent || '',
         validation_class: validationResult.className || '',
@@ -615,6 +574,22 @@ const HTML = `<!DOCTYPE html>
       });
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const filename = 'tectonic-chat-log-' + timestamp + '.json';
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function downloadGeneratedJson() {
+      const text = jsonOutput.value;
+      if (!text) return;
+      const blob = new Blob([text], { type: 'application/json' });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = 'tectonic-generated-' + timestamp + '.json';
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -648,7 +623,7 @@ const HTML = `<!DOCTYPE html>
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            schema: schema ? schemaInput.value : null,
+            schema: schema ? JSON.stringify(schema) : null,
             message,
             history: chatHistory
           })
@@ -927,6 +902,8 @@ const HTML = `<!DOCTYPE html>
         setTimeout(() => copyBtn.textContent = 'Copy', 1500);
       });
     });
+
+    downloadJsonBtn.addEventListener('click', downloadGeneratedJson);
 
     validateBtn.addEventListener('click', async () => {
       const jsonText = jsonOutput.value.trim();
