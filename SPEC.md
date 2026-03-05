@@ -1,132 +1,141 @@
-# JSON Schema Chat Interface - Specification
+# Tectonic JSON Generator - Specification
 
 ## Project Overview
-- **Project name**: JSON Schema Chat
-- **Type**: Web application (Cloudflare Workers + static frontend)
-- **Core functionality**: Chat interface that uses Cloudflare Workers AI to generate JSON documents conforming to a user-provided JSON schema
-- **Target users**: Developers and data engineers who need to quickly generate valid JSON from natural language
+- **Project name**: Tectonic JSON Generator
+- **Type**: Local macOS Node app (single process)
+- **Core functionality**:
+- Build workload spec JSON with assistant + editable form controls.
+- Execute `tectonic-cli` workload generation on the same host machine.
+- Download both generated `spec.json` and `workload.tar.gz`.
+- **Non-goals**:
+- No D1 metadata persistence.
+- No R2 artifact storage.
+- No Cloudflare Worker runtime requirement.
 
-## Architecture
+## Local Architecture (Single Process)
 
-### Backend (Cloudflare Workers)
-- Single Worker handling:
-  - Static HTML/JS frontend serving
-  - `/api/chat` endpoint for LLM interactions
-- Uses `@cf/meta/llama-3.1-8b-instruct` or similar model
-- JSON mode enabled for structured output
+### Server
+- File: `src/server.mjs`
+- Hosts static frontend from `public/`.
+- Exposes:
+- `POST /api/assist`
+- `POST/GET /api/workloads/*`
+- `GET /api/health`
+- Uses same in-process workload execution logic (no proxy to another service).
 
-### Frontend
-- Single HTML page with embedded CSS/JS
-- Split view: schema editor (left), chat + output (right)
+### Assistant Execution
+- Existing assistant logic remains in `src/index.js`.
+- Server invokes the assistant route directly in-process.
+- LLM mode:
+- optional OpenAI-compatible API via env (`OPENAI_API_KEY`, `OPENAI_MODEL`, etc.)
+- deterministic fallback parser when no API key is configured
 
-## UI/UX Specification
+### Workload Execution
+- File: `src/local-tectonic-runner.mjs` (shared module logic)
+- Executes:
+- `tectonic-cli generate -w <spec_path> -o <output_path>`
+- Creates downloadable artifacts:
+- per-run: `generated-workloads/runs/<run_id>/spec.json`
+- per-run: `generated-workloads/runs/<run_id>/workload.tar.gz`
+- latest: `generated-workloads/latest-spec.json`
+- latest: `generated-workloads/latest-workload.tar.gz`
+- Run state is process-memory only.
 
-### Layout Structure
-- **Header**: App title, minimal height (60px)
-- **Main content**: Two-column layout
-  - Left panel (40%): JSON Schema input
-  - Right panel (60%): Chat interface + generated JSON
-- **Responsive**: Stack panels vertically on mobile (<768px)
+## API Contracts
 
-### Visual Design
+### `POST /api/workloads/runs`
+```ts
+type StartRunRequest = {
+  spec_json: Record<string, unknown>;
+  run_options?: {
+    timeout_seconds?: number; // default: 1800
+  };
+};
+```
 
-#### Color Palette
-- Background: `#0d1117` (dark)
-- Surface: `#161b22`
-- Border: `#30363d`
-- Primary accent: `#58a6ff` (blue)
-- Success: `#3fb950` (green)
-- Error: `#f85149` (red)
-- Text primary: `#e6edf3`
-- Text secondary: `#8b949e`
+```ts
+type StartRunResponse = {
+  run_id: string;
+  status: "starting" | "running";
+  created_at: string;
+  output_paths: {
+    known_output_dir: string;
+    run_dir: string;
+    spec_path: string;
+    generated_output_path: string;
+    workload_path: string;
+    latest_spec_path: string;
+    latest_workload_path: string;
+  };
+  downloads: {
+    spec_download_path: string;
+    workload_download_path: string;
+  };
+};
+```
 
-#### Typography
-- Font family: `"JetBrains Mono", "Fira Code", monospace` for code
-- Font family: `"DM Sans", system-ui` for UI text
-- Headings: 18px bold
-- Body: 14px
-- Code: 13px
+### `GET /api/workloads/runs/:runId`
+```ts
+type RunStatusResponse = {
+  run_id: string;
+  status: "starting" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out";
+  progress_text: string;
+  error: { code: string; message: string } | null;
+  output_paths: StartRunResponse["output_paths"];
+  artifacts: Array<{
+    kind: "spec" | "workload";
+    filename: string;
+    ready: boolean;
+    bytes: number | null;
+  }>;
+  links: {
+    spec_download_path: string;
+    workload_download_path: string;
+    cancel_path: string | null;
+  };
+  created_at: string;
+};
+```
 
-#### Spacing
-- Container padding: 20px
-- Panel gap: 16px
-- Element spacing: 12px
+### `POST /api/workloads/runs/:runId/cancel`
+- Cancels active local `tectonic-cli` process.
 
-### Components
+### `GET /api/workloads/runs/:runId/download/spec`
+- Streams run `spec.json`.
 
-1. **Schema Editor**
-   - Textarea with JSON syntax highlighting (basic)
-   - Placeholder with example schema
-   - "Validate Schema" button
-   - Validation status indicator
+### `GET /api/workloads/runs/:runId/download/workload`
+- Streams `workload.tar.gz` when ready.
+- Returns `409 artifact_not_ready` when workload is not yet produced.
 
-2. **Chat Interface**
-   - Message bubbles (user: right-aligned blue, assistant: left-aligned surface)
-   - Input field with send button
-   - Loading spinner during API calls
+## UI Flow
+- JSON actions:
+- `Validate`
+- `Run Workload`
+- `Download Spec JSON`
+- `Copy`
+- Runs panel (session-only) shows:
+- status badge
+- progress/error text
+- known output path
+- `Download Spec`
+- `Download Workload` (enabled when ready)
+- `Cancel` for active runs
 
-3. **JSON Output Panel**
-   - Read-only textarea showing generated JSON
-   - "Copy" button
-   - "Validate" button against schema
-   - Validation result badge
+## Operational Defaults
+- App default URL: `http://127.0.0.1:8787`
+- `tectonic-cli` binary default: `tectonic-cli` from PATH
+- Max spec bytes and timeout enforced server-side
+- No persistence of run metadata across server restart
 
-## Functionality Specification
-
-### Core Features
-
-1. **Schema Input**
-   - User can paste/edit JSON schema
-   - Schema validation on input (basic JSON parse + structure check)
-   - Persist schema in localStorage
-
-2. **Chat Interaction**
-   - User types natural language request
-   - System sends: schema + conversation history + user message
-   - Assistant responds with JSON (enforced via `response_format: { type: "json_object" }`)
-   - Display assistant response in chat
-
-3. **JSON Validation**
-   - Validate generated JSON against schema using external library
-   - Show validation errors if any
-   - Indicate success when valid
-
-4. **Cloudflare Best Practices**
-   - Use `LLAMA_3_1_8B_INSTRUCT` or `LLAMA_3_2_1B_INSTRUCT` model
-   - Set `max_tokens` limit (2000)
-   - Include schema in system prompt for enforcement
-   - Handle rate limits gracefully
-
-### User Flows
-
-1. **Initial Setup**
-   - User loads page → sees default example schema
-   - User replaces with their schema
-   - Schema validated automatically
-
-2. **Generate JSON**
-   - User types request in chat
-   - Clicks send or presses Enter
-   - Loading state shown
-   - Response displayed in chat
-   - JSON extracted and shown in output panel
-
-3. **Validation**
-   - Click "Validate" button
-   - Results shown (valid/invalid with errors)
-
-### Edge Cases
-- Invalid JSON schema → show error, prevent chat
-- LLM returns non-JSON → show error, allow retry
-- Empty schema → show warning
-- Network error → show retry option
+## Failure Modes
+- Invalid JSON body: `400 invalid_json`
+- Invalid `spec_json`: `400 invalid_spec` (with details)
+- Missing `tectonic-cli` or command failure: run status `failed`
+- Workload artifact not ready: `409 artifact_not_ready`
 
 ## Acceptance Criteria
-
-1. Page loads locally via `wrangler dev`
-2. User can input and validate a JSON schema
-3. User can send chat messages and receive JSON responses
-4. Generated JSON is displayed separately
-5. JSON can be validated against the schema
-6. All Cloudflare Workers AI best practices followed
-7. UI is responsive and visually polished
+1. One command (`npm run dev`) starts complete local app.
+2. `/api/assist` works in local mode with LLM optional/fallback available.
+3. Starting valid run returns `202` and transitions to terminal status.
+4. Download endpoints return spec/workload artifacts as expected.
+5. No Worker, D1, R2, or container dependency is required.

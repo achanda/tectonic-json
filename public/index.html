@@ -738,6 +738,155 @@
       gap: 8px;
     }
 
+    .runs-panel {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #ffffff;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .runs-panel-title {
+      font-size: 12px;
+      color: #4f6679;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .runs-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .run-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      background: #fbfefe;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .run-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .run-status-badge {
+      border-radius: 999px;
+      padding: 3px 8px;
+      border: 1px solid #d3e7f7;
+      background: #ecf6fd;
+      color: #245272;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .run-status-badge.running,
+    .run-status-badge.starting {
+      border-color: #c6dfd8;
+      background: #edf9f6;
+      color: #0f6a5f;
+    }
+
+    .run-status-badge.failed,
+    .run-status-badge.timed_out,
+    .run-status-badge.cancelled {
+      border-color: #f5c2c2;
+      background: #fff2f2;
+      color: #b92a2a;
+    }
+
+    .run-status-badge.succeeded {
+      border-color: #c8e7c9;
+      background: #effbf0;
+      color: #1e6f2a;
+    }
+
+    .run-progress {
+      font-size: 12px;
+      color: #506679;
+      line-height: 1.35;
+    }
+
+    .run-location {
+      font-size: 11px;
+      line-height: 1.35;
+      color: #2f5d4d;
+      background: #eefaf3;
+      border: 1px solid #cae8d6;
+      border-radius: 6px;
+      padding: 5px 7px;
+      font-family: 'JetBrains Mono', monospace;
+      word-break: break-all;
+    }
+
+    .run-error {
+      font-size: 11px;
+      color: #b4371d;
+      line-height: 1.35;
+    }
+
+    .run-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .run-action-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #cae3df;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 11px;
+      color: #0f4f4a;
+      background: #f4fbfa;
+      cursor: pointer;
+      text-decoration: none;
+      line-height: 1.2;
+      font-family: inherit;
+    }
+
+    .run-action-link:hover {
+      border-color: var(--accent);
+      color: #fff;
+      background: var(--accent);
+    }
+
+    .run-action-link.disabled,
+    .run-action-link.disabled:hover {
+      border-color: #d9e6e2;
+      color: #8ea1ad;
+      background: #f8fbfa;
+      cursor: not-allowed;
+    }
+
+    .runs-empty {
+      font-size: 12px;
+      color: #6d8091;
+      line-height: 1.35;
+    }
+
+    .runs-known-location {
+      font-size: 11px;
+      color: #4f6679;
+      line-height: 1.35;
+    }
+
     .json-stats {
       display: flex;
       gap: 6px;
@@ -931,7 +1080,8 @@
             <div class="json-actions">
               <div class="validation-result" id="validationResult"></div>
               <button class="btn btn-ghost" id="validateBtn">Validate</button>
-              <button class="btn btn-ghost" id="downloadJsonBtn">Download JSON</button>
+              <button class="btn btn-ghost" id="runWorkloadBtn">Run Workload</button>
+              <button class="btn btn-ghost" id="downloadJsonBtn">Download Spec JSON</button>
               <button class="btn btn-ghost" id="copyBtn">Copy</button>
             </div>
           </div>
@@ -945,12 +1095,21 @@
               <p class="shortcut-hint">Shortcuts: Ctrl/Cmd + Enter to validate, Ctrl/Cmd + Shift + C to copy.</p>
               <textarea id="jsonOutput" readonly placeholder="Generated JSON will appear here...">{}</textarea>
             </div>
+            <div class="runs-panel" id="runsPanel">
+              <p class="runs-panel-title">Workload Runs (Session)</p>
+              <p class="runs-known-location">Known output file: <code>generated-workloads/latest-workload.tar.gz</code></p>
+              <p class="runs-known-location">Start app with <code>npm run dev</code>. Workload generation runs in this same process.</p>
+              <div class="runs-list" id="runsList">
+                <p class="runs-empty">No runs yet. Click "Run Workload" to generate a workload artifact.</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </main>
   </div>
 
+  <script src="/workload-runs.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

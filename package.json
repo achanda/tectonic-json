@@ -1,10 +1,11 @@
 {
   "name": "json-schema-chat",
   "version": "1.0.0",
+  "type": "module",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "dev": "node src/server.mjs",
+    "start": "node src/server.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.68.1"

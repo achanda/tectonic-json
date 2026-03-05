@@ -1,30 +1,20 @@
-# JSON Schema Chat
+# Tectonic JSON Generator
 
-A chat interface for designing JSON documents using Cloudflare Workers AI. Describe what JSON you want in natural language, and the LLM generates valid JSON that conforms to your schema.
+A chat + form interface for designing Tectonic workload specs, then generating real workloads with a locally installed `tectonic-cli` binary.
 
 ## Features
 
-- **Schema Editor**: Paste or write a JSON Schema with validation
-- **Natural Language Input**: Describe the JSON you want in plain English
-- **JSON Validation**: Validate generated JSON against your schema using Ajv
-- **Cloudflare Workers AI**: Uses `@cf/meta/llama-3.3-70b-instruct-fp8-fast` with JSON mode enforced
-- **Local Storage**: Schema persists across sessions
+- Assistant-guided workload spec authoring
+- Fully editable form-backed spec generation
+- Live JSON preview + validation
+- Local workload execution (`tectonic-cli generate`)
+- Download both `spec.json` and generated `workload.tar.gz`
 
 ## Requirements
 
 - Node.js 18+
-- Cloudflare account with Workers AI enabled
-- npm or yarn
-
-## Important: Workers AI requires deployment
-
-Workers AI does not work in local development (`npm run dev`). You must deploy to Cloudflare to use the AI features:
-
-```bash
-npm run deploy
-```
-
-Then open your deployed worker URL.
+- `tectonic-cli` installed on host machine and available on PATH
+- Optional for LLM assist: OpenAI-compatible API key (`OPENAI_API_KEY`)
 
 ## Setup
 
@@ -32,36 +22,40 @@ Then open your deployed worker URL.
 npm install
 ```
 
-## Development (UI only)
+## Development
+
+Run everything with one command:
 
 ```bash
 npm run dev
 ```
 
-Open http://localhost:8787
+Open [http://localhost:8787](http://localhost:8787).
 
-Note: The chat functionality requires deployment since Workers AI isn't available locally.
+This starts:
+- static UI hosting from `public/`
+- `POST /api/assist`
+- `POST/GET /api/workloads/*` (direct local `tectonic-cli` execution)
 
-## Deployment
+Known artifact location on host:
+
+- Latest workload file: `generated-workloads/latest-workload.tar.gz`
+- Latest spec file: `generated-workloads/latest-spec.json`
+- Per-run artifacts: `generated-workloads/runs/<run_id>/`
+
+## Optional LLM env vars
+
+If not set, assistant uses deterministic fallback parsing.
 
 ```bash
-npm run deploy
+export OPENAI_API_KEY=...
+export OPENAI_MODEL=gpt-4.1-mini
+# Optional overrides:
+# export OPENAI_BASE_URL=https://api.openai.com/v1
+# export OPENAI_CHAT_ENDPOINT=/chat/completions
 ```
 
-Requires a Cloudflare account with Workers AI enabled.
+## Notes
 
-## Environment Variables
-
-In `wrangler.toml`:
-
-```toml
-[vars]
-AI_NAME = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
-```
-
-## Usage
-
-1. Enter a JSON Schema in the left panel
-2. Type a request in the chat (e.g., "Create a user profile with name, email, and age")
-3. The generated JSON appears in the output panel
-4. Click "Validate" to verify it conforms to your schema
+- No Worker, D1, R2, or container is required in local mode.
+- Run state is session-local in UI and process-local in the local server.

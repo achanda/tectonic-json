@@ -22,8 +22,10 @@
     const groupsDescription = document.getElementById('groupsDescription');
     const validateBtn = document.getElementById('validateBtn');
     const downloadJsonBtn = document.getElementById('downloadJsonBtn');
+    const runWorkloadBtn = document.getElementById('runWorkloadBtn');
     const copyBtn = document.getElementById('copyBtn');
     const validationResult = document.getElementById('validationResult');
+    const runsList = document.getElementById('runsList');
     const newWorkloadBtn = document.getElementById('newWorkloadBtn');
     const assistantInput = document.getElementById('assistantInput');
     const assistantApplyBtn = document.getElementById('assistantApplyBtn');
@@ -218,6 +220,7 @@
     const lockedOperationFields = new Map();
 
     let schema = null;
+    let workloadRunsController = null;
     const SCHEMA_ASSET_PATH = '/workload-schema.json';
     const ASSIST_ENDPOINT = '/api/assist';
 
@@ -414,6 +417,15 @@
         reportUiIssue('Failed to reset form interface', e);
       }
 
+      if (typeof window.createWorkloadRunsController === 'function' && runsList) {
+        workloadRunsController = window.createWorkloadRunsController({
+          runsListEl: runsList,
+          onInfo: (message) => setValidationStatus(message, 'valid'),
+          onError: (message) => setValidationStatus(message, 'invalid'),
+          onBusyChange: (isBusy) => setRunButtonBusy(isBusy)
+        });
+      }
+
       if (workloadForm) {
         workloadForm.addEventListener('input', onFormChange);
         workloadForm.addEventListener('change', onFormChange);
@@ -423,6 +435,9 @@
       }
       if (newWorkloadBtn) {
         newWorkloadBtn.addEventListener('click', resetFormInterface);
+      }
+      if (runWorkloadBtn) {
+        runWorkloadBtn.addEventListener('click', handleRunWorkload);
       }
       if (assistantApplyBtn) {
         assistantApplyBtn.addEventListener('click', handleAssistantApply);
@@ -1852,6 +1867,14 @@
       }
     }
 
+    function setRunButtonBusy(isBusy) {
+      if (!runWorkloadBtn) {
+        return;
+      }
+      runWorkloadBtn.disabled = !!isBusy;
+      runWorkloadBtn.textContent = isBusy ? 'Running...' : 'Run Workload';
+    }
+
     function setAssistantComposerHint(text) {
       if (!assistantComposerHint) {
         return;
@@ -2993,6 +3016,21 @@
       return !!(matcher && matcher.test(lower));
     }
 
+    async function handleRunWorkload() {
+      if (!workloadRunsController) {
+        setValidationStatus('Workload run controller is unavailable in this build.', 'invalid');
+        return;
+      }
+
+      const specJson = buildJsonFromForm();
+      if (!specJson || typeof specJson !== 'object' || !Array.isArray(specJson.sections) || specJson.sections.length === 0) {
+        setValidationStatus('Build a valid spec with at least one section before running workload generation.', 'invalid');
+        return;
+      }
+
+      await workloadRunsController.startRun(specJson);
+    }
+
     async function requestAssistantPatch(promptText) {
       const currentJson = buildJsonFromForm();
       const response = await fetch(ASSIST_ENDPOINT, {
@@ -3117,6 +3155,7 @@
       formGroups.value = '';
       clearAssistantThread();
       setAssistantStatus('Ready', 'default');
+      setRunButtonBusy(false);
       const initial = JSON.parse(INITIAL_JSON_TEXT);
       renderGeneratedJson(initial);
       updateInteractiveStats(initial);

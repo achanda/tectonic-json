@@ -103,6 +103,10 @@ export default {
       return handleAssistRequest(request, env);
     }
 
+    if (url.pathname.startsWith('/api/workloads/')) {
+      return handleLocalWorkloadProxy(request, env, url);
+    }
+
     return env.ASSETS.fetch(request);
   }
 };
@@ -201,6 +205,82 @@ async function handleAssistRequest(request, env) {
   }
 
   return jsonResponse(normalized, 200);
+}
+
+async function handleLocalWorkloadProxy(request, env, requestUrl) {
+  const baseUrl = getLocalWorkloadRunnerBaseUrl(env);
+  if (!baseUrl) {
+    return jsonResponse(
+      {
+        error: 'LOCAL_TECTONIC_RUNNER_URL is not configured.',
+        code: 'local_runner_url_missing'
+      },
+      503
+    );
+  }
+
+  let targetUrl;
+  try {
+    targetUrl = new URL(requestUrl.pathname + requestUrl.search, baseUrl);
+  } catch {
+    return jsonResponse(
+      {
+        error: 'LOCAL_TECTONIC_RUNNER_URL is invalid.',
+        code: 'local_runner_url_invalid'
+      },
+      503
+    );
+  }
+
+  const headers = new Headers(request.headers);
+  headers.delete('host');
+  headers.delete('content-length');
+  headers.set('x-forwarded-by', 'tectonic-json-worker');
+
+  const init = {
+    method: request.method,
+    headers,
+    redirect: 'manual'
+  };
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    init.body = request.body;
+  }
+
+  let upstreamResponse;
+  try {
+    upstreamResponse = await fetch(targetUrl.toString(), init);
+  } catch (error) {
+    const runnerOrigin = targetUrl.origin;
+    return jsonResponse(
+      {
+        error: 'Local workload runner is unreachable at ' + runnerOrigin + '.',
+        code: 'local_runner_unreachable',
+        runner_url: runnerOrigin,
+        hint: [
+          'Start it with `node src/local-tectonic-runner.mjs` (or `npm run dev:runner`) in a separate terminal.',
+          'If it runs on another host/port, set LOCAL_TECTONIC_RUNNER_URL and restart `wrangler dev`.'
+        ].join(' '),
+        details: sanitizeErrorForClient(error)
+      },
+      502
+    );
+  }
+
+  const responseHeaders = new Headers(upstreamResponse.headers);
+  responseHeaders.delete('transfer-encoding');
+  responseHeaders.delete('connection');
+
+  return new Response(upstreamResponse.body, {
+    status: upstreamResponse.status,
+    headers: responseHeaders
+  });
+}
+
+function getLocalWorkloadRunnerBaseUrl(env) {
+  const configured = env && typeof env.LOCAL_TECTONIC_RUNNER_URL === 'string'
+    ? env.LOCAL_TECTONIC_RUNNER_URL.trim()
+    : '';
+  return configured || 'http://127.0.0.1:8788';
 }
 
 async function runAssistantWithRetries(env, prompt, schemaHints, formState, currentJson, conversation, answers, aiConfig) {
