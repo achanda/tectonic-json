@@ -821,8 +821,6 @@ function normalizeAssistPayload(rawPayload, schemaHints, formState, prompt) {
   );
   const filteredClarifications = suppressRedundantOperationClarifications(
     clarifications,
-    patch,
-    formState,
     prompt,
     schemaHints
   );
@@ -938,7 +936,7 @@ function restrictPatchToMentionedOperations(patch, prompt, schemaHints) {
   });
 }
 
-function suppressRedundantOperationClarifications(clarifications, patch, formState, prompt, schemaHints) {
+function suppressRedundantOperationClarifications(clarifications, prompt, schemaHints) {
   if (!Array.isArray(clarifications) || clarifications.length === 0) {
     return [];
   }
@@ -985,9 +983,9 @@ function applyDeleteOperationDisambiguation(patch, formState, prompt, schemaHint
   }
   if (
     /\bempty\b|\bmissing\b|\bnon[-\s]?existent\b|\bnot\s+found\b/.test(lowerPrompt)
-    || promptMentionsOperation(lowerPrompt, 'empty_point_deletes', schemaHints)
-    || promptMentionsOperation(lowerPrompt, 'point_deletes', schemaHints)
-    || promptMentionsOperation(lowerPrompt, 'range_deletes', schemaHints)
+    || promptMentionsOperation(lowerPrompt, 'empty_point_deletes')
+    || promptMentionsOperation(lowerPrompt, 'point_deletes')
+    || promptMentionsOperation(lowerPrompt, 'range_deletes')
   ) {
     return;
   }
@@ -1193,7 +1191,7 @@ function constrainPatchToCurrentOperationScope(mergedPatch, formState, prompt, s
 
   const scopeOp = currentEnabled[0];
   const lowerPrompt = String(prompt || '').toLowerCase();
-  const hasAnyExplicitOperationMention = schemaHints.operation_order.some((op) => promptMentionsOperation(lowerPrompt, op, schemaHints));
+  const hasAnyExplicitOperationMention = schemaHints.operation_order.some((op) => promptMentionsOperation(lowerPrompt, op));
   const hasExplicitBroadeningIntent = /\b(add|include|also|plus|enable|operation mix|change operations|operations)\b/.test(lowerPrompt);
 
   // If prompt does not explicitly change operation mix, keep changes scoped to currently enabled op.
@@ -1230,7 +1228,7 @@ function suppressSelectionPatchForStringDistributionPrompts(mergedPatch, formSta
     if (!caps.has_selection) {
       return;
     }
-    if (promptMentionsOperation(lowerPrompt, op, schemaHints)) {
+    if (promptMentionsOperation(lowerPrompt, op)) {
       return;
     }
     const opPatch = mergedPatch.operations[op];
@@ -1774,7 +1772,7 @@ function promptExplicitlyRestrictsToOperation(prompt, operationName) {
   return patterns.some((pattern) => operationPatternMatchesWithPrefixGuards(lowerPrompt, pattern, blockedPrefixes));
 }
 
-function promptMentionsOperation(lowerPrompt, operationName, schemaHints) {
+function promptMentionsOperation(lowerPrompt, operationName) {
   const escapedOperationName = escapeRegExp(operationName.toLowerCase());
   if (new RegExp(`\\b${escapedOperationName}\\b`).test(lowerPrompt)) {
     return true;
@@ -1872,7 +1870,7 @@ function getMentionedOperationsFromPrompt(lowerPrompt, schemaHints) {
   if (!text) {
     return [];
   }
-  return schemaHints.operation_order.filter((op) => promptMentionsOperation(text, op, schemaHints));
+  return schemaHints.operation_order.filter((op) => promptMentionsOperation(text, op));
 }
 
 function shouldTreatPromptAsStringDistribution(lowerPrompt, schemaHints) {
@@ -2588,11 +2586,11 @@ function choosePreferredOperationForSelectionParam(schemaHints, context, fieldNa
 
   const promptLower = typeof safeContext.prompt === 'string' ? safeContext.prompt.toLowerCase() : '';
   if (promptLower) {
-    const mentionedNarrowed = narrowed.filter((op) => promptMentionsOperation(promptLower, op, schemaHints));
+    const mentionedNarrowed = narrowed.filter((op) => promptMentionsOperation(promptLower, op));
     if (mentionedNarrowed.length === 1) {
       return mentionedNarrowed[0];
     }
-    const mentionedEnabled = enabledSelectionOps.filter((op) => promptMentionsOperation(promptLower, op, schemaHints));
+    const mentionedEnabled = enabledSelectionOps.filter((op) => promptMentionsOperation(promptLower, op));
     if (mentionedEnabled.length === 1) {
       return mentionedEnabled[0];
     }
@@ -2635,7 +2633,7 @@ function choosePreferredOperationForStringPattern(schemaHints, context, fieldNam
 
   const hintText = String(questionText || '').toLowerCase();
   if (hintText) {
-    const hinted = enabledOps.filter((op) => promptMentionsOperation(hintText, op, schemaHints));
+    const hinted = enabledOps.filter((op) => promptMentionsOperation(hintText, op));
     if (hinted.length === 1) {
       return hinted[0];
     }
@@ -2643,7 +2641,7 @@ function choosePreferredOperationForStringPattern(schemaHints, context, fieldNam
 
   const promptLower = typeof safeContext.prompt === 'string' ? safeContext.prompt.toLowerCase() : '';
   if (promptLower) {
-    const mentioned = enabledOps.filter((op) => promptMentionsOperation(promptLower, op, schemaHints));
+    const mentioned = enabledOps.filter((op) => promptMentionsOperation(promptLower, op));
     if (mentioned.length === 1) {
       return mentioned[0];
     }
@@ -2655,7 +2653,7 @@ function choosePreferredOperationForStringPattern(schemaHints, context, fieldNam
 function detectOperationMention(lowerText, schemaHints) {
   const text = String(lowerText || '');
   for (const op of schemaHints.operation_order) {
-    if (promptMentionsOperation(text, op, schemaHints)) {
+    if (promptMentionsOperation(text, op)) {
       return op;
     }
   }
