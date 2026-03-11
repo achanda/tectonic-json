@@ -38,6 +38,22 @@
     const assistantComposerHint = document.getElementById('assistantComposerHint');
 
     const INITIAL_JSON_TEXT = '{}';
+    const PROMPT_OPERATION_MATCHER_SOURCES = {
+      inserts: 'insert(?:s|ion)?',
+      updates: 'update(?:s)?',
+      merges: 'merge(?:s)?|read[- ]?modify[- ]?write|rmw',
+      point_queries: 'point\\s+(?:query|querie|queries|read|reads)',
+      range_queries: 'range\\s+(?:query|querie|queries)',
+      point_deletes: 'point\\s+delete(?:s)?',
+      range_deletes: 'range\\s+delete(?:s)?',
+      empty_point_queries: '(?:empty|missing)\\s+point\\s+(?:query|querie|queries|read|reads)',
+      empty_point_deletes: '(?:empty|missing|non[- ]?existent)\\s+point\\s+delete(?:s)?',
+      sorted: 'sorted'
+    };
+    const PROMPT_OPERATION_BLOCKED_PREFIXES = {
+      point_queries: ['empty', 'missing'],
+      point_deletes: ['empty', 'missing', 'non existent', 'non-existent', 'nonexistent']
+    };
     // Fallback ordering used only if schema-derived operation metadata is unavailable.
     const DEFAULT_OPERATION_ORDER = [
       'inserts',
@@ -3466,29 +3482,13 @@
         return true;
       }
 
-      const matcherByOp = {
-        inserts: /\binsert(?:s|ion)?\b/,
-        updates: /\bupdate(?:s)?\b/,
-        merges: /\bmerge(?:s)?\b|\bread[- ]?modify[- ]?write\b|\brmw\b/,
-        point_queries: /\bpoint\s+(?:query|querie|queries|read|reads)\b/,
-        range_queries: /\brange\s+(?:query|querie|queries)\b/,
-        point_deletes: /\bpoint\s+delete(?:s)?\b/,
-        range_deletes: /\brange\s+delete(?:s)?\b/,
-        empty_point_queries: /\b(?:empty|missing)\s+point\s+(?:query|querie|queries|read|reads)\b/,
-        empty_point_deletes: /\b(?:empty|missing|non[- ]?existent)\s+point\s+delete(?:s)?\b/,
-        sorted: /\bsorted\b/
-      };
-      const blockedPrefixesByOp = {
-        point_queries: ['empty', 'missing'],
-        point_deletes: ['empty', 'missing', 'non existent', 'non-existent', 'nonexistent']
-      };
-      const matcher = matcherByOp[op];
-      if (!matcher) {
+      const matcherSource = PROMPT_OPERATION_MATCHER_SOURCES[op];
+      if (!matcherSource) {
         return false;
       }
 
-      const guardedMatcher = new RegExp(matcher.source, 'g');
-      const blockedPrefixes = blockedPrefixesByOp[op] || [];
+      const guardedMatcher = new RegExp(`\\b(?:${matcherSource})\\b`, 'g');
+      const blockedPrefixes = PROMPT_OPERATION_BLOCKED_PREFIXES[op] || [];
       if (!blockedPrefixes.length) {
         return guardedMatcher.test(lower);
       }

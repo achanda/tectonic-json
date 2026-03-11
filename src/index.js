@@ -26,6 +26,52 @@ const DEFAULT_SELECTION_DISTRIBUTIONS = [
   'weibull',
   'pareto'
 ];
+const SELECTION_DISTRIBUTION_ALIASES = {
+  uniform: ['uniform'],
+  normal: ['normal', 'gaussian'],
+  beta: ['beta'],
+  zipf: ['zipf', 'zipfian'],
+  exponential: ['exponential'],
+  log_normal: ['log_normal', 'log-normal', 'log normal'],
+  poisson: ['poisson'],
+  weibull: ['weibull'],
+  pareto: ['pareto']
+};
+const SELECTION_DISTRIBUTION_TERMS = Array.from(new Set(
+  Object.values(SELECTION_DISTRIBUTION_ALIASES).flat()
+));
+const OPERATION_PROMPT_PATTERN_SOURCES = {
+  inserts: 'insert(?:s|ion)?',
+  updates: 'update(?:s)?',
+  merges: 'merge(?:s)?|read[- ]?modify[- ]?write|rmw',
+  point_queries: 'point\\s+quer(?:y|ie|ies)|point\\s+read(?:s)?',
+  range_queries: 'range\\s+quer(?:y|ie|ies)',
+  point_deletes: 'point\\s+delete(?:s)?',
+  range_deletes: 'range\\s+delete(?:s)?',
+  empty_point_queries: 'empty\\s+point\\s+quer(?:y|ie|ies)|empty\\s+point\\s+read(?:s)?|missing\\s+point\\s+quer(?:y|ie|ies)',
+  empty_point_deletes: 'empty\\s+point\\s+delete(?:s)?|missing\\s+point\\s+delete(?:s)?|non[- ]?existent\\s+point\\s+delete(?:s)?',
+  sorted: 'sorted'
+};
+const OPERATION_PROMPT_BLOCKED_PREFIXES = {
+  point_queries: ['empty', 'missing'],
+  point_deletes: ['empty', 'missing', 'non existent', 'non-existent', 'nonexistent']
+};
+const OPERATION_DISABLE_INTENT_TERMS = ['remove', 'disable', 'exclude', 'without', 'no'];
+const OPERATION_COUNT_INTENT_TERMS = [
+  'add',
+  'include',
+  'set',
+  'make',
+  'update',
+  'change',
+  'use',
+  'with',
+  'to',
+  'increase',
+  'decrease',
+  'generate',
+  'create'
+];
 const DISTRIBUTION_REQUIRED_KEYS = {
   uniform: ['min', 'max'],
   normal: ['mean', 'std_dev'],
@@ -1046,10 +1092,10 @@ function promptLikelySetsOperationCount(lowerPrompt) {
   if (!text) {
     return false;
   }
-  if (/\b(remove|disable|exclude|without|no)\b/.test(text)) {
+  if (new RegExp(`\\b(?:${OPERATION_DISABLE_INTENT_TERMS.join('|')})\\b`).test(text)) {
     return false;
   }
-  return /\b(add|include|set|make|update|change|use|with|to|increase|decrease|generate|create)\b/.test(text);
+  return new RegExp(`\\b(?:${OPERATION_COUNT_INTENT_TERMS.join('|')})\\b`).test(text);
 }
 
 function promptMentionsDistributionChange(lowerPrompt) {
@@ -1057,7 +1103,8 @@ function promptMentionsDistributionChange(lowerPrompt) {
   if (!text) {
     return false;
   }
-  return /\bdistribution\b|\buniform\b|\bnormal\b|\bgaussian\b|\bbeta\b|\bzipf(?:ian)?\b|\bexponential\b|\blog[- ]?normal\b|\bpoisson\b|\bweibull\b|\bpareto\b/.test(text);
+  return /\bdistribution\b/.test(text)
+    || new RegExp(`\\b(?:${SELECTION_DISTRIBUTION_TERMS.map((term) => escapeRegExp(term)).join('|')})\\b`).test(text);
 }
 
 function getOperationCapabilities(schemaHints, operationName) {
@@ -1684,20 +1731,8 @@ function detectSelectionDistribution(lowerPrompt, allowedDistributions) {
     ? allowedDistributions
     : DEFAULT_SELECTION_DISTRIBUTIONS;
 
-  const aliasMap = {
-    uniform: ['uniform'],
-    normal: ['normal', 'gaussian'],
-    beta: ['beta'],
-    zipf: ['zipf', 'zipfian'],
-    exponential: ['exponential'],
-    log_normal: ['log_normal', 'log-normal', 'log normal'],
-    poisson: ['poisson'],
-    weibull: ['weibull'],
-    pareto: ['pareto']
-  };
-
   for (const candidate of candidates) {
-    const aliases = aliasMap[candidate] || [candidate];
+    const aliases = SELECTION_DISTRIBUTION_ALIASES[candidate] || [candidate];
     const matched = aliases.some((alias) => {
       const escaped = escapeRegExp(alias);
       const regex = new RegExp('\\b' + escaped + '\\b', 'i');
@@ -1712,29 +1747,11 @@ function detectSelectionDistribution(lowerPrompt, allowedDistributions) {
 }
 
 function getOperationPromptPatternSource(operationName) {
-  const sources = {
-    inserts: 'insert(?:s|ion)?',
-    updates: 'update(?:s)?',
-    merges: 'merge(?:s)?|read[- ]?modify[- ]?write|rmw',
-    point_queries: 'point\\s+quer(?:y|ie|ies)|point\\s+read(?:s)?',
-    range_queries: 'range\\s+quer(?:y|ie|ies)',
-    point_deletes: 'point\\s+delete(?:s)?',
-    range_deletes: 'range\\s+delete(?:s)?',
-    empty_point_queries: 'empty\\s+point\\s+quer(?:y|ie|ies)|empty\\s+point\\s+read(?:s)?|missing\\s+point\\s+quer(?:y|ie|ies)',
-    empty_point_deletes: 'empty\\s+point\\s+delete(?:s)?|missing\\s+point\\s+delete(?:s)?|non[- ]?existent\\s+point\\s+delete(?:s)?',
-    sorted: 'sorted'
-  };
-  return sources[operationName] || null;
+  return OPERATION_PROMPT_PATTERN_SOURCES[operationName] || null;
 }
 
 function getOperationPromptBlockedPrefixes(operationName) {
-  if (operationName === 'point_queries') {
-    return ['empty', 'missing'];
-  }
-  if (operationName === 'point_deletes') {
-    return ['empty', 'missing', 'non existent', 'non-existent', 'nonexistent'];
-  }
-  return [];
+  return OPERATION_PROMPT_BLOCKED_PREFIXES[operationName] || [];
 }
 
 function operationPatternMatchesWithPrefixGuards(text, regex, blockedPrefixes) {
