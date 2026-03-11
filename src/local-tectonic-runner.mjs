@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { createReadStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { validateWorkloadSpec } from './workload-spec-validation.mjs';
 
 const HOST = process.env.LOCAL_RUNNER_HOST || '127.0.0.1';
 const PORT = parseInteger(process.env.LOCAL_RUNNER_PORT, 8788);
@@ -668,67 +669,6 @@ function normalizeSpecPayload(rawSpec) {
     }
   }
   return null;
-}
-
-function validateWorkloadSpec(spec) {
-  const errors = [];
-  if (!spec || typeof spec !== 'object') {
-    return ['spec_json must be an object.'];
-  }
-
-  if (!Array.isArray(spec.sections) || spec.sections.length === 0) {
-    errors.push('spec_json.sections must be a non-empty array.');
-    return errors;
-  }
-
-  spec.sections.forEach((section, sectionIndex) => {
-    if (!section || typeof section !== 'object') {
-      errors.push('sections[' + sectionIndex + '] must be an object.');
-      return;
-    }
-
-    if (!Array.isArray(section.groups) || section.groups.length === 0) {
-      errors.push('sections[' + sectionIndex + '].groups must be a non-empty array.');
-      return;
-    }
-
-    section.groups.forEach((group, groupIndex) => {
-      if (!group || typeof group !== 'object') {
-        errors.push('sections[' + sectionIndex + '].groups[' + groupIndex + '] must be an object.');
-        return;
-      }
-
-      const operationKeys = Object.keys(group).filter((key) => {
-        if (key === 'character_set') {
-          return false;
-        }
-        const value = group[key];
-        return value && typeof value === 'object';
-      });
-
-      if (operationKeys.length === 0) {
-        errors.push('sections[' + sectionIndex + '].groups[' + groupIndex + '] must include at least one operation object.');
-        return;
-      }
-
-      operationKeys.forEach((operationKey) => {
-        const operation = group[operationKey];
-        if (!operation || typeof operation !== 'object') {
-          return;
-        }
-        if (!Object.prototype.hasOwnProperty.call(operation, 'op_count')) {
-          errors.push('sections[' + sectionIndex + '].groups[' + groupIndex + '].' + operationKey + '.op_count is required.');
-          return;
-        }
-        const opCount = Number(operation.op_count);
-        if (!Number.isFinite(opCount) || opCount < 0) {
-          errors.push('sections[' + sectionIndex + '].groups[' + groupIndex + '].' + operationKey + '.op_count must be a non-negative number.');
-        }
-      });
-    });
-  });
-
-  return errors.slice(0, 32);
 }
 
 function createRunId() {

@@ -520,7 +520,8 @@
     }
 
     .field input,
-    .field select {
+    .field select,
+    .field textarea {
       width: 100%;
       padding: 10px 12px;
       background: #fff;
@@ -533,8 +534,16 @@
       transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
 
+    .field textarea {
+      min-height: 96px;
+      resize: vertical;
+      font-family: 'JetBrains Mono', monospace;
+      line-height: 1.45;
+    }
+
     .field input:focus,
-    .field select:focus {
+    .field select:focus,
+    .field textarea:focus {
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
     }
@@ -702,6 +711,64 @@
     }
 
     .op-default-btn:hover {
+      border-color: var(--accent);
+      color: #fff;
+      background: var(--accent);
+    }
+
+    .advanced-summary {
+      border: 1px solid #d8e8f5;
+      border-radius: 10px;
+      background: #f7fbff;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .advanced-summary-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #4d667d;
+    }
+
+    .advanced-summary-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .advanced-summary-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      border: 1px solid #dbe7f3;
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 8px;
+    }
+
+    .advanced-summary-text {
+      font-size: 12px;
+      line-height: 1.4;
+      color: #2c465b;
+    }
+
+    .advanced-summary-clear {
+      border: 1px solid #cae3df;
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 11px;
+      color: #0f4f4a;
+      background: #f4fbfa;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .advanced-summary-clear:hover {
       border-color: var(--accent);
       color: #fff;
       background: var(--accent);
@@ -1056,6 +1123,14 @@
                   <input type="number" id="formGroups" min="1" step="1" placeholder="1">
                   <small class="field-description" id="groupsDescription"></small>
                 </label>
+                <div class="field">
+                  <span id="skipKeyContainsCheckLabel">Skip Key Contains Check</span>
+                  <label class="checkbox-item">
+                    <input type="checkbox" id="formSkipKeyContainsCheck">
+                    <span>Enable across sections</span>
+                  </label>
+                  <small class="field-description" id="skipKeyContainsCheckDescription"></small>
+                </div>
               </div>
 
               <div class="preset-row">

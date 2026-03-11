@@ -2,9 +2,11 @@
     const formCharacterSet = document.getElementById('formCharacterSet');
     const formSections = document.getElementById('formSections');
     const formGroups = document.getElementById('formGroups');
+    const formSkipKeyContainsCheck = document.getElementById('formSkipKeyContainsCheck');
     const formCharacterSetLabel = document.getElementById('formCharacterSetLabel');
     const formSectionsLabel = document.getElementById('formSectionsLabel');
     const formGroupsLabel = document.getElementById('formGroupsLabel');
+    const skipKeyContainsCheckLabel = document.getElementById('skipKeyContainsCheckLabel');
     const operationsTitle = document.getElementById('operationsTitle');
     const presetButtons = document.querySelectorAll('.preset-btn');
     const operationToggles = document.getElementById('operationToggles');
@@ -20,6 +22,7 @@
     const characterSetDescription = document.getElementById('characterSetDescription');
     const sectionsDescription = document.getElementById('sectionsDescription');
     const groupsDescription = document.getElementById('groupsDescription');
+    const skipKeyContainsCheckDescription = document.getElementById('skipKeyContainsCheckDescription');
     const validateBtn = document.getElementById('validateBtn');
     const downloadJsonBtn = document.getElementById('downloadJsonBtn');
     const runWorkloadBtn = document.getElementById('runWorkloadBtn');
@@ -45,7 +48,8 @@
       'point_deletes',
       'range_deletes',
       'empty_point_queries',
-      'empty_point_deletes'
+      'empty_point_deletes',
+      'sorted'
     ];
     const DEFAULT_SELECTION_DISTRIBUTIONS = [
       'uniform',
@@ -96,6 +100,8 @@
       selection_shape: 2
     };
     const DEFAULT_STRING_PATTERNS = ['uniform', 'weighted', 'segmented', 'hot_range'];
+    const OPERATION_NUMBER_EXPR_FIELDS = ['op_count', 'k', 'l', 'selectivity'];
+    const ADVANCED_OPERATION_FIELDS = ['op_count', 'k', 'l', 'selectivity', 'key', 'val', 'selection'];
     const STRING_PATTERN_DEFAULTS = {
       key_pattern: 'uniform',
       val_pattern: 'uniform',
@@ -180,6 +186,10 @@
         key_hot_len: STRING_PATTERN_DEFAULTS.key_hot_len,
         key_hot_amount: STRING_PATTERN_DEFAULTS.key_hot_amount,
         key_hot_probability: STRING_PATTERN_DEFAULTS.key_hot_probability
+      },
+      sorted: {
+        k: 100,
+        l: 1
       }
     };
 
@@ -207,7 +217,18 @@
       'range_queries',
       'range_deletes'
     ]);
+    let formOpsWithOpCountFields = new Set(DEFAULT_OPERATION_ORDER);
+    let formOpsWithOperationCharacterSet = new Set([
+      'inserts',
+      'updates',
+      'merges',
+      'range_queries',
+      'range_deletes',
+      'empty_point_queries',
+      'empty_point_deletes'
+    ]);
     let formOpsWithRangeFields = new Set(['range_queries', 'range_deletes']);
+    let formOpsWithSortedFields = new Set();
     let characterSetEnum = ['alphanumeric', 'alphabetic', 'numeric'];
     let rangeFormatEnum = ['StartCount', 'StartEnd'];
     let selectionDistributionEnum = [...DEFAULT_SELECTION_DISTRIBUTIONS];
@@ -215,6 +236,7 @@
     const assistantConversation = [];
     const assistantAnswerStore = {};
     const assistantClarificationIndex = new Map();
+    const operationAdvancedState = new Map();
     let assistantGateMessage = '';
     const lockedTopFields = new Set();
     const lockedOperationFields = new Map();
@@ -254,9 +276,12 @@
       if (groupProperties && typeof groupProperties === 'object') {
         const derivedOps = [];
         const derivedLabels = {};
+        const derivedOpCountFields = new Set();
+        const derivedOperationCharacterSets = new Set();
         const derivedKeyFields = new Set();
         const derivedValueFields = new Set();
         const derivedSelectionFields = new Set();
+        const derivedSortedFields = new Set();
         const derivedRangeFields = new Set();
 
         Object.entries(groupProperties).forEach(([op, rawNode]) => {
@@ -264,13 +289,25 @@
           if (!resolvedNode || typeof resolvedNode !== 'object' || !resolvedNode.properties) {
             return;
           }
-          // We treat operation blocks as group properties that define op_count.
-          if (!Object.prototype.hasOwnProperty.call(resolvedNode.properties, 'op_count')) {
+          const hasOpCount = Object.prototype.hasOwnProperty.call(resolvedNode.properties, 'op_count');
+          const hasSortedFields = Object.prototype.hasOwnProperty.call(resolvedNode.properties, 'k')
+            && Object.prototype.hasOwnProperty.call(resolvedNode.properties, 'l');
+          // Include operation blocks that define any executable workload fields.
+          if (!hasOpCount && !hasSortedFields) {
             return;
           }
 
           derivedOps.push(op);
           derivedLabels[op] = titleCaseFromSnake(op);
+          if (hasOpCount) {
+            derivedOpCountFields.add(op);
+          }
+          if (hasSortedFields) {
+            derivedSortedFields.add(op);
+          }
+          if (Object.prototype.hasOwnProperty.call(resolvedNode.properties, 'character_set')) {
+            derivedOperationCharacterSets.add(op);
+          }
 
           if (Object.prototype.hasOwnProperty.call(resolvedNode.properties, 'key')) {
             derivedKeyFields.add(op);
@@ -289,14 +326,17 @@
           }
         });
 
-        if (derivedOps.length > 0) {
-          operationOrder = derivedOps;
-          operationLabels = derivedLabels;
-          formOpsWithKeyFields = derivedKeyFields;
-          formOpsWithValueFields = derivedValueFields;
-          formOpsWithSelectionFields = derivedSelectionFields;
-          formOpsWithRangeFields = derivedRangeFields;
-        }
+      if (derivedOps.length > 0) {
+        operationOrder = derivedOps;
+        operationLabels = derivedLabels;
+        formOpsWithKeyFields = derivedKeyFields;
+        formOpsWithValueFields = derivedValueFields;
+        formOpsWithSelectionFields = derivedSelectionFields;
+        formOpsWithOpCountFields = derivedOpCountFields;
+        formOpsWithOperationCharacterSet = derivedOperationCharacterSets;
+        formOpsWithSortedFields = derivedSortedFields;
+        formOpsWithRangeFields = derivedRangeFields;
+      }
       }
 
       const derivedCharacterSetEnum = schema.$defs && schema.$defs.CharacterSet && Array.isArray(schema.$defs.CharacterSet.enum)
@@ -550,6 +590,7 @@
     function onFormChange(event) {
       const eventTarget = event && event.target ? event.target : null;
       markFieldAsUserLocked(eventTarget);
+      clearAdvancedStateForFormEdit(eventTarget);
       if (eventTarget && eventTarget.classList && eventTarget.classList.contains('operation-toggle')) {
         const op = eventTarget.value;
         const isEnabled = eventTarget.checked;
@@ -569,11 +610,96 @@
       updateJsonFromForm();
     }
 
+    function clearAdvancedStateForFormEdit(eventTarget) {
+      if (!eventTarget || !eventTarget.dataset || !eventTarget.dataset.op || !eventTarget.dataset.field) {
+        return;
+      }
+      const op = eventTarget.dataset.op;
+      const field = eventTarget.dataset.field;
+      if (field === 'op_count' || field === 'k' || field === 'l' || field === 'selectivity') {
+        clearAdvancedFieldValue(op, field);
+        return;
+      }
+      if (
+        field === 'selection_distribution'
+        || field === 'selection_min'
+        || field === 'selection_max'
+        || field === 'selection_mean'
+        || field === 'selection_std_dev'
+        || field === 'selection_alpha'
+        || field === 'selection_beta'
+        || field === 'selection_n'
+        || field === 'selection_s'
+        || field === 'selection_lambda'
+        || field === 'selection_scale'
+        || field === 'selection_shape'
+      ) {
+        clearAdvancedFieldValue(op, 'selection');
+        return;
+      }
+      if (field === 'key_pattern' || field === 'key_len' || field === 'key_hot_len' || field === 'key_hot_amount' || field === 'key_hot_probability') {
+        clearAdvancedFieldValue(op, 'key');
+        return;
+      }
+      if (field === 'val_pattern' || field === 'val_len' || field === 'val_hot_len' || field === 'val_hot_amount' || field === 'val_hot_probability') {
+        clearAdvancedFieldValue(op, 'val');
+      }
+    }
+
     function ensureLockedOperationFieldSet(op) {
       if (!lockedOperationFields.has(op)) {
         lockedOperationFields.set(op, new Set());
       }
       return lockedOperationFields.get(op);
+    }
+
+    function ensureOperationAdvancedEntry(op) {
+      if (!operationAdvancedState.has(op)) {
+        operationAdvancedState.set(op, {});
+      }
+      return operationAdvancedState.get(op);
+    }
+
+    function getAdvancedFieldValue(op, field) {
+      const entry = operationAdvancedState.get(op);
+      if (!entry || !Object.prototype.hasOwnProperty.call(entry, field)) {
+        return null;
+      }
+      return entry[field];
+    }
+
+    function setAdvancedFieldValue(op, field, value) {
+      const normalized = sanitizeTypedExpression(
+        value,
+        field === 'selection' ? 'distribution' : (['key', 'val'].includes(field) ? 'string_expr' : 'number_expr')
+      );
+      const entry = ensureOperationAdvancedEntry(op);
+      if (normalized === null) {
+        delete entry[field];
+      } else {
+        entry[field] = normalized;
+      }
+      if (Object.keys(entry).length === 0) {
+        operationAdvancedState.delete(op);
+      }
+      refreshAdvancedExpressionSummary(op);
+    }
+
+    function clearAdvancedFieldValue(op, field) {
+      const entry = operationAdvancedState.get(op);
+      if (!entry) {
+        return;
+      }
+      delete entry[field];
+      if (Object.keys(entry).length === 0) {
+        operationAdvancedState.delete(op);
+      }
+      refreshAdvancedExpressionSummary(op);
+    }
+
+    function clearAllAdvancedFieldValues(op) {
+      operationAdvancedState.delete(op);
+      refreshAdvancedExpressionSummary(op);
     }
 
     function lockTopField(fieldName) {
@@ -617,6 +743,10 @@
         lockTopField('groups_per_section');
         return;
       }
+      if (eventTarget === formSkipKeyContainsCheck) {
+        lockTopField('skip_key_contains_check');
+        return;
+      }
       if (eventTarget.classList && eventTarget.classList.contains('operation-toggle')) {
         lockOperationField(eventTarget.value, 'enabled');
         return;
@@ -649,6 +779,7 @@
     }
 
     function applyDefaultsToOperation(op) {
+      clearAllAdvancedFieldValues(op);
       const defaults = OPERATION_DEFAULTS[op] || {};
       Object.entries(defaults).forEach(([field, value]) => {
         setOperationInputValue(op, field, value);
@@ -872,6 +1003,12 @@
       if (field === 'op_count') {
         return getOperationFieldDescription(op, 'op_count');
       }
+      if (field === 'k') {
+        return getOperationFieldDescription(op, 'k');
+      }
+      if (field === 'l') {
+        return getOperationFieldDescription(op, 'l');
+      }
       if (field === 'key_len') {
         return combineDescriptions([getOperationFieldDescription(op, 'key'), stringLenDescription]);
       }
@@ -1007,10 +1144,12 @@
       const characterSetHelp = getTopLevelDescription('character_set');
       const sectionsHelp = getTopLevelDescription('sections');
       const groupsHelp = getSectionDescription('groups');
+      const skipKeyContainsHelp = getSectionDescription('skip_key_contains_check');
 
       setInlineLabelWithHelp(formCharacterSetLabel, 'Character Set', characterSetHelp);
       setInlineLabelWithHelp(formSectionsLabel, 'Sections', sectionsHelp);
       setInlineLabelWithHelp(formGroupsLabel, 'Groups / Section', groupsHelp);
+      setInlineLabelWithHelp(skipKeyContainsCheckLabel, 'Skip Key Contains Check', skipKeyContainsHelp);
       setInlineLabelWithHelp(
         operationsTitle,
         'Operations',
@@ -1020,6 +1159,7 @@
       setDescriptionText(characterSetDescription, characterSetHelp);
       setDescriptionText(sectionsDescription, sectionsHelp);
       setDescriptionText(groupsDescription, groupsHelp);
+      setDescriptionText(skipKeyContainsCheckDescription, skipKeyContainsHelp);
     }
 
     function buildOperationControls() {
@@ -1152,17 +1292,52 @@
       const rangeFormatDefaults = getRangeFormatValues();
       const grid = document.createElement('div');
       grid.className = 'form-grid';
-      grid.appendChild(
-        createNumberField(
-          op,
-          'op_count',
-          'Op Count',
-          includeDescriptions ? defaults.op_count : (defaults.op_count || 500000),
-          '1',
-          '0',
-          includeDescriptions ? getUiFieldDescription(op, 'op_count') : ''
-        )
-      );
+      if (formOpsWithOperationCharacterSet.has(op)) {
+        grid.appendChild(
+          createOperationCharacterSetField(
+            op,
+            defaults.character_set || '',
+            includeDescriptions ? getOperationFieldDescription(op, 'character_set') : ''
+          )
+        );
+      }
+      if (formOpsWithOpCountFields.has(op)) {
+        grid.appendChild(
+          createNumberField(
+            op,
+            'op_count',
+            'Op Count',
+            includeDescriptions ? defaults.op_count : (defaults.op_count || 500000),
+            '1',
+            '0',
+            includeDescriptions ? getUiFieldDescription(op, 'op_count') : ''
+          )
+        );
+      }
+      if (formOpsWithSortedFields.has(op)) {
+        grid.appendChild(
+          createNumberField(
+            op,
+            'k',
+            'k',
+            includeDescriptions ? defaults.k : (defaults.k || 100),
+            '1',
+            '1',
+            includeDescriptions ? getUiFieldDescription(op, 'k') : ''
+          )
+        );
+        grid.appendChild(
+          createNumberField(
+            op,
+            'l',
+            'l',
+            includeDescriptions ? defaults.l : (defaults.l || 1),
+            '1',
+            '1',
+            includeDescriptions ? getUiFieldDescription(op, 'l') : ''
+          )
+        );
+      }
 
       if (formOpsWithKeyFields.has(op)) {
         grid.appendChild(
@@ -1329,10 +1504,12 @@
       }
 
       card.appendChild(grid);
+      card.appendChild(createAdvancedSummaryContainer(op));
       if (formOpsWithSelectionFields.has(op)) {
         refreshSelectionParamVisibility(op);
       }
       refreshStringPatternVisibility(op);
+      refreshAdvancedExpressionSummary(op);
       return card;
     }
 
@@ -1359,6 +1536,56 @@
         label.appendChild(desc);
       }
       return label;
+    }
+
+    function createOperationCharacterSetField(op, defaultValue, description = '') {
+      const label = document.createElement('label');
+      label.className = 'field';
+      const title = document.createElement('span');
+      appendTitleWithHelp(title, 'Operation Character Set', description);
+      const select = document.createElement('select');
+      select.dataset.op = op;
+      select.dataset.field = 'character_set';
+
+      const unsetOption = document.createElement('option');
+      unsetOption.value = '';
+      unsetOption.textContent = '(inherit)';
+      select.appendChild(unsetOption);
+
+      characterSetEnum.forEach((value) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        select.appendChild(option);
+      });
+
+      select.value = defaultValue || '';
+      label.appendChild(title);
+      label.appendChild(select);
+      if (description) {
+        const desc = document.createElement('small');
+        desc.className = 'field-description';
+        desc.textContent = description;
+        label.appendChild(desc);
+      }
+      return label;
+    }
+
+    function createAdvancedSummaryContainer(op) {
+      const container = document.createElement('div');
+      container.className = 'advanced-summary hidden';
+      container.id = 'advanced-summary-' + op;
+
+      const title = document.createElement('div');
+      title.className = 'advanced-summary-title';
+      title.textContent = 'Advanced Assistant Expressions';
+      container.appendChild(title);
+
+      const list = document.createElement('div');
+      list.className = 'advanced-summary-list';
+      list.dataset.op = op;
+      container.appendChild(list);
+      return container;
     }
 
     function createRangeFormatField(op, defaultValue, description = '') {
@@ -1623,7 +1850,131 @@
       return numeric;
     }
 
+    function sanitizeParsedExpression(value) {
+      if (value === null || value === undefined) {
+        return null;
+      }
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        return value;
+      }
+      if (Array.isArray(value)) {
+        try {
+          return JSON.parse(JSON.stringify(value));
+        } catch {
+          return null;
+        }
+      }
+      if (typeof value === 'object') {
+        try {
+          return JSON.parse(JSON.stringify(value));
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    }
+
+    function isExpressionObject(value) {
+      return !!value && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    function sanitizeTypedExpression(value, kind) {
+      const parsed = sanitizeParsedExpression(value);
+      if (parsed === null) {
+        return null;
+      }
+      if (kind === 'number_expr') {
+        return (typeof parsed === 'number' || isExpressionObject(parsed)) ? parsed : null;
+      }
+      if (kind === 'distribution') {
+        return isExpressionObject(parsed) ? parsed : null;
+      }
+      if (kind === 'string_expr') {
+        return (typeof parsed === 'string' || isExpressionObject(parsed)) ? parsed : null;
+      }
+      return null;
+    }
+
+    function formatExpressionSummary(value) {
+      if (typeof value === 'string') {
+        return '"' + value + '"';
+      }
+      if (typeof value === 'number') {
+        return String(value);
+      }
+      if (!isExpressionObject(value)) {
+        return 'configured';
+      }
+      const keys = Object.keys(value);
+      if (keys.length !== 1) {
+        return 'configured';
+      }
+      const variant = keys[0];
+      const inner = value[variant];
+      if (!isExpressionObject(inner)) {
+        return variant;
+      }
+      const params = Object.entries(inner)
+        .map(([key, paramValue]) => {
+          if (Array.isArray(paramValue)) {
+            return key + ':' + paramValue.length;
+          }
+          if (isExpressionObject(paramValue)) {
+            const nestedKeys = Object.keys(paramValue);
+            return key + ':' + (nestedKeys[0] || 'object');
+          }
+          return key + ':' + String(paramValue);
+        })
+        .join(', ');
+      return variant + (params ? ' (' + params + ')' : '');
+    }
+
+    function refreshAdvancedExpressionSummary(op) {
+      const container = document.getElementById('advanced-summary-' + op);
+      if (!container) {
+        return;
+      }
+      const list = container.querySelector('.advanced-summary-list');
+      if (!list) {
+        return;
+      }
+      list.innerHTML = '';
+      const entry = operationAdvancedState.get(op) || {};
+      const activeFields = ADVANCED_OPERATION_FIELDS.filter((field) => Object.prototype.hasOwnProperty.call(entry, field));
+      if (activeFields.length === 0) {
+        container.classList.add('hidden');
+        return;
+      }
+      activeFields.forEach((field) => {
+        const item = document.createElement('div');
+        item.className = 'advanced-summary-item';
+
+        const text = document.createElement('div');
+        text.className = 'advanced-summary-text';
+        text.textContent = titleCaseFromSnake(field) + ': ' + formatExpressionSummary(entry[field]);
+        item.appendChild(text);
+
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.className = 'advanced-summary-clear';
+        clearBtn.textContent = 'Clear';
+        clearBtn.addEventListener('click', () => {
+          clearAdvancedFieldValue(op, field);
+          updateJsonFromForm();
+        });
+        item.appendChild(clearBtn);
+
+        list.appendChild(item);
+      });
+      container.classList.remove('hidden');
+    }
+
     function buildStringExprFromForm(op, target, characterSet, defaults) {
+      const rawExpression = sanitizeTypedExpression(getAdvancedFieldValue(op, target), 'string_expr');
+      if (rawExpression !== null) {
+        return rawExpression;
+      }
+
       const isKey = target === 'key';
       const patternField = isKey ? 'key_pattern' : 'val_pattern';
       const lenField = isKey ? 'key_len' : 'val_len';
@@ -1686,7 +2037,20 @@
       );
     }
 
+    function buildNumberExprFromForm(op, field, fallback) {
+      const rawExpression = sanitizeTypedExpression(getAdvancedFieldValue(op, field), 'number_expr');
+      if (rawExpression !== null) {
+        return rawExpression;
+      }
+      return numberOrDefault(readOperationField(op, field), fallback);
+    }
+
     function buildSelectionDistributionSpec(op, defaults) {
+      const rawExpression = sanitizeTypedExpression(getAdvancedFieldValue(op, 'selection'), 'distribution');
+      if (rawExpression !== null) {
+        return rawExpression;
+      }
+
       let distributionName = readOperationField(op, 'selection_distribution')
         || defaults.selection_distribution
         || 'uniform';
@@ -1714,16 +2078,29 @@
 
     function buildOperationSpec(op, characterSet) {
       const defaults = OPERATION_DEFAULTS[op] || {};
-      const config = {
-        op_count: numberOrDefault(readOperationField(op, 'op_count'), defaults.op_count || 500000)
-      };
+      const config = {};
+      const operationCharacterSet = readOperationField(op, 'character_set') || '';
+      const effectiveCharacterSet = operationCharacterSet || characterSet || null;
+
+      if (operationCharacterSet) {
+        config.character_set = operationCharacterSet;
+      }
+
+      if (formOpsWithOpCountFields.has(op)) {
+        config.op_count = buildNumberExprFromForm(op, 'op_count', defaults.op_count || 500000);
+      }
+
+      if (formOpsWithSortedFields.has(op)) {
+        config.k = buildNumberExprFromForm(op, 'k', defaults.k === undefined ? 100 : defaults.k);
+        config.l = buildNumberExprFromForm(op, 'l', defaults.l === undefined ? 1 : defaults.l);
+      }
 
       if (formOpsWithKeyFields.has(op)) {
-        config.key = buildStringExprFromForm(op, 'key', characterSet, defaults);
+        config.key = buildStringExprFromForm(op, 'key', effectiveCharacterSet, defaults);
       }
 
       if (formOpsWithValueFields.has(op)) {
-        config.val = buildStringExprFromForm(op, 'val', characterSet, defaults);
+        config.val = buildStringExprFromForm(op, 'val', effectiveCharacterSet, defaults);
       }
 
       if (formOpsWithSelectionFields.has(op)) {
@@ -1735,7 +2112,7 @@
           ? 0.01
           : defaults.selectivity;
         const rangeFormatDefaults = getRangeFormatValues();
-        config.selectivity = numberOrDefault(readOperationField(op, 'selectivity'), selectivityDefault);
+        config.selectivity = buildNumberExprFromForm(op, 'selectivity', selectivityDefault);
         config.range_format = readOperationField(op, 'range_format') || defaults.range_format || rangeFormatDefaults[0];
       }
 
@@ -1745,6 +2122,7 @@
     function buildJsonFromForm() {
       const json = {};
       const characterSet = formCharacterSet.value.trim();
+      const skipKeyContainsCheck = !!(formSkipKeyContainsCheck && formSkipKeyContainsCheck.checked);
       if (characterSet) {
         json.character_set = characterSet;
       }
@@ -1763,6 +2141,9 @@
         const section = { groups: [] };
         if (characterSet) {
           section.character_set = characterSet;
+        }
+        if (skipKeyContainsCheck) {
+          section.skip_key_contains_check = true;
         }
 
         for (let g = 0; g < groupsCount; g += 1) {
@@ -1912,6 +2293,8 @@
         : null;
       if (options.length === 0) {
         if (type === 'top_field' && binding.field === 'character_set') {
+          options = [...characterSetEnum];
+        } else if (type === 'operation_field' && binding.field === 'character_set') {
           options = [...characterSetEnum];
         } else if (type === 'operation_field' && binding.field === 'selection_distribution') {
           options = getSelectionDistributionValues();
@@ -2074,6 +2457,9 @@
         if (binding.field === 'groups_per_section') {
           return formGroups ? formGroups.value : '';
         }
+        if (binding.field === 'skip_key_contains_check') {
+          return !!(formSkipKeyContainsCheck && formSkipKeyContainsCheck.checked);
+        }
       }
       if (binding.type === 'operation_field' && typeof binding.operation === 'string') {
         if (binding.field === 'enabled') {
@@ -2211,6 +2597,9 @@
             formGroups.value = String(numeric);
             lockTopField('groups_per_section');
           }
+        } else if (binding.field === 'skip_key_contains_check' && formSkipKeyContainsCheck) {
+          formSkipKeyContainsCheck.checked = value === true;
+          lockTopField('skip_key_contains_check');
         }
         updateJsonFromForm();
         return;
@@ -2257,6 +2646,16 @@
           return;
         }
 
+        if (field === 'character_set') {
+          const options = [''].concat(characterSetEnum);
+          if (typeof value === 'string' && options.includes(value)) {
+            setOperationInputValue(op, field, value);
+            lockOperationField(op, field);
+          }
+          updateJsonFromForm();
+          return;
+        }
+
         if (field === 'key_pattern' || field === 'val_pattern') {
           const options = getStringPatternValues();
           if (typeof value === 'string' && options.includes(value)) {
@@ -2274,6 +2673,11 @@
             setOperationInputValue(op, field, value);
             lockOperationField(op, field);
           }
+          updateJsonFromForm();
+          return;
+        }
+
+        if (field === 'key' || field === 'val' || field === 'selection') {
           updateJsonFromForm();
           return;
         }
@@ -2709,8 +3113,18 @@
       operationOrder.forEach((op) => {
         const toggle = getOperationToggle(op);
         const opState = { enabled: !!(toggle && toggle.checked) };
+        OPERATION_NUMBER_EXPR_FIELDS.forEach((field) => {
+          const rawExpression = sanitizeTypedExpression(getAdvancedFieldValue(op, field), 'number_expr');
+          if (rawExpression !== null) {
+            opState[field] = rawExpression;
+            return;
+          }
+          const value = toFiniteNumber(readOperationField(op, field));
+          if (value !== null) {
+            opState[field] = value;
+          }
+        });
         [
-          'op_count',
           'key_len',
           'val_len',
           'key_hot_len',
@@ -2729,12 +3143,22 @@
           'selection_s',
           'selection_lambda',
           'selection_scale',
-          'selection_shape',
-          'selectivity'
+          'selection_shape'
         ].forEach((field) => {
           const value = toFiniteNumber(readOperationField(op, field));
           if (value !== null) {
             opState[field] = value;
+          }
+        });
+        const operationCharacterSet = readOperationField(op, 'character_set');
+        if (operationCharacterSet) {
+          opState.character_set = operationCharacterSet;
+        }
+        ['key', 'val', 'selection'].forEach((field) => {
+          const kind = field === 'selection' ? 'distribution' : 'string_expr';
+          const rawExpression = sanitizeTypedExpression(getAdvancedFieldValue(op, field), kind);
+          if (rawExpression !== null) {
+            opState[field] = rawExpression;
           }
         });
         const selectionDistribution = readOperationField(op, 'selection_distribution');
@@ -2760,6 +3184,7 @@
         character_set: formCharacterSet && formCharacterSet.value ? formCharacterSet.value : null,
         sections_count: parsePositiveInt(formSections ? formSections.value : '') || null,
         groups_per_section: parsePositiveInt(formGroups ? formGroups.value : '') || null,
+        skip_key_contains_check: !!(formSkipKeyContainsCheck && formSkipKeyContainsCheck.checked),
         operations
       };
     }
@@ -2768,9 +3193,12 @@
       const capabilities = {};
       operationOrder.forEach((op) => {
         capabilities[op] = {
+          has_op_count: formOpsWithOpCountFields.has(op),
+          has_character_set: formOpsWithOperationCharacterSet.has(op),
           has_key: formOpsWithKeyFields.has(op),
           has_val: formOpsWithValueFields.has(op),
           has_selection: formOpsWithSelectionFields.has(op),
+          has_sorted: formOpsWithSortedFields.has(op),
           has_range: formOpsWithRangeFields.has(op)
         };
       });
@@ -2824,6 +3252,14 @@
         formGroups.value = String(Math.floor(patch.groups_per_section));
       }
 
+      if (
+        Object.prototype.hasOwnProperty.call(patch, 'skip_key_contains_check')
+        && formSkipKeyContainsCheck
+        && !isTopFieldLocked('skip_key_contains_check')
+      ) {
+        formSkipKeyContainsCheck.checked = patch.skip_key_contains_check === true;
+      }
+
       if (patch.clear_operations === true && allowOperationSetChanges) {
         operationOrder.forEach((op) => {
           if (!isOperationFieldLocked(op, 'enabled')) {
@@ -2855,8 +3291,27 @@
           }
         }
 
+        ['op_count', 'k', 'l', 'selectivity'].forEach((field) => {
+          if (!Object.prototype.hasOwnProperty.call(opPatch, field)) {
+            return;
+          }
+          if (isOperationFieldLocked(op, field)) {
+            return;
+          }
+          const exprValue = sanitizeTypedExpression(opPatch[field], 'number_expr');
+          if (exprValue !== null && typeof exprValue === 'object') {
+            setAdvancedFieldValue(op, field, exprValue);
+            return;
+          }
+          const numericValue = toFiniteNumber(opPatch[field]);
+          if (numericValue === null) {
+            return;
+          }
+          clearAdvancedFieldValue(op, field);
+          setOperationInputValue(op, field, numericValue);
+        });
+
         [
-          'op_count',
           'key_len',
           'val_len',
           'key_hot_len',
@@ -2867,22 +3322,6 @@
           'val_hot_probability',
           'selection_min',
           'selection_max',
-          'selectivity'
-        ].forEach((field) => {
-          if (!Object.prototype.hasOwnProperty.call(opPatch, field)) {
-            return;
-          }
-          if (isOperationFieldLocked(op, field)) {
-            return;
-          }
-          const numericValue = toFiniteNumber(opPatch[field]);
-          if (numericValue === null) {
-            return;
-          }
-          setOperationInputValue(op, field, numericValue);
-        });
-
-        [
           'selection_mean',
           'selection_std_dev',
           'selection_alpha',
@@ -2903,12 +3342,41 @@
           if (numericValue === null) {
             return;
           }
+          if (field.startsWith('selection_')) {
+            clearAdvancedFieldValue(op, 'selection');
+          } else if (field.startsWith('key_')) {
+            clearAdvancedFieldValue(op, 'key');
+          } else if (field.startsWith('val_')) {
+            clearAdvancedFieldValue(op, 'val');
+          }
           setOperationInputValue(op, field, numericValue);
+        });
+
+        if (typeof opPatch.character_set === 'string' && !isOperationFieldLocked(op, 'character_set')) {
+          const validCharacterSets = [''].concat(characterSetEnum);
+          if (validCharacterSets.includes(opPatch.character_set)) {
+            setOperationInputValue(op, 'character_set', opPatch.character_set);
+          }
+        }
+
+        ['key', 'val', 'selection'].forEach((field) => {
+          if (!Object.prototype.hasOwnProperty.call(opPatch, field)) {
+            return;
+          }
+          if (isOperationFieldLocked(op, field)) {
+            return;
+          }
+          const exprValue = sanitizeTypedExpression(opPatch[field], field === 'selection' ? 'distribution' : 'string_expr');
+          if (exprValue === null) {
+            return;
+          }
+          setAdvancedFieldValue(op, field, exprValue);
         });
 
         if (typeof opPatch.selection_distribution === 'string' && !isOperationFieldLocked(op, 'selection_distribution')) {
           const validDistributions = getSelectionDistributionValues();
           if (validDistributions.includes(opPatch.selection_distribution)) {
+            clearAdvancedFieldValue(op, 'selection');
             setOperationInputValue(op, 'selection_distribution', opPatch.selection_distribution);
             refreshSelectionParamVisibility(op);
           }
@@ -2917,6 +3385,7 @@
         if (typeof opPatch.key_pattern === 'string' && !isOperationFieldLocked(op, 'key_pattern')) {
           const validPatterns = getStringPatternValues();
           if (validPatterns.includes(opPatch.key_pattern)) {
+            clearAdvancedFieldValue(op, 'key');
             setOperationInputValue(op, 'key_pattern', opPatch.key_pattern);
             refreshStringPatternVisibility(op);
           }
@@ -2925,6 +3394,7 @@
         if (typeof opPatch.val_pattern === 'string' && !isOperationFieldLocked(op, 'val_pattern')) {
           const validPatterns = getStringPatternValues();
           if (validPatterns.includes(opPatch.val_pattern)) {
+            clearAdvancedFieldValue(op, 'val');
             setOperationInputValue(op, 'val_pattern', opPatch.val_pattern);
             refreshStringPatternVisibility(op);
           }
@@ -2991,13 +3461,8 @@
         return false;
       }
 
-      const byName = op.toLowerCase();
-      if (lower.includes(byName) || lower.includes(byName.replace(/_/g, ' '))) {
-        return true;
-      }
-
-      const label = (operationLabels[op] || op).toLowerCase().replace(/\s+/g, ' ');
-      if (label && lower.includes(label)) {
+      const escapedOp = op.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`\\b${escapedOp}\\b`).test(lower)) {
         return true;
       }
 
@@ -3005,15 +3470,38 @@
         inserts: /\binsert(?:s|ion)?\b/,
         updates: /\bupdate(?:s)?\b/,
         merges: /\bmerge(?:s)?\b|\bread[- ]?modify[- ]?write\b|\brmw\b/,
-        point_queries: /\bpoint\s*(?:query|queries|read|reads)\b/,
-        range_queries: /\brange\s*(?:query|queries)\b/,
-        point_deletes: /\bpoint\s*delete(?:s)?\b/,
-        range_deletes: /\brange\s*delete(?:s)?\b/,
-        empty_point_queries: /\bempty\s+point\s*(?:query|queries|read|reads)\b/,
-        empty_point_deletes: /\bempty\s+point\s*delete(?:s)?\b/
+        point_queries: /\bpoint\s+(?:query|querie|queries|read|reads)\b/,
+        range_queries: /\brange\s+(?:query|querie|queries)\b/,
+        point_deletes: /\bpoint\s+delete(?:s)?\b/,
+        range_deletes: /\brange\s+delete(?:s)?\b/,
+        empty_point_queries: /\b(?:empty|missing)\s+point\s+(?:query|querie|queries|read|reads)\b/,
+        empty_point_deletes: /\b(?:empty|missing|non[- ]?existent)\s+point\s+delete(?:s)?\b/,
+        sorted: /\bsorted\b/
+      };
+      const blockedPrefixesByOp = {
+        point_queries: ['empty', 'missing'],
+        point_deletes: ['empty', 'missing', 'non existent', 'non-existent', 'nonexistent']
       };
       const matcher = matcherByOp[op];
-      return !!(matcher && matcher.test(lower));
+      if (!matcher) {
+        return false;
+      }
+
+      const guardedMatcher = new RegExp(matcher.source, 'g');
+      const blockedPrefixes = blockedPrefixesByOp[op] || [];
+      if (!blockedPrefixes.length) {
+        return guardedMatcher.test(lower);
+      }
+
+      let match = null;
+      while ((match = guardedMatcher.exec(lower)) !== null) {
+        const prefix = lower.slice(0, match.index).trimEnd();
+        const isBlocked = blockedPrefixes.some((blockedPrefix) => prefix.endsWith(blockedPrefix));
+        if (!isBlocked) {
+          return true;
+        }
+      }
+      return false;
     }
 
     async function handleRunWorkload() {
@@ -3150,9 +3638,14 @@
     function resetFormInterface() {
       workloadForm.reset();
       clearFieldLocks();
+      operationAdvancedState.clear();
       operationOrder.forEach((op) => setOperationCardVisibility(op, false));
+      operationOrder.forEach((op) => refreshAdvancedExpressionSummary(op));
       formSections.value = '';
       formGroups.value = '';
+      if (formSkipKeyContainsCheck) {
+        formSkipKeyContainsCheck.checked = false;
+      }
       clearAssistantThread();
       setAssistantStatus('Ready', 'default');
       setRunButtonBusy(false);

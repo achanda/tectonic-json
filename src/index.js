@@ -12,7 +12,8 @@ const FALLBACK_OPERATION_ORDER = [
   'point_deletes',
   'range_deletes',
   'empty_point_queries',
-  'empty_point_deletes'
+  'empty_point_deletes',
+  'sorted'
 ];
 const DEFAULT_SELECTION_DISTRIBUTIONS = [
   'uniform',
@@ -25,6 +26,17 @@ const DEFAULT_SELECTION_DISTRIBUTIONS = [
   'weibull',
   'pareto'
 ];
+const DISTRIBUTION_REQUIRED_KEYS = {
+  uniform: ['min', 'max'],
+  normal: ['mean', 'std_dev'],
+  beta: ['alpha', 'beta'],
+  zipf: ['n', 's'],
+  exponential: ['lambda'],
+  log_normal: ['mean', 'std_dev'],
+  poisson: ['lambda'],
+  weibull: ['scale', 'shape'],
+  pareto: ['scale', 'shape']
+};
 const SELECTION_DISTRIBUTION_PARAM_KEYS = {
   uniform: ['selection_min', 'selection_max'],
   normal: ['selection_mean', 'selection_std_dev'],
@@ -64,6 +76,12 @@ const TOP_LEVEL_BINDING_FIELDS = new Set(['character_set', 'sections_count', 'gr
 const OPERATION_BINDING_FIELDS = new Set([
   'enabled',
   'op_count',
+  'selection',
+  'character_set',
+  'key',
+  'val',
+  'k',
+  'l',
   'key_len',
   'val_len',
   'key_pattern',
@@ -89,6 +107,7 @@ const OPERATION_BINDING_FIELDS = new Set([
   'selectivity',
   'range_format'
 ]);
+TOP_LEVEL_BINDING_FIELDS.add('skip_key_contains_check');
 const CLARIFICATION_INPUT_TYPES = new Set(['number', 'enum', 'multi_enum', 'boolean', 'text']);
 const ASSIST_RESPONSE_JSON_SCHEMA = {
   type: 'object',
@@ -104,6 +123,7 @@ const ASSIST_RESPONSE_JSON_SCHEMA = {
         character_set: { type: ['string', 'null'] },
         sections_count: { type: ['number', 'null'] },
         groups_per_section: { type: ['number', 'null'] },
+        skip_key_contains_check: { type: 'boolean' },
         clear_operations: { type: 'boolean' },
         operations: {
           type: 'object',
@@ -564,17 +584,20 @@ function buildAssistantMessages(prompt, schemaHints, formState, currentJson, con
     'Patch must be sparse: include only fields you want to change.',
     'Never include null fields.',
     'Never set enabled=false unless the user explicitly asks to disable/remove an operation.',
-    'For selection updates, set selection_distribution and matching params.',
-    'For key/value string expression updates, set key_pattern/val_pattern and matching params.',
+    'For selection updates, set selection directly using a Distribution object; selection_distribution and matching params are also valid fallback fields.',
+    'For key/value string expression updates, set key and val directly using scalar strings or StringExpr objects; fallback to key_pattern/val_pattern is also valid.',
+    'For op_count/k/l/selectivity support NumberExpr: either scalar numbers or Distribution objects when allowed by schema.',
+    'For operation-level character_set, set operation.character_set.',
+    'Clarifications must ask for plain-language values only. Never ask the user to type JSON, object literals, or schema syntax.',
     'If user asks for a distribution but no selection-capable operation is active, ask which operations should use it.',
     'Output contract (sparse):',
-    '{ "summary": "short sentence", "patch": { "character_set": "...", "sections_count": 1, "groups_per_section": 1, "clear_operations": false, "operations": { "<operation_name>": { "enabled": true, "op_count": 100000, "key_pattern": "uniform", "val_pattern": "uniform", "selection_distribution": "normal", "selection_mean": 0.5, "selection_std_dev": 0.15 } } }, "clarifications": [{ "id": "clarify.operations", "text": "Which operations should be enabled?", "required": true, "binding": { "type": "operations_set" }, "input": "multi_enum", "options": ["inserts", "updates"], "default_behavior": "wait_for_user" }], "assumptions": [{ "id": "assume.character_set", "text": "Using alphanumeric character set.", "field_ref": "character_set", "reason": "missing_input", "applied_value": "alphanumeric" }] }',
+    '{ "summary": "short sentence", "patch": { "character_set": "...", "sections_count": 1, "groups_per_section": 1, "skip_key_contains_check": true, "clear_operations": false, "operations": { "<operation_name>": { "enabled": true, "op_count": 100000, "character_set": "alphanumeric", "key": "id", "val": { "uniform": { "len": 16 } }, "selection": { "normal": { "mean": 0, "std_dev": 1 } }, "selection_distribution": "normal", "selection_mean": 0.5, "selection_std_dev": 0.15 } } }, "clarifications": [{ "id": "clarify.operations", "text": "Which operations should be enabled?", "required": true, "binding": { "type": "operations_set" }, "input": "multi_enum", "options": ["inserts", "updates"], "default_behavior": "wait_for_user" }], "assumptions": [{ "id": "assume.character_set", "text": "Using alphanumeric character set.", "field_ref": "character_set", "reason": "missing_input", "applied_value": "alphanumeric" }] }',
     'clarifications[].binding.type must be one of: top_field, operation_field, operations_set.',
-    'For top_field binding include field from: character_set, sections_count, groups_per_section.',
+    'For top_field binding include field from: character_set, sections_count, groups_per_section, skip_key_contains_check.',
     'For operation_field binding include operation + field.',
     'input must be one of: number, enum, multi_enum, boolean, text.',
     'If clarification asks for distribution parameters (mean/std_dev/alpha/beta/lambda/scale/shape/min/max/n/s), bind it to operation_field + numeric input, not operations_set.',
-    'Allowed operation field names: enabled, op_count, key_len, val_len, key_pattern, val_pattern, key_hot_len, key_hot_amount, key_hot_probability, val_hot_len, val_hot_amount, val_hot_probability, selection_distribution, selection_min, selection_max, selection_mean, selection_std_dev, selection_alpha, selection_beta, selection_n, selection_s, selection_lambda, selection_scale, selection_shape, selectivity, range_format.',
+    'Allowed operation field names: enabled, character_set, op_count, key, val, selection, key_len, val_len, key_pattern, val_pattern, key_hot_len, key_hot_amount, key_hot_probability, val_hot_len, val_hot_amount, val_hot_probability, selection_distribution, selection_min, selection_max, selection_mean, selection_std_dev, selection_alpha, selection_beta, selection_n, selection_s, selection_lambda, selection_scale, selection_shape, selectivity, range_format, k, l.',
     'Allowed key/val patterns: uniform, weighted, segmented, hot_range.',
     'Rules:',
     '- Ask only for missing information.',
@@ -689,9 +712,10 @@ function normalizeFormState(rawState, schemaHints) {
   });
 
   return {
-    character_set: typeof input.character_set === 'string' ? input.character_set : null,
+    character_set: normalizeCharacterSetValue(input.character_set, schemaHints),
     sections_count: positiveIntegerOrNull(input.sections_count),
     groups_per_section: positiveIntegerOrNull(input.groups_per_section),
+    skip_key_contains_check: input.skip_key_contains_check === true,
     operations
   };
 }
@@ -771,6 +795,10 @@ function normalizeAssistantAnswers(rawAnswers) {
 function normalizeAssistPayload(rawPayload, schemaHints, formState, prompt) {
   const payload = rawPayload && typeof rawPayload === 'object' ? rawPayload : {};
   const patch = normalizePatch(payload.patch, schemaHints);
+  applyPromptOperationIntentFallback(patch, formState, prompt, schemaHints);
+  applyDeleteOperationDisambiguation(patch, formState, prompt, schemaHints);
+  applyPromptOperationFieldFallback(patch, formState, prompt, schemaHints);
+  restrictPatchToMentionedOperations(patch, prompt, schemaHints);
   constrainPatchToCurrentOperationScope(patch, formState, prompt, schemaHints);
   suppressSelectionPatchForStringDistributionPrompts(patch, formState, prompt, schemaHints);
   const clarificationContext = {
@@ -784,6 +812,13 @@ function normalizeAssistPayload(rawPayload, schemaHints, formState, prompt) {
     schemaHints,
     clarificationContext
   );
+  const filteredClarifications = suppressRedundantOperationClarifications(
+    clarifications,
+    patch,
+    formState,
+    prompt,
+    schemaHints
+  );
   const assumptions = normalizeAssumptionEntries(payload.assumptions);
   const summary = typeof payload.summary === 'string' && payload.summary.trim()
     ? payload.summary.trim()
@@ -792,11 +827,332 @@ function normalizeAssistPayload(rawPayload, schemaHints, formState, prompt) {
   return {
     summary,
     patch,
-    clarifications,
+    clarifications: filteredClarifications,
     assumptions,
-    questions: clarifications.map((entry) => entry.text),
+    questions: filteredClarifications.map((entry) => entry.text),
     assumption_texts: assumptions.map((entry) => entry.text)
   };
+}
+
+function applyPromptOperationIntentFallback(patch, formState, prompt, schemaHints) {
+  if (!patch || typeof patch !== 'object') {
+    return;
+  }
+  const lowerPrompt = String(prompt || '').toLowerCase();
+  if (!lowerPrompt) {
+    return;
+  }
+
+  const mentionedOps = getMentionedOperationsFromPrompt(lowerPrompt, schemaHints);
+  const currentEnabledOps = getEnabledOperationNames(formState || { operations: {} }, schemaHints);
+  const patchedEnabledOps = getEnabledOperationNames(
+    buildEffectiveState(patch, formState || { operations: {} }, schemaHints),
+    schemaHints
+  );
+
+  const hasExplicitOperationSetInPatch = schemaHints.operation_order.some((op) => {
+    const opPatch = patch.operations && patch.operations[op] ? patch.operations[op] : null;
+    return !!(opPatch && typeof opPatch.enabled === 'boolean');
+  });
+  if (hasExplicitOperationSetInPatch || patchedEnabledOps.length > 0 || mentionedOps.length === 0) {
+    if (mentionedOps.length === 0) {
+      return;
+    }
+  }
+
+  let targetOps = mentionedOps;
+  const exclusiveOp = schemaHints.operation_order.find((op) => promptExplicitlyRestrictsToOperation(lowerPrompt, op));
+  if (exclusiveOp) {
+    patch.clear_operations = true;
+    targetOps = [exclusiveOp];
+  }
+
+  targetOps.forEach((op) => {
+    if (!patch.operations[op] || typeof patch.operations[op] !== 'object') {
+      patch.operations[op] = {};
+    }
+    if (patch.operations[op].enabled !== false) {
+      patch.operations[op].enabled = true;
+    }
+  });
+
+  if (exclusiveOp && currentEnabledOps.length > 0) {
+    currentEnabledOps.forEach((op) => {
+      if (op === exclusiveOp) {
+        return;
+      }
+      if (!patch.operations[op] || typeof patch.operations[op] !== 'object') {
+        patch.operations[op] = {};
+      }
+      patch.operations[op].enabled = false;
+    });
+  }
+}
+
+function restrictPatchToMentionedOperations(patch, prompt, schemaHints) {
+  if (!patch || typeof patch !== 'object' || !patch.operations || typeof patch.operations !== 'object') {
+    return;
+  }
+  const lowerPrompt = String(prompt || '').toLowerCase();
+  const mentionedOps = getMentionedOperationsFromPrompt(lowerPrompt, schemaHints);
+  if (mentionedOps.length === 0) {
+    return;
+  }
+  const exclusiveOps = schemaHints.operation_order.filter((op) => promptExplicitlyRestrictsToOperation(lowerPrompt, op));
+  const isExclusive = exclusiveOps.length > 0;
+  const allowedOps = new Set(isExclusive ? exclusiveOps : mentionedOps);
+
+  if (isExclusive) {
+    patch.clear_operations = true;
+    schemaHints.operation_order.forEach((op) => {
+      if (allowedOps.has(op)) {
+        const opPatch = patch.operations[op] && typeof patch.operations[op] === 'object'
+          ? patch.operations[op]
+          : {};
+        if (opPatch.enabled !== false) {
+          opPatch.enabled = true;
+        }
+        patch.operations[op] = opPatch;
+        return;
+      }
+      patch.operations[op] = { enabled: false };
+    });
+    return;
+  }
+
+  patch.clear_operations = false;
+  Object.keys(patch.operations).forEach((op) => {
+    if (!allowedOps.has(op)) {
+      delete patch.operations[op];
+    }
+  });
+}
+
+function suppressRedundantOperationClarifications(clarifications, patch, formState, prompt, schemaHints) {
+  if (!Array.isArray(clarifications) || clarifications.length === 0) {
+    return [];
+  }
+  const lowerPrompt = String(prompt || '').toLowerCase();
+  const mentionedOps = getMentionedOperationsFromPrompt(lowerPrompt, schemaHints);
+  const effective = buildEffectiveState(
+    patch || { operations: {} },
+    formState || { operations: {} },
+    schemaHints
+  );
+  const enabledOps = getEnabledOperationNames(effective, schemaHints);
+  const shouldSuppressOperationQuestion = mentionedOps.length > 0 || enabledOps.length > 0;
+  if (!shouldSuppressOperationQuestion) {
+    return clarifications;
+  }
+  return clarifications.filter((entry) => {
+    if (!entry || !entry.binding || entry.binding.type !== 'operations_set') {
+      return true;
+    }
+    return false;
+  });
+}
+
+function applyDeleteOperationDisambiguation(patch, formState, prompt, schemaHints) {
+  if (!patch || typeof patch !== 'object' || !patch.operations || typeof patch.operations !== 'object') {
+    return;
+  }
+  const lowerPrompt = String(prompt || '').toLowerCase();
+  if (!/\bdelete(?:s)?\b/.test(lowerPrompt)) {
+    return;
+  }
+  if (
+    /\bempty\b|\bmissing\b|\bnon[-\s]?existent\b|\bnot\s+found\b/.test(lowerPrompt)
+    || promptMentionsOperation(lowerPrompt, 'empty_point_deletes', schemaHints)
+    || promptMentionsOperation(lowerPrompt, 'point_deletes', schemaHints)
+    || promptMentionsOperation(lowerPrompt, 'range_deletes', schemaHints)
+  ) {
+    return;
+  }
+
+  const promptCount = extractPromptCountHint(prompt);
+  const effectiveBeforeRewrite = buildEffectiveState(patch, formState, schemaHints);
+  const hasKnownKeys = !!(
+    effectiveBeforeRewrite.operations
+    && effectiveBeforeRewrite.operations.inserts
+    && effectiveBeforeRewrite.operations.inserts.enabled
+  );
+  if (!hasKnownKeys) {
+    return;
+  }
+
+  const hasAnyDeletePatch = ['empty_point_deletes', 'point_deletes', 'range_deletes'].some((op) => {
+    const opPatch = patch.operations[op];
+    return !!(opPatch && typeof opPatch === 'object' && Object.keys(opPatch).length > 0);
+  });
+
+  if (!hasAnyDeletePatch) {
+    const inferredPointDeletes = patch.operations.point_deletes && typeof patch.operations.point_deletes === 'object'
+      ? patch.operations.point_deletes
+      : {};
+    if (typeof inferredPointDeletes.enabled !== 'boolean') {
+      inferredPointDeletes.enabled = true;
+    }
+    if (inferredPointDeletes.op_count === null || inferredPointDeletes.op_count === undefined) {
+      inferredPointDeletes.op_count = promptCount;
+    }
+    patch.operations.point_deletes = inferredPointDeletes;
+    return;
+  }
+
+  const emptyDeletePatch = patch.operations.empty_point_deletes;
+  if (!emptyDeletePatch || typeof emptyDeletePatch !== 'object') {
+    return;
+  }
+
+  const nextPointDeletes = patch.operations.point_deletes && typeof patch.operations.point_deletes === 'object'
+    ? patch.operations.point_deletes
+    : {};
+  if (nextPointDeletes.op_count === null || nextPointDeletes.op_count === undefined) {
+    nextPointDeletes.op_count = emptyDeletePatch.op_count ?? nextPointDeletes.op_count ?? promptCount ?? null;
+  }
+  if (nextPointDeletes.enabled !== true) {
+    nextPointDeletes.enabled = true;
+  }
+  patch.operations.point_deletes = nextPointDeletes;
+
+  patch.operations.empty_point_deletes = {
+    enabled: false
+  };
+}
+
+function promptLikelySetsOperationCount(lowerPrompt) {
+  const text = String(lowerPrompt || '').toLowerCase();
+  if (!text) {
+    return false;
+  }
+  if (/\b(remove|disable|exclude|without|no)\b/.test(text)) {
+    return false;
+  }
+  return /\b(add|set|make|update|change|use|with|to|increase|decrease|generate|create)\b/.test(text);
+}
+
+function promptMentionsDistributionChange(lowerPrompt) {
+  const text = String(lowerPrompt || '').toLowerCase();
+  if (!text) {
+    return false;
+  }
+  return /\bdistribution\b|\buniform\b|\bnormal\b|\bgaussian\b|\bbeta\b|\bzipf(?:ian)?\b|\bexponential\b|\blog[- ]?normal\b|\bpoisson\b|\bweibull\b|\bpareto\b/.test(text);
+}
+
+function getOperationCapabilities(schemaHints, operationName) {
+  return schemaHints && schemaHints.capabilities && schemaHints.capabilities[operationName]
+    ? schemaHints.capabilities[operationName]
+    : {};
+}
+
+function getCurrentOperationState(formState, operationName) {
+  return formState && formState.operations && formState.operations[operationName]
+    ? formState.operations[operationName]
+    : {};
+}
+
+function ensureOperationPatchObject(patch, operationName) {
+  if (!patch.operations || typeof patch.operations !== 'object') {
+    patch.operations = {};
+  }
+  if (!patch.operations[operationName] || typeof patch.operations[operationName] !== 'object') {
+    patch.operations[operationName] = {};
+  }
+  return patch.operations[operationName];
+}
+
+function getSingleMentionedOperationContext(patch, formState, lowerPrompt, schemaHints) {
+  const mentionedOps = getMentionedOperationsFromPrompt(lowerPrompt, schemaHints);
+  if (mentionedOps.length !== 1) {
+    return null;
+  }
+
+  const operationName = mentionedOps[0];
+  return {
+    operationName,
+    capabilities: getOperationCapabilities(schemaHints, operationName),
+    currentState: getCurrentOperationState(formState, operationName),
+    opPatch: ensureOperationPatchObject(patch, operationName)
+  };
+}
+
+function applyPromptOperationFieldFallback(patch, formState, prompt, schemaHints) {
+  if (!patch || typeof patch !== 'object') {
+    return;
+  }
+
+  const lowerPrompt = String(prompt || '').toLowerCase();
+  if (!lowerPrompt) {
+    return;
+  }
+
+  const operationContext = getSingleMentionedOperationContext(patch, formState, lowerPrompt, schemaHints);
+  if (!operationContext) {
+    return;
+  }
+
+  const {
+    operationName,
+    capabilities,
+    currentState,
+    opPatch
+  } = operationContext;
+  let changed = false;
+
+  const promptCount = extractPromptCountHint(prompt);
+  if (
+    capabilities.has_op_count !== false
+    && promptCount !== null
+    && promptLikelySetsOperationCount(lowerPrompt)
+    && opPatch.enabled !== false
+  ) {
+    opPatch.op_count = promptCount;
+    changed = true;
+  }
+
+  const detectedDistribution = detectSelectionDistribution(lowerPrompt, schemaHints.selection_distributions);
+  if (
+    capabilities.has_selection
+    && detectedDistribution
+    && promptMentionsDistributionChange(lowerPrompt)
+    && !shouldTreatPromptAsStringDistribution(lowerPrompt, schemaHints)
+    && opPatch.enabled !== false
+  ) {
+    opPatch.selection = null;
+    opPatch.selection_distribution = detectedDistribution;
+    const requiredParams = SELECTION_DISTRIBUTION_PARAM_KEYS[detectedDistribution] || [];
+    requiredParams.forEach((fieldName) => {
+      const currentValue = currentState[fieldName];
+      if (currentValue !== null && currentValue !== undefined) {
+        opPatch[fieldName] = currentValue;
+        return;
+      }
+      if (Object.prototype.hasOwnProperty.call(SELECTION_PARAM_DEFAULTS, fieldName)) {
+        opPatch[fieldName] = SELECTION_PARAM_DEFAULTS[fieldName];
+      }
+    });
+    changed = true;
+  }
+
+  if (changed) {
+    patch.operations[operationName] = opPatch;
+  }
+}
+
+function extractPromptCountHint(prompt) {
+  const text = String(prompt || '');
+  if (!text) {
+    return null;
+  }
+  const contextualMatch = text.match(/(\d[\d,]*(?:\.\d+)?\s*[kmb]?)(?=\s+(?:operations?|ops?|inserts?|updates?|merges?|deletes?|queries?|reads?))/i);
+  if (contextualMatch && contextualMatch[1]) {
+    return parseHumanCountToken(contextualMatch[1]);
+  }
+  const genericMatch = text.match(/\b(\d[\d,]*(?:\.\d+)?\s*[kmb]?)\b/i);
+  if (genericMatch && genericMatch[1]) {
+    return parseHumanCountToken(genericMatch[1]);
+  }
+  return null;
 }
 
 function constrainPatchToCurrentOperationScope(mergedPatch, formState, prompt, schemaHints) {
@@ -895,12 +1251,198 @@ function promptExplicitlyDisablesOperation(prompt, operationName, schemaHints) {
   return disablePattern.test(text);
 }
 
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function cloneJsonValue(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return null;
+  }
+}
+
+function normalizeCharacterSetValue(value, schemaHints) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const cleaned = value.trim();
+  return schemaHints.character_sets.includes(cleaned) ? cleaned : null;
+}
+
+function normalizeDistributionValue(value, allowedDistributions) {
+  if (!isPlainObject(value)) {
+    return null;
+  }
+  const keys = Object.keys(value);
+  if (keys.length !== 1) {
+    return null;
+  }
+  const name = String(keys[0] || '').trim();
+  if (!allowedDistributions.includes(name)) {
+    return null;
+  }
+  const inner = value[name];
+  if (!isPlainObject(inner)) {
+    return null;
+  }
+  const requiredKeys = DISTRIBUTION_REQUIRED_KEYS[name] || [];
+  const normalizedInner = {};
+  for (const key of requiredKeys) {
+    const rawParam = inner[key];
+    if (!Number.isFinite(Number(rawParam))) {
+      return null;
+    }
+    if (key === 'n') {
+      const normalizedInteger = nonNegativeIntegerOrNull(rawParam);
+      if (normalizedInteger === null) {
+        return null;
+      }
+      normalizedInner[key] = normalizedInteger;
+      continue;
+    }
+    normalizedInner[key] = Number(rawParam);
+  }
+  return { [name]: normalizedInner };
+}
+
+function normalizeNumberExprValue(value, allowedDistributions, mode) {
+  const policy = mode || 'positive';
+  if (isPlainObject(value)) {
+    return normalizeDistributionValue(value, allowedDistributions);
+  }
+  let numeric = null;
+  if (typeof value === 'string') {
+    numeric = parseHumanCountToken(value);
+    if (numeric === null) {
+      numeric = numberOrNull(value);
+    }
+  } else {
+    numeric = numberOrNull(value);
+  }
+  if (numeric === null) {
+    return null;
+  }
+  if (policy === 'non_negative') {
+    return numeric >= 0 ? numeric : null;
+  }
+  if (policy === 'integer_non_negative') {
+    const parsedInteger = nonNegativeIntegerOrNull(numeric);
+    return parsedInteger;
+  }
+  return numeric > 0 ? numeric : null;
+}
+
+function normalizeStringExprValue(value, schemaHints) {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (!isPlainObject(value)) {
+    return null;
+  }
+  const keys = Object.keys(value);
+  if (keys.length !== 1) {
+    return null;
+  }
+  const variant = String(keys[0] || '').trim();
+  const inner = value[variant];
+  if (variant === 'uniform') {
+    if (!isPlainObject(inner)) {
+      return null;
+    }
+    const len = normalizeNumberExprValue(inner.len, schemaHints.selection_distributions, 'non_negative');
+    if (len === null) {
+      return null;
+    }
+    const normalizedUniform = { len };
+    const characterSet = normalizeCharacterSetValue(inner.character_set, schemaHints);
+    if (characterSet) {
+      normalizedUniform.character_set = characterSet;
+    }
+    return { uniform: normalizedUniform };
+  }
+  if (variant === 'weighted') {
+    if (!Array.isArray(inner) || inner.length === 0) {
+      return null;
+    }
+    const weighted = [];
+    for (const entry of inner) {
+      if (!isPlainObject(entry) || !Number.isFinite(Number(entry.weight))) {
+        return null;
+      }
+      const normalizedValue = normalizeStringExprValue(entry.value, schemaHints);
+      if (normalizedValue === null) {
+        return null;
+      }
+      weighted.push({
+        weight: Number(entry.weight),
+        value: normalizedValue
+      });
+    }
+    return { weighted };
+  }
+  if (variant === 'segmented') {
+    if (!isPlainObject(inner) || typeof inner.separator !== 'string' || !Array.isArray(inner.segments) || inner.segments.length === 0) {
+      return null;
+    }
+    const segments = inner.segments
+      .map((entry) => normalizeStringExprValue(entry, schemaHints))
+      .filter((entry) => entry !== null);
+    if (segments.length !== inner.segments.length) {
+      return null;
+    }
+    return {
+      segmented: {
+        separator: inner.separator,
+        segments
+      }
+    };
+  }
+  if (variant === 'hot_range') {
+    if (!isPlainObject(inner)) {
+      return null;
+    }
+    const len = nonNegativeIntegerOrNull(inner.len);
+    const amount = nonNegativeIntegerOrNull(inner.amount);
+    const probability = numberOrNull(inner.probability);
+    if (len === null || amount === null || probability === null) {
+      return null;
+    }
+    return {
+      hot_range: {
+        len,
+        amount,
+        probability
+      }
+    };
+  }
+  return null;
+}
+
+function distributionNameFromValue(value) {
+  if (!isPlainObject(value)) {
+    return null;
+  }
+  const keys = Object.keys(value);
+  return keys.length === 1 ? keys[0] : null;
+}
+
 function normalizePatch(rawPatch, schemaHints) {
   const patch = rawPatch && typeof rawPatch === 'object' ? rawPatch : {};
   const normalized = {
-    character_set: normalizeStringOrNull(patch.character_set),
+    character_set: normalizeCharacterSetValue(patch.character_set, schemaHints),
     sections_count: positiveIntegerOrNull(patch.sections_count),
     groups_per_section: positiveIntegerOrNull(patch.groups_per_section),
+    skip_key_contains_check: Object.prototype.hasOwnProperty.call(patch, 'skip_key_contains_check')
+      ? patch.skip_key_contains_check === true
+      : undefined,
     clear_operations: patch.clear_operations === true,
     operations: {}
   };
@@ -931,7 +1473,13 @@ function normalizeOperationPatch(rawPatch, op, schemaHints) {
 
   const normalized = {
     enabled: typeof patch.enabled === 'boolean' ? patch.enabled : undefined,
-    op_count: positiveNumberOrNull(patch.op_count),
+    character_set: normalizeCharacterSetValue(patch.character_set, schemaHints),
+    op_count: normalizeNumberExprValue(patch.op_count, selectionDistributions, 'positive'),
+    key: normalizeStringExprValue(patch.key, schemaHints),
+    val: normalizeStringExprValue(patch.val, schemaHints),
+    selection: normalizeDistributionValue(patch.selection, selectionDistributions),
+    k: normalizeNumberExprValue(patch.k, selectionDistributions, 'positive'),
+    l: normalizeNumberExprValue(patch.l, selectionDistributions, 'positive'),
     key_len: positiveIntegerOrNull(patch.key_len),
     val_len: positiveIntegerOrNull(patch.val_len),
     key_pattern: normalizeStringPatternName(patch.key_pattern, stringPatterns),
@@ -956,15 +1504,12 @@ function normalizeOperationPatch(rawPatch, op, schemaHints) {
     selection_lambda: nonNegativeNumberOrNull(patch.selection_lambda),
     selection_scale: nonNegativeNumberOrNull(patch.selection_scale),
     selection_shape: nonNegativeNumberOrNull(patch.selection_shape),
-    selectivity: nonNegativeNumberOrNull(patch.selectivity),
+    selectivity: normalizeNumberExprValue(patch.selectivity, selectionDistributions, 'non_negative'),
     range_format: typeof patch.range_format === 'string' && rangeFormats.includes(patch.range_format)
       ? patch.range_format
       : null
   };
 
-  if (normalized.op_count === null && typeof patch.op_count === 'string') {
-    normalized.op_count = parseHumanCountToken(patch.op_count);
-  }
   if (!normalized.selection_distribution && typeof patch.selection_distribution === 'string') {
     const cleaned = patch.selection_distribution.trim().toLowerCase();
     if (selectionDistributions.includes(cleaned)) {
@@ -980,13 +1525,27 @@ function normalizeOperationPatch(rawPatch, op, schemaHints) {
   if (normalized.val_hot_amount === null && typeof patch.val_hot_amount === 'string') {
     normalized.val_hot_amount = nonNegativeIntegerOrNull(parseHumanCountToken(patch.val_hot_amount));
   }
+  if (!normalized.selection && patch.selection && typeof patch.selection === 'object') {
+    normalized.selection = normalizeDistributionValue(patch.selection, selectionDistributions);
+  }
+  if (!normalized.selection_distribution && normalized.selection) {
+    normalized.selection_distribution = distributionNameFromValue(normalized.selection);
+  }
 
   if (normalized.enabled === undefined && hasExplicitFields) {
     normalized.enabled = inferOperationEnabledFromPatch(normalized, op, schemaHints);
   }
 
   // Enforce schema capabilities so AI cannot set invalid fields for an operation.
+  const supportsOpCount = caps.has_op_count === undefined ? true : !!caps.has_op_count;
+  if (!supportsOpCount) {
+    normalized.op_count = null;
+  }
+  if (!(caps.has_character_set === true)) {
+    normalized.character_set = null;
+  }
   if (!caps.has_key) {
+    normalized.key = null;
     normalized.key_len = null;
     normalized.key_pattern = null;
     normalized.key_hot_len = null;
@@ -994,6 +1553,7 @@ function normalizeOperationPatch(rawPatch, op, schemaHints) {
     normalized.key_hot_probability = null;
   }
   if (!caps.has_val) {
+    normalized.val = null;
     normalized.val_len = null;
     normalized.val_pattern = null;
     normalized.val_hot_len = null;
@@ -1001,6 +1561,7 @@ function normalizeOperationPatch(rawPatch, op, schemaHints) {
     normalized.val_hot_probability = null;
   }
   if (!caps.has_selection) {
+    normalized.selection = null;
     normalized.selection_distribution = null;
     normalized.selection_min = null;
     normalized.selection_max = null;
@@ -1018,6 +1579,10 @@ function normalizeOperationPatch(rawPatch, op, schemaHints) {
     normalized.selectivity = null;
     normalized.range_format = null;
   }
+  if (!caps.has_sorted) {
+    normalized.k = null;
+    normalized.l = null;
+  }
 
   return normalized;
 }
@@ -1026,14 +1591,18 @@ function inferOperationEnabledFromPatch(operationPatch, op, schemaHints) {
   if (!operationPatch || typeof operationPatch !== 'object') {
     return false;
   }
-  if (operationPatch.op_count !== null) {
+  if (operationPatch.op_count !== null && (schemaHints.capabilities && schemaHints.capabilities[op]
+    ? schemaHints.capabilities[op].has_op_count !== false
+    : true)) {
     return true;
   }
   const caps = schemaHints.capabilities && schemaHints.capabilities[op] ? schemaHints.capabilities[op] : {};
   if (
     caps.has_key
     && (
-      operationPatch.key_len !== null
+      operationPatch.key !== null
+      || operationPatch.character_set !== null
+      || operationPatch.key_len !== null
       || operationPatch.key_pattern !== null
       || operationPatch.key_hot_len !== null
       || operationPatch.key_hot_amount !== null
@@ -1045,7 +1614,9 @@ function inferOperationEnabledFromPatch(operationPatch, op, schemaHints) {
   if (
     caps.has_val
     && (
-      operationPatch.val_len !== null
+      operationPatch.val !== null
+      || operationPatch.character_set !== null
+      || operationPatch.val_len !== null
       || operationPatch.val_pattern !== null
       || operationPatch.val_hot_len !== null
       || operationPatch.val_hot_amount !== null
@@ -1057,6 +1628,7 @@ function inferOperationEnabledFromPatch(operationPatch, op, schemaHints) {
   if (
     caps.has_selection &&
     (
+      operationPatch.selection !== null ||
       operationPatch.selection_distribution !== null ||
       operationPatch.selection_min !== null ||
       operationPatch.selection_max !== null ||
@@ -1074,6 +1646,12 @@ function inferOperationEnabledFromPatch(operationPatch, op, schemaHints) {
     return true;
   }
   if (caps.has_range && (operationPatch.selectivity !== null || operationPatch.range_format !== null)) {
+    return true;
+  }
+  if (caps.has_sorted && (operationPatch.k !== null || operationPatch.l !== null)) {
+    return true;
+  }
+  if (caps.has_character_set && operationPatch.character_set !== null) {
     return true;
   }
   return false;
@@ -1112,25 +1690,81 @@ function detectSelectionDistribution(lowerPrompt, allowedDistributions) {
   return null;
 }
 
+function getOperationPromptPatternSource(operationName) {
+  const sources = {
+    inserts: 'insert(?:s|ion)?',
+    updates: 'update(?:s)?',
+    merges: 'merge(?:s)?|read[- ]?modify[- ]?write|rmw',
+    point_queries: 'point\\s+quer(?:y|ie|ies)|point\\s+read(?:s)?',
+    range_queries: 'range\\s+quer(?:y|ie|ies)',
+    point_deletes: 'point\\s+delete(?:s)?',
+    range_deletes: 'range\\s+delete(?:s)?',
+    empty_point_queries: 'empty\\s+point\\s+quer(?:y|ie|ies)|empty\\s+point\\s+read(?:s)?|missing\\s+point\\s+quer(?:y|ie|ies)',
+    empty_point_deletes: 'empty\\s+point\\s+delete(?:s)?|missing\\s+point\\s+delete(?:s)?|non[- ]?existent\\s+point\\s+delete(?:s)?',
+    sorted: 'sorted'
+  };
+  return sources[operationName] || null;
+}
+
+function getOperationPromptBlockedPrefixes(operationName) {
+  if (operationName === 'point_queries') {
+    return ['empty', 'missing'];
+  }
+  if (operationName === 'point_deletes') {
+    return ['empty', 'missing', 'non existent', 'non-existent', 'nonexistent'];
+  }
+  return [];
+}
+
+function operationPatternMatchesWithPrefixGuards(text, regex, blockedPrefixes) {
+  if (!regex) {
+    return false;
+  }
+  const disallowedPrefixes = Array.isArray(blockedPrefixes) ? blockedPrefixes : [];
+  regex.lastIndex = 0;
+  if (disallowedPrefixes.length === 0) {
+    return regex.test(text);
+  }
+  let match = null;
+  while ((match = regex.exec(text)) !== null) {
+    const prefix = text.slice(0, match.index).trimEnd();
+    const isBlocked = disallowedPrefixes.some((blockedPrefix) => prefix.endsWith(blockedPrefix));
+    if (!isBlocked) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function promptExplicitlyRestrictsToOperation(prompt, operationName) {
+  const lowerPrompt = String(prompt || '').toLowerCase();
+  const patternSource = getOperationPromptPatternSource(operationName);
+  if (!lowerPrompt || !patternSource) {
+    return false;
+  }
+  const blockedPrefixes = getOperationPromptBlockedPrefixes(operationName);
+  const patterns = [
+    new RegExp(`\\bonly\\s+(?:${patternSource})\\b`, 'g'),
+    new RegExp(`\\b(?:${patternSource})(?:\\s+workload)?[-\\s]?only\\b`, 'g'),
+    new RegExp(`\\b(?:${patternSource})\\s+only\\b`, 'g')
+  ];
+  return patterns.some((pattern) => operationPatternMatchesWithPrefixGuards(lowerPrompt, pattern, blockedPrefixes));
+}
+
 function promptMentionsOperation(lowerPrompt, operationName, schemaHints) {
-  const label = humanizeOperation(operationName, schemaHints);
-  const compact = label.replace(/\s+/g, ' ');
-  if (lowerPrompt.includes(operationName.toLowerCase())) {
+  const escapedOperationName = escapeRegExp(operationName.toLowerCase());
+  if (new RegExp(`\\b${escapedOperationName}\\b`).test(lowerPrompt)) {
     return true;
   }
-  if (lowerPrompt.includes(compact)) {
-    return true;
-  }
-  if (operationName === 'point_queries' && /\bpoint\s+quer(?:y|ies)\b/.test(lowerPrompt)) {
-    return true;
-  }
-  if (operationName === 'range_queries' && /\brange\s+quer(?:y|ies)\b/.test(lowerPrompt)) {
-    return true;
-  }
-  if (operationName === 'point_deletes' && /\bpoint\s+delete(?:s)?\b/.test(lowerPrompt)) {
-    return true;
-  }
-  if (operationName === 'range_deletes' && /\brange\s+delete(?:s)?\b/.test(lowerPrompt)) {
+  const patternSource = getOperationPromptPatternSource(operationName);
+  if (
+    patternSource
+    && operationPatternMatchesWithPrefixGuards(
+      lowerPrompt,
+      new RegExp(`\\b(?:${patternSource})\\b`, 'g'),
+      getOperationPromptBlockedPrefixes(operationName)
+    )
+  ) {
     return true;
   }
   return false;
@@ -1138,9 +1772,12 @@ function promptMentionsOperation(lowerPrompt, operationName, schemaHints) {
 
 function buildEffectiveState(patch, formState, schemaHints) {
   const effective = {
-    character_set: patch.character_set || formState.character_set || null,
-    sections_count: patch.sections_count || formState.sections_count || null,
-    groups_per_section: patch.groups_per_section || formState.groups_per_section || null,
+    character_set: patch.character_set ?? formState.character_set ?? null,
+    sections_count: patch.sections_count ?? formState.sections_count ?? null,
+    groups_per_section: patch.groups_per_section ?? formState.groups_per_section ?? null,
+    skip_key_contains_check: typeof patch.skip_key_contains_check === 'boolean'
+      ? patch.skip_key_contains_check
+      : !!formState.skip_key_contains_check,
     operations: {}
   };
 
@@ -1152,7 +1789,13 @@ function buildEffectiveState(patch, formState, schemaHints) {
       enabled: typeof next.enabled === 'boolean'
         ? next.enabled
         : (clear ? false : !!current.enabled),
+      character_set: next.character_set ?? current.character_set ?? null,
       op_count: next.op_count ?? current.op_count ?? null,
+      key: next.key ?? current.key ?? null,
+      val: next.val ?? current.val ?? null,
+      selection: next.selection ?? current.selection ?? null,
+      k: next.k ?? current.k ?? null,
+      l: next.l ?? current.l ?? null,
       key_len: next.key_len ?? current.key_len ?? null,
       val_len: next.val_len ?? current.val_len ?? null,
       key_pattern: next.key_pattern || current.key_pattern || null,
@@ -1489,7 +2132,29 @@ function inferClarificationFromQuestionText(questionText, schemaHints, context =
     };
   }
 
+  if (/\bskip\b.*\bkey\b.*\bcontains?\b|\bskip_key_contains_check\b/.test(lower)) {
+    return {
+      id: buildStableId('clarify', 'skip_key_contains_check', text),
+      text,
+      required: false,
+      binding: { type: 'top_field', field: 'skip_key_contains_check' },
+      input: 'boolean',
+      default_behavior: 'use_default'
+    };
+  }
+
   if (/\bcharacter\s*set\b/.test(lower)) {
+    if (op && operationSupportsField(op, 'character_set', schemaHints)) {
+      return {
+        id: buildStableId('clarify', op + '.character_set', text),
+        text,
+        required: false,
+        binding: { type: 'operation_field', operation: op, field: 'character_set' },
+        input: 'enum',
+        options: [...schemaHints.character_sets],
+        default_behavior: 'use_default'
+      };
+    }
     return {
       id: buildStableId('clarify', 'character_set', text),
       text,
@@ -1762,14 +2427,20 @@ function suggestedInputForBinding(binding) {
     if (binding.field === 'character_set') {
       return 'enum';
     }
+    if (binding.field === 'skip_key_contains_check') {
+      return 'boolean';
+    }
     return 'number';
   }
   if (binding.type === 'operation_field') {
     if (binding.field === 'enabled') {
       return 'boolean';
     }
-    if (binding.field === 'selection_distribution' || binding.field === 'range_format' || binding.field === 'key_pattern' || binding.field === 'val_pattern') {
+    if (binding.field === 'character_set' || binding.field === 'selection_distribution' || binding.field === 'range_format' || binding.field === 'key_pattern' || binding.field === 'val_pattern') {
       return 'enum';
+    }
+    if (binding.field === 'key' || binding.field === 'val' || binding.field === 'selection') {
+      return 'text';
     }
     return 'number';
   }
@@ -1781,6 +2452,9 @@ function defaultOptionsForBinding(binding, schemaHints) {
     return [];
   }
   if (binding.type === 'top_field' && binding.field === 'character_set') {
+    return [...schemaHints.character_sets];
+  }
+  if (binding.type === 'operation_field' && binding.field === 'character_set') {
     return [...schemaHints.character_sets];
   }
   if (binding.type === 'operation_field' && binding.field === 'selection_distribution') {
@@ -1980,20 +2654,32 @@ function operationSupportsField(operation, fieldName, schemaHints) {
   const caps = schemaHints.capabilities && schemaHints.capabilities[operation]
     ? schemaHints.capabilities[operation]
     : {};
-  if (fieldName === 'enabled' || fieldName === 'op_count') {
-    return true;
+  if (fieldName === 'character_set') {
+    return !!caps.has_character_set;
   }
-  if (fieldName === 'key_len') {
+  if (fieldName === 'enabled') {
+    return (caps.has_op_count === undefined ? true : !!caps.has_op_count) || !!caps.has_sorted;
+  }
+  if (fieldName === 'op_count') {
+    return caps.has_op_count === undefined ? true : !!caps.has_op_count;
+  }
+  if (fieldName === 'k' || fieldName === 'l') {
+    return !!caps.has_sorted;
+  }
+  if (fieldName === 'key' || fieldName === 'key_len') {
     return !!caps.has_key;
   }
   if (fieldName === 'key_pattern' || fieldName === 'key_hot_len' || fieldName === 'key_hot_amount' || fieldName === 'key_hot_probability') {
     return !!caps.has_key;
   }
-  if (fieldName === 'val_len') {
+  if (fieldName === 'val' || fieldName === 'val_len') {
     return !!caps.has_val;
   }
   if (fieldName === 'val_pattern' || fieldName === 'val_hot_len' || fieldName === 'val_hot_amount' || fieldName === 'val_hot_probability') {
     return !!caps.has_val;
+  }
+  if (fieldName === 'selection') {
+    return !!caps.has_selection;
   }
   if (
     [

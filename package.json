@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "dev": "node src/server.mjs",
-    "start": "node src/server.mjs"
+    "start": "node src/server.mjs",
+    "schema:coverage": "node src/schema-coverage.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.68.1"
