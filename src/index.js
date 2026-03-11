@@ -183,6 +183,13 @@ export default {
   }
 };
 
+export const __test = {
+  normalizeSchemaHints,
+  normalizeFormState,
+  normalizeAssistPayload,
+  buildEffectiveState
+};
+
 async function handleAssistRequest(request, env) {
   let body;
   try {
@@ -819,6 +826,7 @@ function normalizeAssistPayload(rawPayload, schemaHints, formState, prompt) {
     prompt,
     schemaHints
   );
+  suppressOperationPatchWhenSelectionIsAmbiguous(patch, filteredClarifications);
   const assumptions = normalizeAssumptionEntries(payload.assumptions);
   const summary = typeof payload.summary === 'string' && payload.summary.trim()
     ? payload.summary.trim()
@@ -871,9 +879,11 @@ function applyPromptOperationIntentFallback(patch, formState, prompt, schemaHint
     if (!patch.operations[op] || typeof patch.operations[op] !== 'object') {
       patch.operations[op] = {};
     }
-    if (patch.operations[op].enabled !== false) {
-      patch.operations[op].enabled = true;
+    if (promptExplicitlyDisablesOperation(lowerPrompt, op, schemaHints)) {
+      patch.operations[op].enabled = false;
+      return;
     }
+    patch.operations[op].enabled = true;
   });
 
   if (exclusiveOp && currentEnabledOps.length > 0) {
@@ -934,13 +944,7 @@ function suppressRedundantOperationClarifications(clarifications, patch, formSta
   }
   const lowerPrompt = String(prompt || '').toLowerCase();
   const mentionedOps = getMentionedOperationsFromPrompt(lowerPrompt, schemaHints);
-  const effective = buildEffectiveState(
-    patch || { operations: {} },
-    formState || { operations: {} },
-    schemaHints
-  );
-  const enabledOps = getEnabledOperationNames(effective, schemaHints);
-  const shouldSuppressOperationQuestion = mentionedOps.length > 0 || enabledOps.length > 0;
+  const shouldSuppressOperationQuestion = mentionedOps.length > 0;
   if (!shouldSuppressOperationQuestion) {
     return clarifications;
   }
@@ -950,6 +954,25 @@ function suppressRedundantOperationClarifications(clarifications, patch, formSta
     }
     return false;
   });
+}
+
+function suppressOperationPatchWhenSelectionIsAmbiguous(patch, clarifications) {
+  if (!patch || typeof patch !== 'object') {
+    return;
+  }
+  const requiresOperationSelection = Array.isArray(clarifications) && clarifications.some((entry) => {
+    return !!(
+      entry
+      && entry.required === true
+      && entry.binding
+      && entry.binding.type === 'operations_set'
+    );
+  });
+  if (!requiresOperationSelection) {
+    return;
+  }
+  patch.clear_operations = false;
+  patch.operations = {};
 }
 
 function applyDeleteOperationDisambiguation(patch, formState, prompt, schemaHints) {
@@ -1028,7 +1051,7 @@ function promptLikelySetsOperationCount(lowerPrompt) {
   if (/\b(remove|disable|exclude|without|no)\b/.test(text)) {
     return false;
   }
-  return /\b(add|set|make|update|change|use|with|to|increase|decrease|generate|create)\b/.test(text);
+  return /\b(add|include|set|make|update|change|use|with|to|increase|decrease|generate|create)\b/.test(text);
 }
 
 function promptMentionsDistributionChange(lowerPrompt) {

@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "node src/server.mjs",
     "start": "node src/server.mjs",
-    "schema:coverage": "node src/schema-coverage.mjs"
+    "schema:coverage": "node src/schema-coverage.mjs",
+    "test": "node --test",
+    "test:all": "node --test && npm run schema:coverage"
   },
   "devDependencies": {
     "wrangler": "^4.68.1"
