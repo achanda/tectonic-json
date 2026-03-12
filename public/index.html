@@ -626,26 +626,72 @@
       }
 
       .welcome-panel {
+        max-width: none;
+        margin: 0;
         border: 1px solid #d8ebe7;
-        border-radius: 14px;
-        padding: 16px;
-        margin-bottom: 14px;
+        border-radius: 18px;
+        padding: 28px;
         background:
+          radial-gradient(
+            circle at top left,
+            rgba(40, 145, 128, 0.12),
+            transparent 38%
+          ),
           linear-gradient(
             135deg,
             rgba(15, 79, 74, 0.05),
             rgba(40, 145, 128, 0.02)
           ),
           #f9fcfb;
+        box-shadow: 0 20px 40px rgba(15, 79, 74, 0.08);
       }
 
-      .welcome-panel h2 {
-        margin: 0 0 6px;
-        font-size: 18px;
+      .welcome-eyebrow {
+        margin: 0 0 10px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #0f4f4a;
+      }
+
+      .welcome-title {
+        margin: 0;
+        font-size: 30px;
+        line-height: 1.1;
         color: #113d39;
       }
 
-      .welcome-panel p {
+      .welcome-lede {
+        margin: 12px 0 0;
+        max-width: 720px;
+        color: var(--text-dim);
+        font-size: 15px;
+        line-height: 1.6;
+      }
+
+      .welcome-choice-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.9fr);
+        gap: 16px;
+        margin-top: 22px;
+      }
+
+      .welcome-option {
+        border: 1px solid rgba(15, 79, 74, 0.09);
+        border-radius: 14px;
+        padding: 18px;
+        background: rgba(255, 255, 255, 0.78);
+        backdrop-filter: blur(8px);
+      }
+
+      .welcome-option h3 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: #113d39;
+      }
+
+      .welcome-option p {
         margin: 0;
         color: var(--text-dim);
         font-size: 13px;
@@ -654,7 +700,7 @@
 
       .preset-picker-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
         gap: 12px;
         margin-top: 14px;
       }
@@ -666,10 +712,35 @@
         flex-wrap: wrap;
       }
 
+      .welcome-primary-btn {
+        background: var(--accent);
+        color: #fff;
+        border: 1px solid var(--accent);
+      }
+
+      .welcome-primary-btn:hover {
+        background: var(--accent-hover);
+        border-color: var(--accent-hover);
+      }
+
       .preset-note {
         margin-top: 10px;
         font-size: 12px;
         color: #0f4f4a;
+      }
+
+      @media (max-width: 860px) {
+        .welcome-panel {
+          padding: 20px;
+        }
+
+        .welcome-title {
+          font-size: 24px;
+        }
+
+        .welcome-choice-grid {
+          grid-template-columns: 1fr;
+        }
       }
 
       .checkbox-grid {
@@ -827,6 +898,10 @@
         border-color: var(--accent);
         color: #fff;
         background: var(--accent);
+      }
+
+      [hidden] {
+        display: none !important;
       }
 
       .hidden {
@@ -1108,10 +1183,12 @@
     </style>
   </head>
   <body>
-    <div class="app-shell">
-      <header>
+    <div class="app-shell" id="appShell">
+      <header id="appHeader" hidden>
         <div class="header-actions">
-          <button class="btn btn-ghost" id="newWorkloadBtn">Clear Form</button>
+          <button class="btn btn-ghost" id="newWorkloadBtn" hidden>
+            Clear Form
+          </button>
         </div>
         <h1>Workload Spec Generator</h1>
         <p class="header-subtitle">
@@ -1119,37 +1196,59 @@
         </p>
       </header>
       <main>
-        <div class="welcome-panel" id="welcomePanel">
-          <h2>Welcome</h2>
-          <p>
-            Start from a copied Tectonic example workload or switch into custom
-            generation. Pick a workload family first, then choose the file you
-            want to load.
-          </p>
-          <div class="preset-picker-grid">
-            <label class="field">
-              <span>Workload family</span>
-              <select id="presetFamilySelect">
-                <option value="">Choose a family...</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Preset file</span>
-              <select id="presetFileSelect" disabled>
-                <option value="">Choose a file...</option>
-              </select>
-            </label>
+        <div class="workspace">
+          <div class="welcome-panel" id="welcomePanel">
+            <p class="welcome-eyebrow">Tectonic workload builder</p>
+            <h2 class="welcome-title">Choose how you want to start</h2>
+            <p class="welcome-lede">
+              Load one of the copied Tectonic example specs or open the custom
+              workload editor to build a new workload from scratch.
+            </p>
+            <div class="welcome-choice-grid">
+              <section class="welcome-option">
+                <h3>Load a preset</h3>
+                <p>
+                  Start from an example spec. Pick the workload family first,
+                  then choose the exact JSON file to load.
+                </p>
+                <div class="preset-picker-grid">
+                  <label class="field">
+                    <span>Workload family</span>
+                    <select id="presetFamilySelect">
+                      <option value="">Choose a family...</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Preset file</span>
+                    <select id="presetFileSelect" disabled>
+                      <option value="">Choose a file...</option>
+                    </select>
+                  </label>
+                </div>
+                <p class="preset-note" id="presetSelectionNote" hidden></p>
+              </section>
+              <section class="welcome-option">
+                <h3>Generate a custom workload</h3>
+                <p>
+                  Open the chat and form editor, then describe the workload you
+                  want in plain English or configure it field by field.
+                </p>
+                <div class="welcome-actions">
+                  <button
+                    type="button"
+                    class="btn btn-ghost welcome-primary-btn"
+                    id="customWorkloadBtn"
+                  >
+                    Generate Custom Workload
+                  </button>
+                </div>
+              </section>
+            </div>
           </div>
-          <div class="welcome-actions">
-            <button type="button" class="btn btn-ghost" id="customWorkloadBtn">
-              Generate Custom Workload
-            </button>
-          </div>
-          <p class="preset-note" id="presetSelectionNote" hidden></p>
-        </div>
-        <div class="workspace" hidden>
           <div
+            id="builderPanel"
             class="panel"
+            hidden
             style="
               flex: 1;
               display: flex;
@@ -1298,7 +1397,12 @@
               </form>
             </div>
           </div>
-          <div class="panel json-panel" style="flex-shrink: 0">
+          <div
+            id="previewPanel"
+            class="panel json-panel"
+            hidden
+            style="flex-shrink: 0"
+          >
             <div class="panel-header">
               <span class="panel-title">Generated JSON</span>
               <div class="json-actions">
@@ -1333,7 +1437,7 @@
 {}</textarea
                 >
               </div>
-              <div class="runs-panel" id="runsPanel">
+              <div class="runs-panel" id="runsPanel" hidden>
                 <p class="runs-panel-title">Workload Runs (Session)</p>
                 <p class="runs-known-location">
                   Known output file:

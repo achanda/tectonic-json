@@ -47,12 +47,14 @@ const assistantClearBtn = document.getElementById("assistantClearBtn");
 const assistantStatus = document.getElementById("assistantStatus");
 const assistantTimeline = document.getElementById("assistantTimeline");
 const assistantComposerHint = document.getElementById("assistantComposerHint");
+const appShell = document.getElementById("appShell");
+const appHeader = document.getElementById("appHeader");
 const welcomePanel = document.getElementById("welcomePanel");
 const customWorkloadBtn = document.getElementById("customWorkloadBtn");
 const workspace = document.querySelector(".workspace");
-const workspacePanels = workspace ? Array.from(workspace.children || []) : [];
-const builderPanel = workspacePanels.length > 0 ? workspacePanels[0] : null;
-const previewPanel = workspacePanels.length > 1 ? workspacePanels[1] : null;
+const builderPanel = document.getElementById("builderPanel");
+const previewPanel = document.getElementById("previewPanel");
+const runsPanel = document.getElementById("runsPanel");
 
 const INITIAL_JSON_TEXT = "{}";
 const PRESET_INDEX_PATH = "/presets/index.json";
@@ -993,9 +995,13 @@ function clearLoadedPresetState() {
 }
 
 function syncLandingUi() {
-  const showPreview = customWorkloadMode || !!activePresetJson;
-  if (workspace) {
-    workspace.hidden = !showPreview;
+  const hasPreset = !!activePresetJson;
+  const showPreview = customWorkloadMode || hasPreset;
+  if (appHeader) {
+    appHeader.hidden = !customWorkloadMode;
+  }
+  if (appShell && appShell.classList) {
+    appShell.classList.toggle("landing", !customWorkloadMode);
   }
   if (builderPanel) {
     builderPanel.hidden = !customWorkloadMode;
@@ -1003,8 +1009,26 @@ function syncLandingUi() {
   if (previewPanel) {
     previewPanel.hidden = !showPreview;
   }
+  if (runsPanel) {
+    runsPanel.hidden = !showPreview;
+  }
+  if (runWorkloadBtn) {
+    runWorkloadBtn.hidden = !showPreview;
+  }
+  if (downloadJsonBtn) {
+    downloadJsonBtn.hidden = !showPreview;
+  }
+  if (copyBtn) {
+    copyBtn.hidden = !showPreview;
+  }
+  if (validationResult) {
+    validationResult.hidden = !showPreview;
+  }
+  if (newWorkloadBtn) {
+    newWorkloadBtn.hidden = !customWorkloadMode;
+  }
   if (welcomePanel) {
-    welcomePanel.hidden = false;
+    welcomePanel.hidden = customWorkloadMode;
   }
 }
 
@@ -4576,6 +4600,7 @@ async function handleAssistantApply() {
 
 function resetFormInterface() {
   workloadForm.reset();
+  customWorkloadMode = false;
   clearLoadedPresetState();
   clearFieldLocks();
   operationAdvancedState.clear();
