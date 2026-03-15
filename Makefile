@@ -2,7 +2,7 @@ PRETTIER ?= npx --yes prettier@3
 NPM ?= npm
 FORMAT_PATHS := package.json public/*.js public/*.html src/*.js src/*.mjs test/*.mjs
 
-.PHONY: format dev test check-ai-env
+.PHONY: format dev test test-demo check-ai-env
 
 format:
 	$(PRETTIER) -- --write $(FORMAT_PATHS)
@@ -21,3 +21,6 @@ dev: check-ai-env
 
 test:
 	$(NPM) test
+
+test-demo:
+	node --test test/assist-natural-language-demo.test.mjs test/assist-provider-coverage.test.mjs
