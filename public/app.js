@@ -63,6 +63,11 @@ let pendingJsonFocusTarget = null;
 const runsPanel = document.getElementById("runsPanel");
 const structuredUiNormalizer =
   globalThis.TectonicUiStructuredNormalization || null;
+let jsonTreeViewer = null;
+let advancedExpressionRenderer = null;
+let structurePanelRenderer = null;
+let presetFlowController = null;
+let assistantPanelController = null;
 
 const INITIAL_JSON_TEXT = "{}";
 const PRESET_INDEX_PATH = "/presets/index.json";
@@ -303,14 +308,9 @@ let characterSetEnum = ["alphanumeric", "alphabetic", "numeric"];
 let rangeFormatEnum = ["StartCount", "StartEnd"];
 let selectionDistributionEnum = [...DEFAULT_SELECTION_DISTRIBUTIONS];
 let stringPatternEnum = [...DEFAULT_STRING_PATTERNS];
-const assistantConversation = [];
-const assistantAnswerStore = {};
-const assistantClarificationIndex = new Map();
 const operationAdvancedState = new Map();
-let assistantGateMessage = "";
 const lockedTopFields = new Set();
 const lockedOperationFields = new Map();
-let presetCatalog = [];
 let activePresetJson = null;
 let customWorkloadMode = false;
 let schemaValidatorPromise = null;
@@ -625,37 +625,13 @@ async function initApp() {
   if (runWorkloadBtn) {
     runWorkloadBtn.addEventListener("click", handleRunWorkload);
   }
-  if (assistantApplyBtn) {
-    assistantApplyBtn.addEventListener("click", handleAssistantApply);
+  const assistantController = getAssistantPanelController();
+  if (assistantController) {
+    assistantController.bindEvents();
   }
-  if (assistantClearBtn) {
-    assistantClearBtn.addEventListener("click", () => {
-      if (assistantInput) {
-        assistantInput.value = "";
-        assistantInput.focus();
-      }
-      clearAssistantThread();
-      setAssistantStatus("Ready", "default");
-    });
-  }
-  if (assistantInput) {
-    assistantInput.addEventListener("keydown", (event) => {
-      const isMeta = event.metaKey || event.ctrlKey;
-      if (isMeta && event.key === "Enter") {
-        event.preventDefault();
-        event.stopPropagation();
-        handleAssistantApply();
-      }
-    });
-  }
-  if (presetFamilySelect) {
-    presetFamilySelect.addEventListener("change", handlePresetFamilyChange);
-  }
-  if (presetFileSelect) {
-    presetFileSelect.addEventListener("change", handlePresetFileChange);
-  }
-  if (customWorkloadBtn) {
-    customWorkloadBtn.addEventListener("click", enableCustomWorkloadMode);
+  const presetController = getPresetFlowController();
+  if (presetController) {
+    presetController.bindEvents();
   }
   if (addSectionBtn) {
     addSectionBtn.addEventListener("click", () => {
@@ -1112,25 +1088,20 @@ function getActiveGroupState() {
 }
 
 function setPresetSelectionNote(message) {
-  if (!presetSelectionNote) {
+  const controller = getPresetFlowController();
+  if (!controller) {
     return;
   }
-  const text = typeof message === "string" ? message.trim() : "";
-  presetSelectionNote.textContent = text;
-  presetSelectionNote.hidden = text === "";
+  controller.setPresetSelectionNote(message);
 }
 
 function clearLoadedPresetState() {
-  activePresetJson = null;
-  if (presetFamilySelect) {
-    presetFamilySelect.value = "";
+  const controller = getPresetFlowController();
+  if (!controller) {
+    activePresetJson = null;
+    return;
   }
-  if (presetFileSelect) {
-    presetFileSelect.innerHTML = '<option value="">Choose a file...</option>';
-    presetFileSelect.value = "";
-    presetFileSelect.disabled = true;
-  }
-  setPresetSelectionNote("");
+  controller.clearLoadedPresetState();
 }
 
 function renderStructureSelectors() {
@@ -1171,38 +1142,34 @@ function countConfiguredGroupOperations(group) {
 }
 
 function renderStructureTree() {
-  if (!structureTree) {
+  ensureWorkloadStructureState();
+  const renderer = getStructurePanelRenderer();
+  if (!renderer) {
     return;
   }
-  ensureWorkloadStructureState();
-  structureTree.innerHTML = "";
+  renderer.render({
+    sections: workloadStructureState,
+    activeSectionIndex,
+    activeGroupIndex,
+  });
+}
 
-  if (structureSelectionLabel) {
-    structureSelectionLabel.textContent =
-      "Editing Section " +
-      (activeSectionIndex + 1) +
-      " / Group " +
-      (activeGroupIndex + 1);
+function getStructurePanelRenderer() {
+  if (structurePanelRenderer) {
+    return structurePanelRenderer;
   }
-
-  workloadStructureState.forEach((section, sectionIndex) => {
-    const sectionCard = document.createElement("div");
-    sectionCard.className = "structure-section-card";
-
-    const head = document.createElement("div");
-    head.className = "structure-section-head";
-
-    const title = document.createElement("div");
-    title.className = "structure-section-title";
-
-    const sectionBtn = document.createElement("button");
-    sectionBtn.type = "button";
-    sectionBtn.className = "structure-section-btn";
-    if (sectionIndex === activeSectionIndex) {
-      sectionBtn.classList.add("active");
-    }
-    sectionBtn.textContent = "Section " + (sectionIndex + 1);
-    sectionBtn.addEventListener("click", () => {
+  if (
+    !structureTree ||
+    !globalThis.TectonicStructurePanel ||
+    typeof globalThis.TectonicStructurePanel.createRenderer !== "function"
+  ) {
+    return null;
+  }
+  structurePanelRenderer = globalThis.TectonicStructurePanel.createRenderer({
+    container: structureTree,
+    selectionLabel: structureSelectionLabel,
+    countConfiguredGroupOperations,
+    onSelectSection(sectionIndex, section) {
       persistActiveStructureFromForm();
       activeSectionIndex = sectionIndex;
       if (activeGroupIndex >= section.groups.length) {
@@ -1210,40 +1177,16 @@ function renderStructureTree() {
       }
       loadActiveStructureIntoForm();
       updateJsonFromForm();
-    });
-    title.appendChild(sectionBtn);
-
-    const chip = document.createElement("span");
-    chip.className = "structure-chip";
-    chip.textContent = section.skip_key_contains_check
-      ? "skip contains check"
-      : section.groups.length + " group(s)";
-    title.appendChild(chip);
-    head.appendChild(title);
-
-    const actions = document.createElement("div");
-    actions.className = "structure-actions";
-
-    const addGroupButton = document.createElement("button");
-    addGroupButton.type = "button";
-    addGroupButton.className = "structure-mini-btn";
-    addGroupButton.textContent = "Add Group";
-    addGroupButton.addEventListener("click", () => {
+    },
+    onAddGroup(sectionIndex, section) {
       persistActiveStructureFromForm();
       section.groups.push(createEmptyGroupSpec());
       activeSectionIndex = sectionIndex;
       activeGroupIndex = section.groups.length - 1;
       loadActiveStructureIntoForm();
       updateJsonFromForm();
-    });
-    actions.appendChild(addGroupButton);
-
-    const removeSectionButton = document.createElement("button");
-    removeSectionButton.type = "button";
-    removeSectionButton.className = "structure-mini-btn";
-    removeSectionButton.textContent = "Remove Section";
-    removeSectionButton.disabled = workloadStructureState.length <= 1;
-    removeSectionButton.addEventListener("click", () => {
+    },
+    onRemoveSection(sectionIndex) {
       if (workloadStructureState.length <= 1) {
         return;
       }
@@ -1255,68 +1198,133 @@ function renderStructureTree() {
       activeGroupIndex = 0;
       loadActiveStructureIntoForm();
       updateJsonFromForm();
-    });
-    actions.appendChild(removeSectionButton);
-    head.appendChild(actions);
-    sectionCard.appendChild(head);
-
-    const groupList = document.createElement("div");
-    groupList.className = "structure-group-list";
-
-    section.groups.forEach((group, groupIndex) => {
-      const row = document.createElement("div");
-      row.className = "structure-group-row";
-
-      const groupBtn = document.createElement("button");
-      groupBtn.type = "button";
-      groupBtn.className = "structure-group-btn";
-      if (
-        sectionIndex === activeSectionIndex &&
-        groupIndex === activeGroupIndex
-      ) {
-        groupBtn.classList.add("active");
+    },
+    onSelectGroup(sectionIndex, groupIndex) {
+      persistActiveStructureFromForm();
+      activeSectionIndex = sectionIndex;
+      activeGroupIndex = groupIndex;
+      pendingJsonFocusTarget = { sectionIndex, groupIndex };
+      loadActiveStructureIntoForm();
+      updateJsonFromForm();
+    },
+    onRemoveGroup(sectionIndex, groupIndex, section) {
+      if (section.groups.length <= 1) {
+        return;
       }
-      const opCount = countConfiguredGroupOperations(group);
-      groupBtn.textContent =
-        "Group " +
-        (groupIndex + 1) +
-        (opCount > 0 ? " • " + opCount + " op(s)" : " • empty");
-      groupBtn.addEventListener("click", () => {
-        persistActiveStructureFromForm();
-        activeSectionIndex = sectionIndex;
-        activeGroupIndex = groupIndex;
-        pendingJsonFocusTarget = { sectionIndex, groupIndex };
-        loadActiveStructureIntoForm();
-        updateJsonFromForm();
-      });
-      row.appendChild(groupBtn);
-
-      const removeGroupButton = document.createElement("button");
-      removeGroupButton.type = "button";
-      removeGroupButton.className = "structure-mini-btn";
-      removeGroupButton.textContent = "Remove";
-      removeGroupButton.disabled = section.groups.length <= 1;
-      removeGroupButton.addEventListener("click", () => {
-        if (section.groups.length <= 1) {
-          return;
-        }
-        persistActiveStructureFromForm();
-        section.groups.splice(groupIndex, 1);
-        activeSectionIndex = sectionIndex;
-        if (activeGroupIndex >= section.groups.length) {
-          activeGroupIndex = section.groups.length - 1;
-        }
-        loadActiveStructureIntoForm();
-        updateJsonFromForm();
-      });
-      row.appendChild(removeGroupButton);
-
-      groupList.appendChild(row);
-    });
-
-    sectionCard.appendChild(groupList);
-    structureTree.appendChild(sectionCard);
+      persistActiveStructureFromForm();
+      section.groups.splice(groupIndex, 1);
+      activeSectionIndex = sectionIndex;
+      if (activeGroupIndex >= section.groups.length) {
+        activeGroupIndex = section.groups.length - 1;
+      }
+      loadActiveStructureIntoForm();
+      updateJsonFromForm();
+    },
   });
+  return structurePanelRenderer;
+}
+
+function getPresetFlowController() {
+  if (presetFlowController) {
+    return presetFlowController;
+  }
+  if (
+    !globalThis.TectonicPresetFlow ||
+    typeof globalThis.TectonicPresetFlow.createController !== "function"
+  ) {
+    return null;
+  }
+  presetFlowController = globalThis.TectonicPresetFlow.createController({
+    refs: {
+      appHeader,
+      appShell,
+      assistantInput,
+      builderPanel,
+      copyBtn,
+      customWorkloadBtn,
+      downloadJsonBtn,
+      newWorkloadBtn,
+      presetFamilySelect,
+      presetFileSelect,
+      presetSelectionNote,
+      previewPanel,
+      runWorkloadBtn,
+      runsPanel,
+      validationResult,
+      welcomePanel,
+    },
+    state: {
+      getActivePresetJson() {
+        return activePresetJson;
+      },
+      setActivePresetJson(nextValue) {
+        activePresetJson = nextValue;
+      },
+      getCustomWorkloadMode() {
+        return customWorkloadMode;
+      },
+      setCustomWorkloadMode(nextValue) {
+        customWorkloadMode = nextValue === true;
+      },
+    },
+    presetIndexPath: PRESET_INDEX_PATH,
+    cloneJsonValue,
+    ensureWorkloadStructureState,
+    loadActiveStructureIntoForm,
+    renderGeneratedJson,
+    resetFormInterface,
+    setValidationStatus,
+    updateInteractiveStats,
+    updateJsonFromForm,
+    validateGeneratedJson,
+  });
+  return presetFlowController;
+}
+
+function getAssistantPanelController() {
+  if (assistantPanelController) {
+    return assistantPanelController;
+  }
+  if (
+    !globalThis.TectonicAssistantPanel ||
+    typeof globalThis.TectonicAssistantPanel.createController !== "function"
+  ) {
+    return null;
+  }
+  assistantPanelController = globalThis.TectonicAssistantPanel.createController(
+    {
+      refs: {
+        assistantApplyBtn,
+        assistantClearBtn,
+        assistantComposerHint,
+        assistantInput,
+        assistantStatus,
+        assistantTimeline,
+      },
+      assistEndpoint: ASSIST_ENDPOINT,
+      applyAssistantPatch,
+      applyClarificationAnswerToForm,
+      characterSetEnum,
+      formOpsWithKeyFields,
+      formOpsWithRangeFields,
+      formOpsWithSelectionFields,
+      formOpsWithValueFields,
+      getActivePresetJson() {
+        return activePresetJson;
+      },
+      getClarificationCurrentValue,
+      getCurrentFormState,
+      getCurrentWorkloadJson,
+      getRangeFormatValues,
+      getSchemaHintsForAssist,
+      getSelectedOperations,
+      getSelectionDistributionValues,
+      getStringPatternValues,
+      operationOrder,
+      updateJsonFromForm,
+    },
+  );
+  return assistantPanelController;
 }
 
 function clearOperationFormState() {
@@ -1473,192 +1481,44 @@ function resizeGroupsPerSection(nextCount) {
 }
 
 function syncLandingUi() {
-  const hasPreset = !!activePresetJson;
-  const showPreview = customWorkloadMode || hasPreset;
-  if (appHeader) {
-    appHeader.hidden = !customWorkloadMode;
+  const controller = getPresetFlowController();
+  if (!controller) {
+    return;
   }
-  if (appShell && appShell.classList) {
-    appShell.classList.toggle("landing", !customWorkloadMode);
-  }
-  if (builderPanel) {
-    builderPanel.hidden = !customWorkloadMode;
-  }
-  if (previewPanel) {
-    previewPanel.hidden = !showPreview;
-  }
-  if (runsPanel) {
-    runsPanel.hidden = !showPreview;
-  }
-  if (runWorkloadBtn) {
-    runWorkloadBtn.hidden = !showPreview;
-  }
-  if (downloadJsonBtn) {
-    downloadJsonBtn.hidden = !showPreview;
-  }
-  if (copyBtn) {
-    copyBtn.hidden = !showPreview;
-  }
-  if (validationResult) {
-    validationResult.hidden = !showPreview;
-  }
-  if (newWorkloadBtn) {
-    newWorkloadBtn.hidden = !customWorkloadMode;
-  }
-  if (welcomePanel) {
-    welcomePanel.hidden = customWorkloadMode;
-  }
+  controller.syncLandingUi();
 }
 
 function enableCustomWorkloadMode() {
-  customWorkloadMode = true;
-  clearLoadedPresetState();
-  ensureWorkloadStructureState();
-  loadActiveStructureIntoForm();
-  updateJsonFromForm();
-  syncLandingUi();
-  if (assistantInput) {
-    assistantInput.focus();
-  }
-}
-
-function renderPresetFamilyOptions() {
-  if (!presetFamilySelect) {
+  const controller = getPresetFlowController();
+  if (!controller) {
+    customWorkloadMode = true;
     return;
   }
-  const families = Array.from(
-    new Set(
-      presetCatalog
-        .map((preset) =>
-          typeof preset.family === "string" ? preset.family : "",
-        )
-        .filter(Boolean),
-    ),
-  ).sort();
-  presetFamilySelect.innerHTML = "";
-  const defaultOption = document.createElement("option");
-  defaultOption.value = "";
-  defaultOption.textContent = "Choose a family...";
-  presetFamilySelect.appendChild(defaultOption);
-  families.forEach((family) => {
-    const option = document.createElement("option");
-    option.value = family;
-    option.textContent = family;
-    presetFamilySelect.appendChild(option);
-  });
-}
-
-function renderPresetFileOptions(family) {
-  if (!presetFileSelect) {
-    return;
-  }
-  const normalizedFamily = typeof family === "string" ? family.trim() : "";
-  const matchingPresets = presetCatalog.filter(
-    (preset) => preset.family === normalizedFamily,
-  );
-  presetFileSelect.innerHTML = "";
-  const defaultOption = document.createElement("option");
-  defaultOption.value = "";
-  defaultOption.textContent = "Choose a file...";
-  presetFileSelect.appendChild(defaultOption);
-  matchingPresets.forEach((preset) => {
-    const option = document.createElement("option");
-    option.value = preset.id;
-    option.textContent = preset.label;
-    presetFileSelect.appendChild(option);
-  });
-  presetFileSelect.value = "";
-  presetFileSelect.disabled = matchingPresets.length === 0;
+  controller.enableCustomWorkloadMode();
 }
 
 async function loadPresetCatalog() {
-  const response = await fetch(PRESET_INDEX_PATH, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error("Failed to load preset catalog.");
+  const controller = getPresetFlowController();
+  if (!controller) {
+    return;
   }
-  const data = await response.json();
-  presetCatalog = Array.isArray(data)
-    ? data.filter(
-        (preset) =>
-          preset &&
-          typeof preset === "object" &&
-          typeof preset.id === "string" &&
-          typeof preset.family === "string" &&
-          typeof preset.label === "string" &&
-          typeof preset.path === "string",
-      )
-    : [];
-  renderPresetFamilyOptions();
-  renderPresetFileOptions("");
+  await controller.loadPresetCatalog();
 }
 
 function handlePresetFamilyChange(event) {
-  const family =
-    event && event.target && typeof event.target.value === "string"
-      ? event.target.value
-      : "";
-  customWorkloadMode = false;
-  activePresetJson = null;
-  setPresetSelectionNote("");
-  renderPresetFileOptions(family);
-  updateJsonFromForm();
-  syncLandingUi();
+  const controller = getPresetFlowController();
+  if (!controller) {
+    return;
+  }
+  controller.handlePresetFamilyChange(event);
 }
 
 async function handlePresetFileChange(event) {
-  const presetId =
-    event && event.target && typeof event.target.value === "string"
-      ? event.target.value
-      : "";
-  customWorkloadMode = false;
-  if (!presetId) {
-    activePresetJson = null;
-    setPresetSelectionNote("");
-    updateJsonFromForm();
-    syncLandingUi();
+  const controller = getPresetFlowController();
+  if (!controller) {
     return;
   }
-  const preset = presetCatalog.find((entry) => entry.id === presetId);
-  if (!preset) {
-    activePresetJson = null;
-    setPresetSelectionNote("");
-    updateJsonFromForm();
-    syncLandingUi();
-    return;
-  }
-  try {
-    const response = await fetch(preset.path, { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error("Failed to load preset JSON.");
-    }
-    const loadedJson = await response.json();
-    resetFormInterface();
-    if (presetFamilySelect) {
-      presetFamilySelect.value = preset.family;
-    }
-    renderPresetFileOptions(preset.family);
-    if (presetFileSelect) {
-      presetFileSelect.value = preset.id;
-      presetFileSelect.disabled = false;
-    }
-    activePresetJson = cloneJsonValue(loadedJson);
-    renderGeneratedJson(activePresetJson);
-    updateInteractiveStats(activePresetJson);
-    void validateGeneratedJson(activePresetJson);
-    setPresetSelectionNote(
-      `${preset.family}/${preset.label} loaded from ${preset.source}. ${preset.description}`,
-    );
-    syncLandingUi();
-  } catch (error) {
-    activePresetJson = null;
-    setPresetSelectionNote("");
-    updateJsonFromForm();
-    setValidationStatus(
-      error && error.message ? error.message : "Failed to load preset JSON.",
-      "invalid",
-    );
-    syncLandingUi();
-  }
+  await controller.handlePresetFileChange(event);
 }
 
 function normalizeDescription(text) {
@@ -2923,53 +2783,6 @@ function sanitizeTypedExpression(value, kind) {
   return null;
 }
 
-function formatExpressionSummary(value) {
-  if (typeof value === "string") {
-    return '"' + value + '"';
-  }
-  if (typeof value === "number") {
-    return String(value);
-  }
-  if (!isExpressionObject(value)) {
-    return "configured";
-  }
-  const keys = Object.keys(value);
-  if (keys.length !== 1) {
-    return "configured";
-  }
-  const variant = keys[0];
-  const inner = value[variant];
-  if (!isExpressionObject(inner)) {
-    return variant;
-  }
-  const params = Object.entries(inner)
-    .map(([key, paramValue]) => {
-      if (Array.isArray(paramValue)) {
-        return key + ":" + paramValue.length;
-      }
-      if (isExpressionObject(paramValue)) {
-        const nestedKeys = Object.keys(paramValue);
-        return key + ":" + (nestedKeys[0] || "object");
-      }
-      return key + ":" + String(paramValue);
-    })
-    .join(", ");
-  return variant + (params ? " (" + params + ")" : "");
-}
-
-function getAdvancedFieldLabel(field) {
-  if (field === "op_count") {
-    return "Operation Count";
-  }
-  if (field === "k") {
-    return "Sorted K";
-  }
-  if (field === "l") {
-    return "Sorted L";
-  }
-  return titleCaseFromSnake(field);
-}
-
 function getEffectiveOperationCharacterSet(op) {
   const operationCharacterSet = readOperationField(op, "character_set");
   if (operationCharacterSet) {
@@ -2981,738 +2794,38 @@ function getEffectiveOperationCharacterSet(op) {
   return null;
 }
 
-function getSingleExpressionVariant(value) {
-  if (!isExpressionObject(value)) {
-    return null;
-  }
-  const keys = Object.keys(value);
-  if (keys.length !== 1) {
-    return null;
-  }
-  return {
-    name: keys[0],
-    value: value[keys[0]],
-  };
-}
-
-function createAdvancedFieldShell(labelText, control, hintText = "") {
-  const wrapper = document.createElement("label");
-  wrapper.className = "advanced-summary-field";
-
-  const title = document.createElement("span");
-  title.textContent = labelText;
-  wrapper.appendChild(title);
-  wrapper.appendChild(control);
-
-  if (hintText) {
-    const hint = document.createElement("small");
-    hint.className = "advanced-summary-hint";
-    hint.textContent = hintText;
-    wrapper.appendChild(hint);
-  }
-
-  return wrapper;
-}
-
-function createAdvancedTextInput(value = "", type = "text") {
-  const input = document.createElement("input");
-  input.type = type;
-  input.value = value == null ? "" : String(value);
-  return input;
-}
-
-function createAdvancedSelect(options, value = "") {
-  const select = document.createElement("select");
-  (options || []).forEach((optionValue) => {
-    const option = document.createElement("option");
-    option.value = optionValue;
-    option.textContent = optionValue;
-    select.appendChild(option);
-  });
-  if (value !== "" && value !== null && value !== undefined) {
-    select.value = String(value);
-  }
-  return select;
-}
-
-function createAdvancedTextarea(value = "", placeholder = "") {
-  const textarea = document.createElement("textarea");
-  textarea.value = value == null ? "" : String(value);
-  textarea.placeholder = placeholder;
-  return textarea;
-}
-
-function buildDistributionExpressionFromValues(distributionName, rawValues) {
-  const params = {};
-  getSelectionParamsForDistribution(distributionName).forEach((fieldName) => {
-    const fallback = SELECTION_PARAM_DEFAULTS[fieldName];
-    if (fieldName === "selection_n") {
-      params.n = intOrDefault(rawValues[fieldName], fallback || 1);
-      return;
-    }
-    params[fieldName.replace(/^selection_/, "")] = numberOrDefault(
-      rawValues[fieldName],
-      fallback,
-    );
-  });
-  return { [distributionName]: params };
-}
-
-function getAdvancedNumberExprState(field, value) {
-  if (typeof value === "number") {
-    return {
-      mode: "constant",
-      constant: value,
-      distribution: "uniform",
-      params: {},
-    };
-  }
-  const variant = getSingleExpressionVariant(value);
-  if (
-    variant &&
-    getSelectionDistributionValues().includes(variant.name) &&
-    isExpressionObject(variant.value)
-  ) {
-    return {
-      mode: field === "selection" ? "distribution" : "distribution",
-      constant:
-        field === "selectivity"
-          ? 0.01
-          : (OPERATION_DEFAULTS.sorted && OPERATION_DEFAULTS.sorted[field]) ||
-            1,
-      distribution: variant.name,
-      params: cloneJsonValue(variant.value),
-    };
-  }
-  return null;
-}
-
-function parseInlineStringExprToken(text, characterSet) {
-  const trimmed = String(text || "").trim();
-  if (!trimmed) {
-    return null;
-  }
-  const uniformMatch = trimmed.match(/^\{\{\s*uniform(?:\s*:\s*(\d+))?\s*\}\}$/i);
-  if (uniformMatch) {
-    return buildUniformStringExpr(
-      intOrDefault(uniformMatch[1], 20),
-      characterSet,
-    );
-  }
-  return trimmed;
-}
-
-function formatInlineStringExprToken(value) {
-  if (typeof value === "string") {
-    return value;
-  }
-  const variant = getSingleExpressionVariant(value);
-  if (
-    variant &&
-    variant.name === "uniform" &&
-    isExpressionObject(variant.value) &&
-    typeof variant.value.len === "number"
-  ) {
-    return "{{uniform:" + String(variant.value.len) + "}}";
-  }
-  return null;
-}
-
-function formatWeightedEditorLines(items) {
-  if (!Array.isArray(items) || items.length === 0) {
-    return "";
-  }
-  const lines = [];
-  for (const item of items) {
-    if (!item || typeof item.weight !== "number") {
-      return null;
-    }
-    const valueToken = formatInlineStringExprToken(item.value);
-    if (valueToken === null) {
-      return null;
-    }
-    lines.push(String(item.weight) + " | " + valueToken);
-  }
-  return lines.join("\n");
-}
-
-function formatSegmentEditorLines(segments) {
-  if (!Array.isArray(segments) || segments.length === 0) {
-    return "";
-  }
-  const lines = [];
-  for (const segment of segments) {
-    const token = formatInlineStringExprToken(segment);
-    if (token === null) {
-      return null;
-    }
-    lines.push(token);
-  }
-  return lines.join("\n");
-}
-
-function getAdvancedStringExprState(value) {
-  if (typeof value === "string") {
-    return {
-      variant: "constant",
-      constant: value,
-      uniformLen: 20,
-      hotLen: STRING_PATTERN_DEFAULTS.key_hot_len,
-      hotAmount: STRING_PATTERN_DEFAULTS.key_hot_amount,
-      hotProbability: STRING_PATTERN_DEFAULTS.key_hot_probability,
-      weightedLines: "",
-      segmentedSeparator: ":",
-      segmentedLines: "",
-    };
-  }
-  const variant = getSingleExpressionVariant(value);
-  if (!variant) {
-    return null;
+function getAdvancedExpressionRenderer() {
+  if (advancedExpressionRenderer) {
+    return advancedExpressionRenderer;
   }
   if (
-    variant.name === "uniform" &&
-    isExpressionObject(variant.value) &&
-    typeof variant.value.len === "number"
+    !globalThis.TectonicAdvancedExpressions ||
+    typeof globalThis.TectonicAdvancedExpressions.createRenderer !== "function"
   ) {
-    return {
-      variant: "uniform",
-      constant: "",
-      uniformLen: variant.value.len,
-      hotLen: STRING_PATTERN_DEFAULTS.key_hot_len,
-      hotAmount: STRING_PATTERN_DEFAULTS.key_hot_amount,
-      hotProbability: STRING_PATTERN_DEFAULTS.key_hot_probability,
-      weightedLines: "",
-      segmentedSeparator: ":",
-      segmentedLines: "",
-    };
-  }
-  if (
-    variant.name === "hot_range" &&
-    isExpressionObject(variant.value) &&
-    typeof variant.value.len === "number" &&
-    typeof variant.value.amount === "number" &&
-    typeof variant.value.probability === "number"
-  ) {
-    return {
-      variant: "hot_range",
-      constant: "",
-      uniformLen: 20,
-      hotLen: variant.value.len,
-      hotAmount: variant.value.amount,
-      hotProbability: variant.value.probability,
-      weightedLines: "",
-      segmentedSeparator: ":",
-      segmentedLines: "",
-    };
-  }
-  if (variant.name === "weighted") {
-    const weightedLines = formatWeightedEditorLines(variant.value);
-    if (weightedLines === null) {
-      return null;
-    }
-    return {
-      variant: "weighted",
-      constant: "",
-      uniformLen: 20,
-      hotLen: STRING_PATTERN_DEFAULTS.key_hot_len,
-      hotAmount: STRING_PATTERN_DEFAULTS.key_hot_amount,
-      hotProbability: STRING_PATTERN_DEFAULTS.key_hot_probability,
-      weightedLines,
-      segmentedSeparator: ":",
-      segmentedLines: "",
-    };
-  }
-  if (
-    variant.name === "segmented" &&
-    isExpressionObject(variant.value) &&
-    Array.isArray(variant.value.segments)
-  ) {
-    const segmentedLines = formatSegmentEditorLines(variant.value.segments);
-    if (segmentedLines === null) {
-      return null;
-    }
-    return {
-      variant: "segmented",
-      constant: "",
-      uniformLen: 20,
-      hotLen: STRING_PATTERN_DEFAULTS.key_hot_len,
-      hotAmount: STRING_PATTERN_DEFAULTS.key_hot_amount,
-      hotProbability: STRING_PATTERN_DEFAULTS.key_hot_probability,
-      weightedLines: "",
-      segmentedSeparator:
-        typeof variant.value.separator === "string"
-          ? variant.value.separator
-          : ":",
-      segmentedLines,
-    };
-  }
-  return null;
-}
-
-function createUnsupportedAdvancedExpressionItem(op, field, value) {
-  const item = document.createElement("div");
-  item.className = "advanced-summary-item";
-
-  const meta = document.createElement("div");
-  meta.className = "advanced-summary-meta";
-
-  const text = document.createElement("div");
-  text.className = "advanced-summary-text";
-  text.textContent =
-    getAdvancedFieldLabel(field) +
-    ": " +
-    formatExpressionSummary(value) +
-    ". This expression shape is preserved but not editable here yet.";
-  meta.appendChild(text);
-
-  const actions = document.createElement("div");
-  actions.className = "advanced-summary-actions";
-
-  const clearBtn = document.createElement("button");
-  clearBtn.type = "button";
-  clearBtn.className = "advanced-summary-clear";
-  clearBtn.textContent = "Clear";
-  clearBtn.addEventListener("click", () => {
-    clearAdvancedFieldValue(op, field);
-    updateJsonFromForm();
-  });
-  actions.appendChild(clearBtn);
-  meta.appendChild(actions);
-
-  item.appendChild(meta);
-  return item;
-}
-
-function createAdvancedNumberExprItem(op, field, value) {
-  const state = getAdvancedNumberExprState(field, value);
-  if (!state) {
-    return createUnsupportedAdvancedExpressionItem(op, field, value);
-  }
-
-  const item = document.createElement("div");
-  item.className = "advanced-summary-item";
-
-  const meta = document.createElement("div");
-  meta.className = "advanced-summary-meta";
-
-  const text = document.createElement("div");
-  text.className = "advanced-summary-text";
-  text.textContent =
-    getAdvancedFieldLabel(field) +
-    ": " +
-    formatExpressionSummary(value) +
-    (field === "key" || field === "val"
-      ? ". Simple pattern and length controls are hidden while this advanced expression is active."
-      : "");
-  meta.appendChild(text);
-
-  const actions = document.createElement("div");
-  actions.className = "advanced-summary-actions";
-  const clearBtn = document.createElement("button");
-  clearBtn.type = "button";
-  clearBtn.className = "advanced-summary-clear";
-  clearBtn.textContent = "Clear";
-  clearBtn.addEventListener("click", () => {
-    clearAdvancedFieldValue(op, field);
-    updateJsonFromForm();
-  });
-  actions.appendChild(clearBtn);
-  meta.appendChild(actions);
-
-  item.appendChild(meta);
-
-  const controls = document.createElement("div");
-  controls.className = "advanced-summary-controls";
-
-  const constantInput = createAdvancedTextInput(state.constant, "number");
-  constantInput.step = "any";
-  if (field === "op_count" || field === "k") {
-    constantInput.min = "0";
-  }
-
-  const distributionSelect = createAdvancedSelect(
-    getSelectionDistributionValues(),
-    state.distribution,
-  );
-  const modeSelect =
-    field === "selection"
-      ? null
-      : createAdvancedSelect(["constant", "distribution"], state.mode);
-
-  const paramInputs = {};
-  Object.entries(SELECTION_PARAM_UI).forEach(([paramField, config]) => {
-    const input = createAdvancedTextInput(
-      state.params[paramField.replace(/^selection_/, "")] ??
-        state.params[paramField] ??
-        SELECTION_PARAM_DEFAULTS[paramField],
-      "number",
-    );
-    input.step = config.step || "any";
-    if (config.min !== undefined) {
-      input.min = config.min;
-    }
-    paramInputs[paramField] = input;
-  });
-
-  function updateAdvancedNumberExpr() {
-    const rawValues = {};
-    Object.entries(paramInputs).forEach(([paramField, input]) => {
-      rawValues[paramField] = input.value;
-    });
-    const nextValue =
-      field !== "selection" && modeSelect && modeSelect.value === "constant"
-        ? numberOrDefault(constantInput.value, state.constant || 0)
-        : buildDistributionExpressionFromValues(
-            distributionSelect.value || "uniform",
-            rawValues,
-          );
-    setAdvancedFieldValue(op, field, nextValue, { refresh: false });
-    text.textContent =
-      getAdvancedFieldLabel(field) +
-      ": " +
-      formatExpressionSummary(nextValue) +
-      (field === "key" || field === "val"
-        ? ". Simple pattern and length controls are hidden while this advanced expression is active."
-        : "");
-    updateJsonFromForm();
-  }
-
-  function refreshNumberExprVisibility() {
-    const useDistribution =
-      field === "selection" ||
-      !modeSelect ||
-      modeSelect.value === "distribution";
-    constantField.classList.toggle("hidden", useDistribution);
-    distributionField.classList.toggle("hidden", !useDistribution);
-    Object.entries(paramFields).forEach(([paramField, wrapper]) => {
-      wrapper.classList.toggle(
-        "hidden",
-        !useDistribution ||
-          !getSelectionParamsForDistribution(distributionSelect.value).includes(
-            paramField,
-          ),
-      );
-    });
-  }
-
-  const constantField = createAdvancedFieldShell(
-    "Value",
-    constantInput,
-    "Use a constant number for this field.",
-  );
-  const distributionField = createAdvancedFieldShell(
-    field === "selection" ? "Distribution" : "Expression Type",
-    distributionSelect,
-    field === "selection"
-      ? "Choose how keys are sampled."
-      : "Choose a distribution instead of a constant.",
-  );
-  const paramFields = {};
-  Object.entries(SELECTION_PARAM_UI).forEach(([paramField, config]) => {
-    paramFields[paramField] = createAdvancedFieldShell(
-      config.label,
-      paramInputs[paramField],
-    );
-  });
-
-  if (modeSelect) {
-    controls.appendChild(
-      createAdvancedFieldShell(
-        "Mode",
-        modeSelect,
-        "Switch between a constant value and a sampled distribution.",
-      ),
-    );
-  }
-  controls.appendChild(constantField);
-  controls.appendChild(distributionField);
-  Object.values(paramFields).forEach((wrapper) => {
-    controls.appendChild(wrapper);
-  });
-
-  if (modeSelect) {
-    modeSelect.addEventListener("change", () => {
-      refreshNumberExprVisibility();
-      updateAdvancedNumberExpr();
-    });
-  }
-  distributionSelect.addEventListener("change", () => {
-    refreshNumberExprVisibility();
-    updateAdvancedNumberExpr();
-  });
-  constantInput.addEventListener("input", updateAdvancedNumberExpr);
-  Object.values(paramInputs).forEach((input) => {
-    input.addEventListener("input", updateAdvancedNumberExpr);
-  });
-
-  refreshNumberExprVisibility();
-  item.appendChild(controls);
-  return item;
-}
-
-function createAdvancedStringExprItem(op, field, value) {
-  const state = getAdvancedStringExprState(value);
-  if (!state) {
-    return createUnsupportedAdvancedExpressionItem(op, field, value);
-  }
-
-  const item = document.createElement("div");
-  item.className = "advanced-summary-item";
-
-  const meta = document.createElement("div");
-  meta.className = "advanced-summary-meta";
-
-  const text = document.createElement("div");
-  text.className = "advanced-summary-text";
-  text.textContent =
-    getAdvancedFieldLabel(field) +
-    ": " +
-    formatExpressionSummary(value) +
-    ". Simple pattern and length controls are hidden while this advanced expression is active.";
-  meta.appendChild(text);
-
-  item.appendChild(meta);
-
-  const controls = document.createElement("div");
-  controls.className = "advanced-summary-controls";
-
-  const variantSelect = createAdvancedSelect(
-    ["constant", "uniform", "hot_range", "weighted", "segmented"],
-    state.variant,
-  );
-  const constantInput = createAdvancedTextInput(state.constant, "text");
-  const uniformLenInput = createAdvancedTextInput(state.uniformLen, "number");
-  uniformLenInput.min = "1";
-  uniformLenInput.step = "1";
-  const hotLenInput = createAdvancedTextInput(state.hotLen, "number");
-  hotLenInput.min = "1";
-  hotLenInput.step = "1";
-  const hotAmountInput = createAdvancedTextInput(state.hotAmount, "number");
-  hotAmountInput.min = "0";
-  hotAmountInput.step = "1";
-  const hotProbabilityInput = createAdvancedTextInput(
-    state.hotProbability,
-    "number",
-  );
-  hotProbabilityInput.min = "0";
-  hotProbabilityInput.max = "1";
-  hotProbabilityInput.step = "any";
-  const weightedTextarea = createAdvancedTextarea(
-    state.weightedLines,
-    "Example: 3 | user\n1 | {{uniform:20}}",
-  );
-  const segmentedSeparatorInput = createAdvancedTextInput(
-    state.segmentedSeparator,
-    "text",
-  );
-  const segmentedTextarea = createAdvancedTextarea(
-    state.segmentedLines,
-    "Example:\ntenant\n{{uniform:12}}",
-  );
-
-  function parseWeightedExpression() {
-    const lines = weightedTextarea.value
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    if (lines.length === 0) {
-      weightedTextarea.setCustomValidity("Add at least one weighted entry.");
-      return null;
-    }
-    const items = [];
-    for (const line of lines) {
-      const separatorIndex = line.indexOf("|");
-      if (separatorIndex < 0) {
-        weightedTextarea.setCustomValidity('Use "weight | value" on each line.');
-        return null;
-      }
-      const weight = Number(line.slice(0, separatorIndex).trim());
-      const rawValue = line.slice(separatorIndex + 1).trim();
-      if (!Number.isFinite(weight) || weight <= 0 || !rawValue) {
-        weightedTextarea.setCustomValidity('Use "weight | value" on each line.');
-        return null;
-      }
-      const parsedValue = parseInlineStringExprToken(
-        rawValue,
-        getEffectiveOperationCharacterSet(op),
-      );
-      if (parsedValue === null) {
-        weightedTextarea.setCustomValidity(
-          "Use plain text or {{uniform}} / {{uniform:20}} values.",
-        );
-        return null;
-      }
-      items.push({ weight, value: parsedValue });
-    }
-    weightedTextarea.setCustomValidity("");
-    return { weighted: items };
-  }
-
-  function parseSegmentedExpression() {
-    const lines = segmentedTextarea.value
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    if (lines.length === 0) {
-      segmentedTextarea.setCustomValidity("Add at least one segment.");
-      return null;
-    }
-    const segments = [];
-    for (const line of lines) {
-      const parsedSegment = parseInlineStringExprToken(
-        line,
-        getEffectiveOperationCharacterSet(op),
-      );
-      if (parsedSegment === null) {
-        segmentedTextarea.setCustomValidity(
-          "Use plain text or {{uniform}} / {{uniform:20}} segments.",
-        );
-        return null;
-      }
-      segments.push(parsedSegment);
-    }
-    segmentedTextarea.setCustomValidity("");
-    return {
-      segmented: {
-        separator: segmentedSeparatorInput.value || "",
-        segments,
-      },
-    };
-  }
-
-  function buildStringExpressionFromEditor() {
-    const variant = variantSelect.value;
-    if (variant === "constant") {
-      return constantInput.value;
-    }
-    if (variant === "uniform") {
-      return buildUniformStringExpr(
-        intOrDefault(uniformLenInput.value, state.uniformLen || 20),
-        getEffectiveOperationCharacterSet(op),
-      );
-    }
-    if (variant === "hot_range") {
-      return {
-        hot_range: {
-          len: intOrDefault(hotLenInput.value, state.hotLen || 20),
-          amount: nonNegativeIntOrDefault(
-            hotAmountInput.value,
-            state.hotAmount || 0,
-          ),
-          probability: probabilityOrDefault(
-            hotProbabilityInput.value,
-            state.hotProbability || 0.8,
-          ),
-        },
-      };
-    }
-    if (variant === "weighted") {
-      return parseWeightedExpression();
-    }
-    if (variant === "segmented") {
-      return parseSegmentedExpression();
-    }
     return null;
   }
-
-  function updateAdvancedStringExpression() {
-    const nextValue = buildStringExpressionFromEditor();
-    if (nextValue === null) {
-      return;
-    }
-    setAdvancedFieldValue(op, field, nextValue, { refresh: false });
-    text.textContent =
-      getAdvancedFieldLabel(field) +
-      ": " +
-      formatExpressionSummary(nextValue);
-    updateJsonFromForm();
-  }
-
-  const variantField = createAdvancedFieldShell(
-    "Pattern",
-    variantSelect,
-    "Switch between constant, uniform, weighted, segmented, or hot-range values.",
+  advancedExpressionRenderer = globalThis.TectonicAdvancedExpressions.createRenderer(
+    {
+      titleCaseFromSnake,
+      getSelectionDistributionValues,
+      getSelectionParamsForDistribution,
+      selectionParamUi: SELECTION_PARAM_UI,
+      selectionParamDefaults: SELECTION_PARAM_DEFAULTS,
+      operationDefaults: OPERATION_DEFAULTS,
+      stringPatternDefaults: STRING_PATTERN_DEFAULTS,
+      cloneJsonValue,
+      buildUniformStringExpr,
+      intOrDefault,
+      numberOrDefault,
+      nonNegativeIntOrDefault,
+      probabilityOrDefault,
+      getEffectiveOperationCharacterSet,
+      setAdvancedFieldValue,
+      clearAdvancedFieldValue,
+      updateJsonFromForm,
+    },
   );
-  const constantField = createAdvancedFieldShell(
-    "Constant Value",
-    constantInput,
-  );
-  const uniformField = createAdvancedFieldShell(
-    "Uniform Length",
-    uniformLenInput,
-  );
-  const hotLenField = createAdvancedFieldShell("Hot Prefix Length", hotLenInput);
-  const hotAmountField = createAdvancedFieldShell(
-    "Hot Range Count",
-    hotAmountInput,
-  );
-  const hotProbabilityField = createAdvancedFieldShell(
-    "Hot Probability",
-    hotProbabilityInput,
-  );
-  const weightedField = createAdvancedFieldShell(
-    "Weighted Entries",
-    weightedTextarea,
-    'One line per value. Format: "weight | value". Use {{uniform}} or {{uniform:20}} for generated values.',
-  );
-  const segmentedSeparatorField = createAdvancedFieldShell(
-    "Segment Separator",
-    segmentedSeparatorInput,
-  );
-  const segmentedField = createAdvancedFieldShell(
-    "Segments",
-    segmentedTextarea,
-    "One segment per line. Use plain text or {{uniform}} / {{uniform:20}}.",
-  );
-
-  function refreshStringEditorVisibility() {
-    const variant = variantSelect.value;
-    constantField.classList.toggle("hidden", variant !== "constant");
-    uniformField.classList.toggle("hidden", variant !== "uniform");
-    hotLenField.classList.toggle("hidden", variant !== "hot_range");
-    hotAmountField.classList.toggle("hidden", variant !== "hot_range");
-    hotProbabilityField.classList.toggle("hidden", variant !== "hot_range");
-    weightedField.classList.toggle("hidden", variant !== "weighted");
-    segmentedSeparatorField.classList.toggle("hidden", variant !== "segmented");
-    segmentedField.classList.toggle("hidden", variant !== "segmented");
-  }
-
-  controls.appendChild(variantField);
-  controls.appendChild(constantField);
-  controls.appendChild(uniformField);
-  controls.appendChild(hotLenField);
-  controls.appendChild(hotAmountField);
-  controls.appendChild(hotProbabilityField);
-  controls.appendChild(weightedField);
-  controls.appendChild(segmentedSeparatorField);
-  controls.appendChild(segmentedField);
-
-  variantSelect.addEventListener("change", () => {
-    refreshStringEditorVisibility();
-    updateAdvancedStringExpression();
-  });
-  constantInput.addEventListener("input", updateAdvancedStringExpression);
-  uniformLenInput.addEventListener("input", updateAdvancedStringExpression);
-  hotLenInput.addEventListener("input", updateAdvancedStringExpression);
-  hotAmountInput.addEventListener("input", updateAdvancedStringExpression);
-  hotProbabilityInput.addEventListener("input", updateAdvancedStringExpression);
-  weightedTextarea.addEventListener("change", updateAdvancedStringExpression);
-  segmentedSeparatorInput.addEventListener("input", updateAdvancedStringExpression);
-  segmentedTextarea.addEventListener("change", updateAdvancedStringExpression);
-
-  refreshStringEditorVisibility();
-  item.appendChild(controls);
-  return item;
-}
-
-function createAdvancedExpressionItem(op, field, value) {
-  if (["op_count", "k", "l", "selectivity", "selection"].includes(field)) {
-    return createAdvancedNumberExprItem(op, field, value);
-  }
-  if (["key", "val"].includes(field)) {
-    return createAdvancedStringExprItem(op, field, value);
-  }
-  return createUnsupportedAdvancedExpressionItem(op, field, value);
+  return advancedExpressionRenderer;
 }
 
 function refreshAdvancedExpressionSummary(op) {
@@ -3720,23 +2833,17 @@ function refreshAdvancedExpressionSummary(op) {
   if (!container) {
     return;
   }
-  const list = container.querySelector(".advanced-summary-list");
-  if (!list) {
-    return;
-  }
-  list.innerHTML = "";
-  const entry = operationAdvancedState.get(op) || {};
-  const activeFields = ADVANCED_OPERATION_FIELDS.filter((field) =>
-    Object.prototype.hasOwnProperty.call(entry, field),
-  );
-  if (activeFields.length === 0) {
+  const renderer = getAdvancedExpressionRenderer();
+  if (!renderer) {
     container.classList.add("hidden");
     return;
   }
-  activeFields.forEach((field) => {
-    list.appendChild(createAdvancedExpressionItem(op, field, entry[field]));
-  });
-  container.classList.remove("hidden");
+  renderer.render(
+    container,
+    op,
+    operationAdvancedState.get(op) || {},
+    ADVANCED_OPERATION_FIELDS,
+  );
 }
 
 function buildStringExprFromForm(op, target, characterSet, defaults) {
@@ -4002,227 +3109,6 @@ function buildJsonFromForm() {
   return json;
 }
 
-function renderGeneratedJson(json) {
-  jsonOutput.value = JSON.stringify(json, null, 2);
-  renderJsonTree(json);
-}
-
-function renderJsonTree(json) {
-  if (!jsonTree) {
-    return;
-  }
-  jsonTree.innerHTML = "";
-  jsonTree.appendChild(
-    createJsonTreeNode(null, json, {
-      isRoot: true,
-      sectionIndex: null,
-      groupIndex: null,
-      parentKey: null,
-    }),
-  );
-}
-
-function createJsonTreeNode(key, value, context) {
-  if (Array.isArray(value)) {
-    return createJsonTreeCollectionNode(key, value, context, "[", "]");
-  }
-  if (value && typeof value === "object") {
-    return createJsonTreeCollectionNode(key, value, context, "{", "}");
-  }
-  return createJsonTreePrimitiveNode(key, value);
-}
-
-function createJsonTreeCollectionNode(key, value, context, openChar, closeChar) {
-  const isArray = Array.isArray(value);
-  const details = document.createElement("details");
-  details.open = true;
-
-  if (Number.isInteger(context.sectionIndex)) {
-    details.dataset.sectionIndex = String(context.sectionIndex);
-  }
-  if (Number.isInteger(context.groupIndex)) {
-    details.dataset.groupIndex = String(context.groupIndex);
-    details.dataset.jsonNode = "group";
-  } else if (
-    Number.isInteger(context.sectionIndex) &&
-    context.parentKey === "sections"
-  ) {
-    details.dataset.jsonNode = "section";
-  }
-
-  const summary = document.createElement("summary");
-  const summaryRow = document.createElement("div");
-  summaryRow.className = "json-tree-summary";
-  summaryRow.title = isArray
-    ? value.length + " item" + (value.length === 1 ? "" : "s")
-    : Object.keys(value).length +
-      " key" +
-      (Object.keys(value).length === 1 ? "" : "s");
-
-  const marker = document.createElement("span");
-  marker.className = "json-tree-marker";
-  marker.textContent = "▸";
-  summaryRow.appendChild(marker);
-
-  const line = document.createElement("span");
-  line.className = "json-tree-line";
-  appendJsonEntryPrefix(line, key);
-  const opener = document.createElement("span");
-  opener.textContent = openChar;
-  line.appendChild(opener);
-  const collapsedPreview = document.createElement("span");
-  collapsedPreview.className = "json-tree-collapsed-preview";
-  collapsedPreview.textContent = closeChar;
-  line.appendChild(collapsedPreview);
-  summaryRow.appendChild(line);
-  summary.appendChild(summaryRow);
-  details.appendChild(summary);
-
-  const children = document.createElement("div");
-  children.className = "json-tree-children";
-
-  if (isArray) {
-    value.forEach((item, index) => {
-      children.appendChild(
-        createJsonTreeNode(null, item, {
-          isRoot: false,
-          sectionIndex:
-            context.parentKey === "sections" ? index : context.sectionIndex,
-          groupIndex:
-            context.parentKey === "groups" ? index : context.groupIndex,
-          parentKey: context.parentKey,
-        }),
-      );
-    });
-  } else {
-    Object.entries(value).forEach(([childKey, childValue]) => {
-      children.appendChild(
-        createJsonTreeNode(childKey, childValue, {
-          isRoot: false,
-          sectionIndex: context.sectionIndex,
-          groupIndex: context.groupIndex,
-          parentKey: childKey,
-        }),
-      );
-    });
-  }
-
-  const closing = document.createElement("div");
-  closing.className = "json-tree-line json-tree-closing";
-  closing.textContent = closeChar;
-  children.appendChild(closing);
-  details.appendChild(children);
-  return details;
-}
-
-function createJsonTreePrimitiveNode(key, value) {
-  const line = document.createElement("div");
-  line.className = "json-tree-line";
-  appendJsonEntryPrefix(line, key);
-  line.appendChild(formatJsonPrimitiveNode(value));
-  return line;
-}
-
-function appendJsonEntryPrefix(container, key) {
-  if (key === null || key === undefined || key === "") {
-    return;
-  }
-  const keyNode = document.createElement("span");
-  keyNode.className = "json-tree-key";
-  keyNode.textContent = '"' + key + '"';
-  container.appendChild(keyNode);
-  container.appendChild(document.createTextNode(": "));
-}
-
-function formatJsonPrimitiveNode(value) {
-  const node = document.createElement("span");
-  if (typeof value === "string") {
-    node.className = "json-tree-string";
-    node.textContent = '"' + value + '"';
-    return node;
-  }
-  if (typeof value === "number") {
-    node.className = "json-tree-number";
-    node.textContent = String(value);
-    return node;
-  }
-  if (typeof value === "boolean") {
-    node.className = "json-tree-boolean";
-    node.textContent = String(value);
-    return node;
-  }
-  node.className = "json-tree-null";
-  node.textContent = value === null ? "null" : String(value);
-  return node;
-}
-
-function scrollJsonOutputToGroupFocus(target) {
-  if (
-    jsonTree &&
-    target &&
-    Number.isInteger(target.sectionIndex) &&
-    Number.isInteger(target.groupIndex)
-  ) {
-    const groupNode = jsonTree.querySelector(
-      '[data-json-node="group"][data-section-index="' +
-        target.sectionIndex +
-        '"][data-group-index="' +
-        target.groupIndex +
-        '"]',
-    );
-    if (groupNode) {
-      expandJsonTreeAncestors(groupNode);
-      highlightJsonTreeNode(groupNode);
-      groupNode.scrollIntoView({ block: "center", inline: "nearest" });
-      return;
-    }
-  }
-  if (
-    !jsonOutput ||
-    !target ||
-    !Number.isInteger(target.sectionIndex) ||
-    !Number.isInteger(target.groupIndex)
-  ) {
-    return;
-  }
-  const lineIndex = findJsonGroupLineIndex(
-    jsonOutput.value,
-    target.sectionIndex,
-    target.groupIndex,
-  );
-  if (lineIndex === null) {
-    return;
-  }
-  const style = window.getComputedStyle(jsonOutput);
-  const lineHeight =
-    Number.parseFloat(style.lineHeight) ||
-    Number.parseFloat(style.fontSize || "13") * 1.6 ||
-    20;
-  jsonOutput.scrollTop = Math.max(0, lineIndex * lineHeight - lineHeight * 2);
-}
-
-function expandJsonTreeAncestors(node) {
-  let current = node;
-  while (current) {
-    if (current.tagName === "DETAILS") {
-      current.open = true;
-    }
-    current = current.parentElement;
-  }
-}
-
-function highlightJsonTreeNode(node) {
-  if (!jsonTree || !node) {
-    return;
-  }
-  jsonTree
-    .querySelectorAll(".json-tree-focus")
-    .forEach((item) => item.classList.remove("json-tree-focus"));
-  const summary = node.querySelector(":scope > summary > .json-tree-summary");
-  const highlightTarget = summary || node;
-  highlightTarget.classList.add("json-tree-focus");
-}
-
 function findJsonGroupLineIndex(jsonText, targetSectionIndex, targetGroupIndex) {
   const lines = String(jsonText || "").split("\n");
   let inSections = false;
@@ -4277,6 +3163,64 @@ function findJsonGroupLineIndex(jsonText, targetSectionIndex, targetGroupIndex) 
   }
 
   return null;
+}
+
+function getJsonTreeViewer() {
+  if (jsonTreeViewer) {
+    return jsonTreeViewer;
+  }
+  if (
+    !jsonTree ||
+    !globalThis.TectonicJsonTreeView ||
+    typeof globalThis.TectonicJsonTreeView.createViewer !== "function"
+  ) {
+    return null;
+  }
+  jsonTreeViewer = globalThis.TectonicJsonTreeView.createViewer({
+    container: jsonTree,
+  });
+  return jsonTreeViewer;
+}
+
+function renderGeneratedJson(json) {
+  const jsonText = JSON.stringify(json, null, 2);
+  jsonOutput.value = jsonText;
+  const viewer = getJsonTreeViewer();
+  if (viewer) {
+    jsonOutput.hidden = true;
+    viewer.render(json);
+    return;
+  }
+  jsonOutput.hidden = false;
+}
+
+function scrollJsonOutputToGroupFocus(target) {
+  const viewer = getJsonTreeViewer();
+  if (viewer && viewer.focusGroup(target)) {
+    return;
+  }
+  if (
+    !jsonOutput ||
+    !target ||
+    !Number.isInteger(target.sectionIndex) ||
+    !Number.isInteger(target.groupIndex)
+  ) {
+    return;
+  }
+  const lineIndex = findJsonGroupLineIndex(
+    jsonOutput.value,
+    target.sectionIndex,
+    target.groupIndex,
+  );
+  if (lineIndex === null) {
+    return;
+  }
+  const style = window.getComputedStyle(jsonOutput);
+  const lineHeight =
+    Number.parseFloat(style.lineHeight) ||
+    Number.parseFloat(style.fontSize || "13") * 1.6 ||
+    20;
+  jsonOutput.scrollTop = Math.max(0, lineIndex * lineHeight - lineHeight * 2);
 }
 
 function shouldAutoValidateJson(json) {
@@ -4432,46 +3376,27 @@ function getCurrentWorkloadJson() {
 }
 
 function clearAssistantThread() {
-  assistantConversation.length = 0;
-  assistantClarificationIndex.clear();
-  Object.keys(assistantAnswerStore).forEach(
-    (key) => delete assistantAnswerStore[key],
-  );
-  assistantGateMessage = "";
-  if (assistantTimeline) {
-    assistantTimeline.innerHTML = "";
+  const controller = getAssistantPanelController();
+  if (!controller) {
+    return;
   }
-  setAssistantComposerHint(
-    "Answer required clarifications to continue the thread.",
-  );
+  controller.clearThread();
 }
 
 function setAssistantStatus(text, tone) {
-  if (!assistantStatus) {
+  const controller = getAssistantPanelController();
+  if (!controller) {
     return;
   }
-  assistantStatus.textContent = text || "Ready";
-  assistantStatus.className = "assistant-status";
-  if (tone === "loading") {
-    assistantStatus.classList.add("loading");
-  } else if (tone === "error") {
-    assistantStatus.classList.add("error");
-  } else if (tone === "warn") {
-    assistantStatus.classList.add("warn");
-  }
+  controller.setStatus(text, tone);
 }
 
 function setAssistantBusy(isBusy) {
-  if (assistantApplyBtn) {
-    assistantApplyBtn.disabled = !!isBusy;
-    assistantApplyBtn.textContent = isBusy ? "Applying..." : "Apply";
+  const controller = getAssistantPanelController();
+  if (!controller) {
+    return;
   }
-  if (assistantClearBtn) {
-    assistantClearBtn.disabled = !!isBusy;
-  }
-  if (assistantInput) {
-    assistantInput.disabled = !!isBusy;
-  }
+  controller.setBusy(isBusy);
 }
 
 function setRunButtonBusy(isBusy) {
@@ -4483,207 +3408,11 @@ function setRunButtonBusy(isBusy) {
 }
 
 function setAssistantComposerHint(text) {
-  if (!assistantComposerHint) {
+  const controller = getAssistantPanelController();
+  if (!controller) {
     return;
   }
-  assistantComposerHint.textContent = text || "";
-}
-
-function createTurnId() {
-  return (
-    "turn-" +
-    Date.now().toString(36) +
-    "-" +
-    Math.random().toString(36).slice(2, 7)
-  );
-}
-
-function normalizeAssistantClarification(entry) {
-  if (!entry || typeof entry !== "object") {
-    return null;
-  }
-  const id =
-    typeof entry.id === "string" && entry.id.trim()
-      ? entry.id.trim()
-      : createTurnId();
-  const text = typeof entry.text === "string" ? entry.text.trim() : "";
-  if (!text) {
-    return null;
-  }
-  const binding =
-    entry.binding && typeof entry.binding === "object" ? entry.binding : null;
-  const type = binding && typeof binding.type === "string" ? binding.type : "";
-  if (!["top_field", "operation_field", "operations_set"].includes(type)) {
-    return null;
-  }
-
-  const inputType = typeof entry.input === "string" ? entry.input : "text";
-  let options = Array.isArray(entry.options)
-    ? entry.options.map((item) => String(item || "").trim()).filter(Boolean)
-    : [];
-  const validation =
-    entry.validation && typeof entry.validation === "object"
-      ? entry.validation
-      : null;
-  if (options.length === 0) {
-    if (type === "top_field" && binding.field === "character_set") {
-      options = [...characterSetEnum];
-    } else if (
-      type === "operation_field" &&
-      binding.field === "character_set"
-    ) {
-      options = [...characterSetEnum];
-    } else if (
-      type === "operation_field" &&
-      binding.field === "selection_distribution"
-    ) {
-      options = getSelectionDistributionValues();
-    } else if (
-      type === "operation_field" &&
-      (binding.field === "key_pattern" || binding.field === "val_pattern")
-    ) {
-      options = getStringPatternValues();
-    } else if (type === "operation_field" && binding.field === "range_format") {
-      options = getRangeFormatValues();
-    } else if (type === "operations_set") {
-      options = [...operationOrder];
-    }
-  }
-
-  return {
-    id,
-    text,
-    required: entry.required === true,
-    binding,
-    input: ["number", "enum", "multi_enum", "boolean", "text"].includes(
-      inputType,
-    )
-      ? inputType
-      : "text",
-    options,
-    validation,
-    default_behavior:
-      typeof entry.default_behavior === "string"
-        ? entry.default_behavior
-        : "use_default",
-  };
-}
-
-function normalizeAssistantAssumption(entry, index) {
-  if (typeof entry === "string") {
-    const text = entry.trim();
-    return text
-      ? {
-          id: "assume-" + index,
-          text,
-          field_ref: null,
-          reason: "default_applied",
-          applied_value: null,
-        }
-      : null;
-  }
-  if (!entry || typeof entry !== "object") {
-    return null;
-  }
-  const text = typeof entry.text === "string" ? entry.text.trim() : "";
-  if (!text) {
-    return null;
-  }
-  return {
-    id:
-      typeof entry.id === "string" && entry.id.trim()
-        ? entry.id.trim()
-        : "assume-" + index,
-    text,
-    field_ref:
-      typeof entry.field_ref === "string" ? entry.field_ref.trim() : null,
-    reason:
-      typeof entry.reason === "string"
-        ? entry.reason.trim()
-        : "default_applied",
-    applied_value: entry.applied_value,
-  };
-}
-
-function normalizeAssistantResponse(result) {
-  const summary =
-    typeof result.summary === "string" && result.summary.trim()
-      ? result.summary.trim()
-      : "Applied your request to the form.";
-  let clarifications = Array.isArray(result.clarifications)
-    ? result.clarifications
-        .map((entry) => normalizeAssistantClarification(entry))
-        .filter(Boolean)
-    : [];
-  if (clarifications.length === 0 && Array.isArray(result.questions)) {
-    clarifications = result.questions
-      .map((questionText, index) =>
-        normalizeAssistantClarification({
-          id: "question-" + index,
-          text: String(questionText || "").trim(),
-          required: false,
-          binding: { type: "operations_set" },
-          input: "multi_enum",
-          options: [...operationOrder],
-        }),
-      )
-      .filter(Boolean);
-  }
-  const assumptions = Array.isArray(result.assumptions)
-    ? result.assumptions
-        .map((entry, index) => normalizeAssistantAssumption(entry, index))
-        .filter(Boolean)
-    : [];
-  if (assumptions.length === 0 && Array.isArray(result.assumption_texts)) {
-    result.assumption_texts.forEach((text, index) => {
-      const normalized = normalizeAssistantAssumption(
-        String(text || ""),
-        index,
-      );
-      if (normalized) {
-        assumptions.push(normalized);
-      }
-    });
-  }
-  const warnings = Array.isArray(result.warnings)
-    ? result.warnings.map((entry) => String(entry || "").trim()).filter(Boolean)
-    : [];
-  return {
-    summary,
-    clarifications,
-    assumptions,
-    warnings,
-    source: typeof result.source === "string" ? result.source : "unknown",
-  };
-}
-
-function addAssistantTimelineTurn(turn) {
-  assistantConversation.push(turn);
-  while (assistantConversation.length > 80) {
-    assistantConversation.shift();
-  }
-  renderAssistantTimeline();
-}
-
-function pruneAssistantAnswerStore() {
-  const validClarificationIds = new Set(assistantClarificationIndex.keys());
-  Object.keys(assistantAnswerStore).forEach((answerId) => {
-    if (!validClarificationIds.has(answerId)) {
-      delete assistantAnswerStore[answerId];
-    }
-  });
-}
-
-function getAnswersForRequest() {
-  pruneAssistantAnswerStore();
-  const filtered = {};
-  Object.entries(assistantAnswerStore).forEach(([key, value]) => {
-    if (!assistantClarificationIndex.has(key)) {
-      return;
-    }
-    filtered[key] = value;
-  });
-  return filtered;
+  controller.setComposerHint(text);
 }
 
 function getOperationsForSelectionBinding(binding, clarification) {
@@ -4719,11 +3448,6 @@ function getOperationsForSelectionBinding(binding, clarification) {
 function getClarificationCurrentValue(clarification) {
   if (!clarification || !clarification.binding) {
     return null;
-  }
-  if (
-    Object.prototype.hasOwnProperty.call(assistantAnswerStore, clarification.id)
-  ) {
-    return assistantAnswerStore[clarification.id];
   }
   const binding = clarification.binding;
   if (binding.type === "top_field") {
@@ -4762,35 +3486,6 @@ function getClarificationCurrentValue(clarification) {
   return null;
 }
 
-function parseInputValueByType(inputEl, clarification) {
-  if (!inputEl || !clarification) {
-    return null;
-  }
-  const inputType = clarification.input;
-  if (inputType === "multi_enum") {
-    if (!(inputEl instanceof HTMLSelectElement)) {
-      return [];
-    }
-    return Array.from(inputEl.selectedOptions || [])
-      .map((opt) => String(opt.value || "").trim())
-      .filter(Boolean);
-  }
-  if (inputType === "boolean") {
-    if (inputEl.value === "true") return true;
-    if (inputEl.value === "false") return false;
-    return null;
-  }
-  if (inputType === "number") {
-    if (inputEl.value === "") {
-      return null;
-    }
-    const value = Number(inputEl.value);
-    return Number.isFinite(value) ? value : null;
-  }
-  const text = String(inputEl.value || "").trim();
-  return text ? text : null;
-}
-
 function hasAnswerValue(value) {
   if (value === null || value === undefined) {
     return false;
@@ -4802,86 +3497,6 @@ function hasAnswerValue(value) {
     return value.trim().length > 0;
   }
   return true;
-}
-
-function validateClarificationAnswer(clarification, value) {
-  const validation =
-    clarification &&
-    clarification.validation &&
-    typeof clarification.validation === "object"
-      ? clarification.validation
-      : {};
-  if (!hasAnswerValue(value)) {
-    if (clarification && clarification.required) {
-      if (
-        clarification.binding &&
-        clarification.binding.type === "operations_set"
-      ) {
-        return {
-          valid: false,
-          message:
-            "Select one or more operations in the Operations section below.",
-        };
-      }
-      return { valid: false, message: "Required field." };
-    }
-    return { valid: true, message: "" };
-  }
-
-  if (clarification.input === "enum") {
-    if (
-      clarification.options.length > 0 &&
-      !clarification.options.includes(String(value))
-    ) {
-      return { valid: false, message: "Choose one of the allowed options." };
-    }
-  }
-
-  if (clarification.input === "multi_enum") {
-    const values = Array.isArray(value) ? value : [];
-    if (validation.min_items && values.length < Number(validation.min_items)) {
-      return {
-        valid: false,
-        message: "Select at least " + validation.min_items + " option(s).",
-      };
-    }
-    if (validation.max_items && values.length > Number(validation.max_items)) {
-      return {
-        valid: false,
-        message: "Select at most " + validation.max_items + " option(s).",
-      };
-    }
-    if (
-      clarification.options.length > 0 &&
-      values.some((item) => !clarification.options.includes(item))
-    ) {
-      return { valid: false, message: "Selected operation is not allowed." };
-    }
-  }
-
-  if (clarification.input === "number") {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) {
-      return { valid: false, message: "Enter a valid number." };
-    }
-    if (validation.integer && !Number.isInteger(numeric)) {
-      return { valid: false, message: "Enter a whole number." };
-    }
-    if (Number.isFinite(validation.min) && numeric < validation.min) {
-      return {
-        valid: false,
-        message: "Value must be >= " + validation.min + ".",
-      };
-    }
-    if (Number.isFinite(validation.max) && numeric > validation.max) {
-      return {
-        valid: false,
-        message: "Value must be <= " + validation.max + ".",
-      };
-    }
-  }
-
-  return { valid: true, message: "" };
 }
 
 function applyClarificationAnswerToForm(clarification, value) {
@@ -5019,484 +3634,6 @@ function applyClarificationAnswerToForm(clarification, value) {
     }
     updateJsonFromForm();
   }
-}
-
-function validateAndRenderClarificationState() {
-  const unresolved = [];
-  assistantClarificationIndex.forEach((entry, clarificationId) => {
-    const value = assistantAnswerStore[clarificationId];
-    const validation = validateClarificationAnswer(entry.clarification, value);
-    const hasValue = hasAnswerValue(value);
-    const isResolved =
-      entry.clarification.required === true && validation.valid && hasValue;
-    entry.refs.forEach((ref) => {
-      if (ref && ref.errorEl) {
-        ref.errorEl.textContent = validation.valid
-          ? ""
-          : entry.clarification.required || hasAnswerValue(value)
-            ? validation.message
-            : "";
-      }
-      if (ref && ref.inputEl) {
-        ref.inputEl.classList.toggle(
-          "invalid",
-          !validation.valid &&
-            (entry.clarification.required || hasAnswerValue(value)),
-        );
-      }
-      if (ref && ref.blockEl) {
-        ref.blockEl.classList.toggle(
-          "required",
-          entry.clarification.required === true && !isResolved,
-        );
-        ref.blockEl.classList.toggle("resolved", isResolved);
-      }
-      if (ref && ref.badgeEl) {
-        ref.badgeEl.textContent = isResolved ? "Resolved" : "Required";
-        ref.badgeEl.classList.toggle("resolved", isResolved);
-      }
-      if (ref && ref.hintEl) {
-        ref.hintEl.textContent = buildClarificationHintText(
-          entry.clarification,
-          isResolved,
-        );
-      }
-    });
-    if (entry.clarification.required && !validation.valid) {
-      unresolved.push({ id: clarificationId, message: validation.message });
-    }
-  });
-
-  if (unresolved.length > 0) {
-    assistantGateMessage =
-      "Resolve " +
-      unresolved.length +
-      " required clarification" +
-      (unresolved.length > 1 ? "s" : "") +
-      " before sending the next prompt.";
-    setAssistantComposerHint(assistantGateMessage);
-    if (!assistantStatus || !assistantStatus.classList.contains("loading")) {
-      setAssistantStatus("Resolve required", "warn");
-    }
-  } else if (assistantConversation.length > 0) {
-    assistantGateMessage = "";
-    setAssistantComposerHint(
-      "All required clarifications are resolved. You can continue the thread.",
-    );
-    if (
-      !assistantStatus ||
-      (!assistantStatus.classList.contains("loading") &&
-        !assistantStatus.classList.contains("error"))
-    ) {
-      setAssistantStatus("Ready", "default");
-    }
-  } else {
-    assistantGateMessage = "";
-    setAssistantComposerHint(
-      "Answer required clarifications to continue the thread.",
-    );
-  }
-
-  return unresolved;
-}
-
-function registerClarificationRef(clarification, refs) {
-  if (!clarification || !clarification.id) {
-    return;
-  }
-  if (!assistantClarificationIndex.has(clarification.id)) {
-    assistantClarificationIndex.set(clarification.id, {
-      clarification,
-      refs: [],
-    });
-  }
-  const entry = assistantClarificationIndex.get(clarification.id);
-  entry.clarification = clarification;
-  entry.refs.push(refs || {});
-}
-
-function writeValueToClarificationInput(inputEl, clarification, value) {
-  if (!inputEl || !clarification) {
-    return;
-  }
-  if (!hasAnswerValue(value)) {
-    if (
-      clarification.input === "multi_enum" &&
-      inputEl instanceof HTMLSelectElement
-    ) {
-      Array.from(inputEl.options || []).forEach((optionEl) => {
-        optionEl.selected = false;
-      });
-    } else {
-      inputEl.value = "";
-    }
-    return;
-  }
-  if (
-    clarification.input === "multi_enum" &&
-    inputEl instanceof HTMLSelectElement
-  ) {
-    const asArray = Array.isArray(value) ? value : [];
-    Array.from(inputEl.options || []).forEach((optionEl) => {
-      optionEl.selected = asArray.includes(optionEl.value);
-    });
-    return;
-  }
-  if (clarification.input === "boolean") {
-    inputEl.value = value === true ? "true" : value === false ? "false" : "";
-    return;
-  }
-  inputEl.value = String(value);
-}
-
-function createClarificationInput(clarification) {
-  if (!clarification) {
-    return null;
-  }
-  if (shouldHideClarificationInput(clarification)) {
-    return null;
-  }
-  let inputEl;
-  if (clarification.input === "enum") {
-    const select = document.createElement("select");
-    select.className = "assistant-clarification-input";
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = "(choose)";
-    select.appendChild(placeholder);
-    clarification.options.forEach((optionValue) => {
-      const optionEl = document.createElement("option");
-      optionEl.value = optionValue;
-      optionEl.textContent = optionValue;
-      select.appendChild(optionEl);
-    });
-    inputEl = select;
-  } else if (clarification.input === "multi_enum") {
-    const select = document.createElement("select");
-    select.className = "assistant-clarification-input";
-    select.multiple = true;
-    select.size = Math.max(3, Math.min(6, clarification.options.length || 4));
-    clarification.options.forEach((optionValue) => {
-      const optionEl = document.createElement("option");
-      optionEl.value = optionValue;
-      optionEl.textContent = optionValue;
-      select.appendChild(optionEl);
-    });
-    inputEl = select;
-  } else if (clarification.input === "boolean") {
-    const select = document.createElement("select");
-    select.className = "assistant-clarification-input";
-    [
-      { value: "", label: "(choose)" },
-      { value: "true", label: "Yes" },
-      { value: "false", label: "No" },
-    ].forEach((entry) => {
-      const optionEl = document.createElement("option");
-      optionEl.value = entry.value;
-      optionEl.textContent = entry.label;
-      select.appendChild(optionEl);
-    });
-    inputEl = select;
-  } else {
-    const input = document.createElement("input");
-    input.className = "assistant-clarification-input";
-    input.type = clarification.input === "number" ? "number" : "text";
-    if (clarification.input === "number") {
-      input.step =
-        clarification.validation && clarification.validation.integer
-          ? "1"
-          : "any";
-      if (
-        clarification.validation &&
-        Number.isFinite(clarification.validation.min)
-      ) {
-        input.min = String(clarification.validation.min);
-      }
-      if (
-        clarification.validation &&
-        Number.isFinite(clarification.validation.max)
-      ) {
-        input.max = String(clarification.validation.max);
-      }
-    }
-    inputEl = input;
-  }
-  return inputEl;
-}
-
-function shouldHideClarificationInput(clarification) {
-  return !!(
-    clarification &&
-    clarification.binding &&
-    clarification.binding.type === "operations_set"
-  );
-}
-
-function buildClarificationHintText(clarification, isResolved) {
-  if (!clarification || !clarification.binding) {
-    return "";
-  }
-  if (clarification.binding.type === "operations_set") {
-    if (clarification.required) {
-      return isResolved
-        ? "Operations are set below."
-        : "Use the Operations section below. At least one operation is required.";
-    }
-    return "Use the Operations section below to change operation selection.";
-  }
-  if (clarification.required) {
-    return isResolved
-      ? "Required answer provided."
-      : "Required for next prompt.";
-  }
-  return "Optional. Defaults will be used if left blank.";
-}
-
-function getClarificationFieldLabel(fieldName) {
-  const labels = {
-    selection_mean: "mean",
-    selection_std_dev: "standard deviation",
-    selection_alpha: "alpha",
-    selection_beta: "beta",
-    selection_lambda: "lambda",
-    selection_scale: "scale",
-    selection_shape: "shape",
-    selection_min: "minimum",
-    selection_max: "maximum",
-    selection_n: "parameter n",
-    selection_s: "parameter s",
-  };
-  return labels[fieldName] || "";
-}
-
-function getClarificationDisplayText(clarification) {
-  const baseText =
-    clarification && typeof clarification.text === "string"
-      ? clarification.text.trim()
-      : "";
-  if (!baseText || !clarification || !clarification.binding) {
-    return baseText;
-  }
-
-  if (
-    clarification.binding.type !== "operation_field" ||
-    clarification.input !== "number" ||
-    typeof clarification.binding.field !== "string"
-  ) {
-    return baseText;
-  }
-
-  const fieldName = clarification.binding.field;
-  if (!fieldName.startsWith("selection_")) {
-    return baseText;
-  }
-
-  const lower = baseText.toLowerCase();
-  const looksMultiParam =
-    (/\bmean\b/.test(lower) &&
-      /\bstandard\s+deviation\b|\bstd(?:\.?\s*dev|_?dev|_?deviation)?\b/.test(
-        lower,
-      )) ||
-    (/\balpha\b/.test(lower) && /\bbeta\b/.test(lower)) ||
-    (/\bmin(?:imum)?\b/.test(lower) && /\bmax(?:imum)?\b/.test(lower)) ||
-    (/\bscale\b/.test(lower) && /\bshape\b/.test(lower));
-  if (!looksMultiParam) {
-    return baseText;
-  }
-
-  const fieldLabel = getClarificationFieldLabel(fieldName);
-  if (!fieldLabel) {
-    return baseText;
-  }
-
-  const distributionMatch = baseText.match(
-    /\bfor\s+([a-z_ -]+)\s+selection distribution\b/i,
-  );
-  const distributionLabel =
-    distributionMatch && distributionMatch[1]
-      ? distributionMatch[1].trim()
-      : "selection";
-  return (
-    "For " +
-    distributionLabel +
-    " distribution, what " +
-    fieldLabel +
-    " should I use?"
-  );
-}
-
-function renderAssistantTimeline() {
-  if (!assistantTimeline) {
-    return;
-  }
-  assistantTimeline.innerHTML = "";
-  assistantClarificationIndex.clear();
-
-  assistantConversation.forEach((turn) => {
-    const turnEl = document.createElement("article");
-    turnEl.className =
-      "assistant-turn " + (turn.role === "user" ? "user" : "assistant");
-
-    const header = document.createElement("div");
-    header.className = "assistant-turn-header";
-    const left = document.createElement("span");
-    left.textContent = turn.role === "user" ? "You" : "Assistant";
-    const right = document.createElement("span");
-    right.textContent = turn.at || "";
-    header.appendChild(left);
-    header.appendChild(right);
-    turnEl.appendChild(header);
-
-    if (turn.role === "user") {
-      const message = document.createElement("p");
-      message.className = "assistant-turn-message";
-      message.textContent = turn.text || "";
-      turnEl.appendChild(message);
-      assistantTimeline.appendChild(turnEl);
-      return;
-    }
-
-    const summary = document.createElement("p");
-    summary.className = "assistant-turn-summary";
-    summary.textContent = turn.summary || "Applied.";
-    turnEl.appendChild(summary);
-
-    if (Array.isArray(turn.warnings) && turn.warnings.length > 0) {
-      const warning = document.createElement("p");
-      warning.className = "assistant-inline-meta";
-      warning.textContent = "Warnings: " + turn.warnings.join(" ");
-      turnEl.appendChild(warning);
-    }
-
-    if (Array.isArray(turn.assumptions) && turn.assumptions.length > 0) {
-      const assumptionsWrap = document.createElement("div");
-      assumptionsWrap.className = "assistant-assumptions";
-      const assumptionsTitle = document.createElement("span");
-      assumptionsTitle.className = "assistant-inline-meta";
-      assumptionsTitle.textContent = "Assumptions applied:";
-      assumptionsWrap.appendChild(assumptionsTitle);
-      const assumptionList = document.createElement("ul");
-      assumptionList.className = "assistant-assumption-list";
-      turn.assumptions.forEach((entry) => {
-        const item = document.createElement("li");
-        item.textContent = entry.text;
-        assumptionList.appendChild(item);
-      });
-      assumptionsWrap.appendChild(assumptionList);
-      turnEl.appendChild(assumptionsWrap);
-    }
-
-    if (Array.isArray(turn.clarifications) && turn.clarifications.length > 0) {
-      const clarificationsWrap = document.createElement("div");
-      clarificationsWrap.className = "assistant-clarification-list";
-      turn.clarifications.forEach((clarification) => {
-        const currentValue = getClarificationCurrentValue(clarification);
-        const currentValidation = validateClarificationAnswer(
-          clarification,
-          currentValue,
-        );
-        const isResolved =
-          clarification.required === true &&
-          currentValidation.valid &&
-          hasAnswerValue(currentValue);
-        const block = document.createElement("div");
-        const blockClasses = ["assistant-clarification"];
-        if (clarification.required && !isResolved) {
-          blockClasses.push("required");
-        }
-        if (isResolved) {
-          blockClasses.push("resolved");
-        }
-        block.className = blockClasses.join(" ");
-
-        const label = document.createElement("label");
-        label.className = "assistant-clarification-label";
-        label.textContent = getClarificationDisplayText(clarification);
-        let badge = null;
-        if (clarification.required) {
-          badge = document.createElement("span");
-          badge.className = "assistant-required-badge";
-          badge.textContent = isResolved ? "Resolved" : "Required";
-          badge.classList.toggle("resolved", isResolved);
-          label.appendChild(badge);
-        }
-        block.appendChild(label);
-
-        const inputEl = createClarificationInput(clarification);
-        if (inputEl) {
-          writeValueToClarificationInput(inputEl, clarification, currentValue);
-          block.appendChild(inputEl);
-        }
-
-        const hint = document.createElement("p");
-        hint.className = "assistant-clarification-hint";
-        hint.textContent = buildClarificationHintText(
-          clarification,
-          isResolved,
-        );
-        block.appendChild(hint);
-
-        const errorEl = document.createElement("p");
-        errorEl.className = "assistant-clarification-error";
-        block.appendChild(errorEl);
-        registerClarificationRef(clarification, {
-          inputEl,
-          errorEl,
-          blockEl: block,
-          badgeEl: badge,
-          hintEl: hint,
-        });
-
-        if (inputEl) {
-          const applyFromInput = () => {
-            const parsedValue = parseInputValueByType(inputEl, clarification);
-            if (hasAnswerValue(parsedValue)) {
-              assistantAnswerStore[clarification.id] = parsedValue;
-            } else {
-              delete assistantAnswerStore[clarification.id];
-            }
-            const validation = validateClarificationAnswer(
-              clarification,
-              assistantAnswerStore[clarification.id],
-            );
-            if (validation.valid) {
-              applyClarificationAnswerToForm(
-                clarification,
-                assistantAnswerStore[clarification.id],
-              );
-            }
-            validateAndRenderClarificationState();
-          };
-
-          if (inputEl.tagName === "SELECT") {
-            inputEl.addEventListener("change", applyFromInput);
-          } else {
-            inputEl.addEventListener("input", applyFromInput);
-            inputEl.addEventListener("blur", applyFromInput);
-          }
-        }
-
-        clarificationsWrap.appendChild(block);
-      });
-      turnEl.appendChild(clarificationsWrap);
-
-      const footer = document.createElement("div");
-      footer.className = "assistant-card-footer";
-      const footerLeft = document.createElement("span");
-      footerLeft.textContent = "Edits save automatically.";
-      const footerRight = document.createElement("span");
-      footerRight.textContent = "Required answers gate next send.";
-      footer.appendChild(footerLeft);
-      footer.appendChild(footerRight);
-      turnEl.appendChild(footer);
-    }
-
-    assistantTimeline.appendChild(turnEl);
-  });
-
-  pruneAssistantAnswerStore();
-  assistantTimeline.scrollTop = assistantTimeline.scrollHeight;
-  validateAndRenderClarificationState();
 }
 
 function toFiniteNumber(value) {
@@ -6003,146 +4140,12 @@ async function handleRunWorkload() {
   await workloadRunsController.startRun(specJson);
 }
 
-async function requestAssistantPatch(promptText) {
-  const currentJson = getCurrentWorkloadJson();
-  const response = await fetch(ASSIST_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt: promptText,
-      conversation: assistantConversation.map((turn) => ({
-        role: turn.role === "assistant" ? "assistant" : "user",
-        text:
-          turn.role === "assistant"
-            ? turn.summary || turn.text || ""
-            : turn.text || "",
-      })),
-      answers: getAnswersForRequest(),
-      form_state: getCurrentFormState(),
-      schema_hints: getSchemaHintsForAssist(),
-      current_json: currentJson,
-    }),
-  });
-
-  let data = null;
-  try {
-    data = await response.json();
-  } catch (parseError) {
-    throw new Error("Assistant returned an unreadable response.");
-  }
-
-  if (!response.ok) {
-    const message =
-      data && data.error ? data.error : "Assistant request failed.";
-    throw new Error(message);
-  }
-  if (!data || typeof data !== "object") {
-    throw new Error("Assistant returned an empty response.");
-  }
-  return data;
-}
-
 async function handleAssistantApply() {
-  if (activePresetJson) {
-    setAssistantStatus("Preset loaded", "warn");
-    setAssistantComposerHint(
-      "Clear Form before editing the loaded preset with chat.",
-    );
+  const controller = getAssistantPanelController();
+  if (!controller) {
     return;
   }
-  const promptText = assistantInput ? assistantInput.value.trim() : "";
-  if (!promptText) {
-    setAssistantStatus("Enter details to apply", "warn");
-    setAssistantComposerHint(
-      "Describe your workload in plain English, then click Apply.",
-    );
-    return;
-  }
-
-  const unresolvedBeforeSend = validateAndRenderClarificationState();
-  if (unresolvedBeforeSend.length > 0) {
-    setAssistantStatus("Resolve required", "warn");
-    setAssistantComposerHint(
-      assistantGateMessage ||
-        "Resolve required clarifications before sending the next prompt.",
-    );
-    return;
-  }
-
-  const userTurn = {
-    id: createTurnId(),
-    role: "user",
-    text: promptText,
-    at: new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
-  };
-  addAssistantTimelineTurn(userTurn);
-  if (assistantInput) {
-    assistantInput.value = "";
-  }
-
-  setAssistantBusy(true);
-  setAssistantStatus("Interpreting...", "loading");
-  setAssistantComposerHint("Generating a patch and clarification metadata...");
-
-  try {
-    const selectedOpsBeforeApply = getSelectedOperations();
-    const result = await requestAssistantPatch(promptText);
-    applyAssistantPatch(result.patch, {
-      promptText,
-      selectedOpsBeforeApply,
-    });
-    updateJsonFromForm();
-
-    const normalizedResult = normalizeAssistantResponse(result);
-    const assistantTurn = {
-      id: createTurnId(),
-      role: "assistant",
-      summary: normalizedResult.summary,
-      clarifications: normalizedResult.clarifications,
-      assumptions: normalizedResult.assumptions,
-      warnings: normalizedResult.warnings,
-      source: normalizedResult.source,
-      at: new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    };
-    addAssistantTimelineTurn(assistantTurn);
-
-    const unresolvedAfterApply = validateAndRenderClarificationState();
-    if (unresolvedAfterApply.length > 0) {
-      setAssistantStatus("Resolve required", "warn");
-    } else if (normalizedResult.warnings.length > 0) {
-      setAssistantStatus("Applied with notes", "warn");
-    } else {
-      setAssistantStatus("Applied", "default");
-    }
-  } catch (e) {
-    setAssistantStatus("Assistant failed", "error");
-    const errorTurn = {
-      id: createTurnId(),
-      role: "assistant",
-      summary:
-        e && e.message ? e.message : "Failed to apply assistant suggestion.",
-      clarifications: [],
-      assumptions: [],
-      warnings: [],
-      source: "error",
-      at: new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    };
-    addAssistantTimelineTurn(errorTurn);
-    setAssistantComposerHint(
-      "The previous request failed. Update your prompt and try again.",
-    );
-  } finally {
-    setAssistantBusy(false);
-  }
+  await controller.handleApply();
 }
 
 function resetFormInterface() {
