@@ -68,6 +68,7 @@ let advancedExpressionRenderer = null;
 let structurePanelRenderer = null;
 let presetFlowController = null;
 let assistantPanelController = null;
+let workloadRunsPanelController = null;
 
 const INITIAL_JSON_TEXT = "{}";
 const PRESET_INDEX_PATH = "/presets/index.json";
@@ -320,7 +321,6 @@ let activeSectionIndex = 0;
 let activeGroupIndex = 0;
 
 let schema = null;
-let workloadRunsController = null;
 const SCHEMA_ASSET_PATH = "/workload-schema.json";
 const ASSIST_ENDPOINT = "/api/assist";
 
@@ -603,13 +603,9 @@ async function initApp() {
   }
   syncLandingUi();
 
-  if (typeof window.createWorkloadRunsController === "function" && runsList) {
-    workloadRunsController = window.createWorkloadRunsController({
-      runsListEl: runsList,
-      onInfo: (message) => setValidationStatus(message, "valid"),
-      onError: (message) => setValidationStatus(message, "invalid"),
-      onBusyChange: (isBusy) => setRunButtonBusy(isBusy),
-    });
+  const runsController = getWorkloadRunsPanelController();
+  if (runsController) {
+    runsController.init();
   }
 
   if (workloadForm) {
@@ -622,8 +618,8 @@ async function initApp() {
   if (newWorkloadBtn) {
     newWorkloadBtn.addEventListener("click", resetFormInterface);
   }
-  if (runWorkloadBtn) {
-    runWorkloadBtn.addEventListener("click", handleRunWorkload);
+  if (runsController) {
+    runsController.bindEvents();
   }
   const assistantController = getAssistantPanelController();
   if (assistantController) {
@@ -1325,6 +1321,28 @@ function getAssistantPanelController() {
     },
   );
   return assistantPanelController;
+}
+
+function getWorkloadRunsPanelController() {
+  if (workloadRunsPanelController) {
+    return workloadRunsPanelController;
+  }
+  if (
+    !globalThis.TectonicWorkloadRunsPanel ||
+    typeof globalThis.TectonicWorkloadRunsPanel.createController !== "function"
+  ) {
+    return null;
+  }
+  workloadRunsPanelController =
+    globalThis.TectonicWorkloadRunsPanel.createController({
+      refs: {
+        runWorkloadBtn,
+        runsList,
+      },
+      getCurrentWorkloadJson,
+      setValidationStatus,
+    });
+  return workloadRunsPanelController;
 }
 
 function clearOperationFormState() {
@@ -3400,11 +3418,11 @@ function setAssistantBusy(isBusy) {
 }
 
 function setRunButtonBusy(isBusy) {
-  if (!runWorkloadBtn) {
+  const controller = getWorkloadRunsPanelController();
+  if (!controller) {
     return;
   }
-  runWorkloadBtn.disabled = !!isBusy;
-  runWorkloadBtn.textContent = isBusy ? "Running..." : "Run Workload";
+  controller.setBusy(isBusy);
 }
 
 function setAssistantComposerHint(text) {
@@ -4115,29 +4133,11 @@ function promptMentionsOperation(op, lowerPromptText) {
 }
 
 async function handleRunWorkload() {
-  if (!workloadRunsController) {
-    setValidationStatus(
-      "Workload run controller is unavailable in this build.",
-      "invalid",
-    );
+  const controller = getWorkloadRunsPanelController();
+  if (!controller) {
     return;
   }
-
-  const specJson = getCurrentWorkloadJson();
-  if (
-    !specJson ||
-    typeof specJson !== "object" ||
-    !Array.isArray(specJson.sections) ||
-    specJson.sections.length === 0
-  ) {
-    setValidationStatus(
-      "Build a valid spec with at least one section before running workload generation.",
-      "invalid",
-    );
-    return;
-  }
-
-  await workloadRunsController.startRun(specJson);
+  await controller.handleRun();
 }
 
 async function handleAssistantApply() {
