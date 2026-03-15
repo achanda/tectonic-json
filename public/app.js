@@ -62,9 +62,12 @@ const customWorkloadBtn = document.getElementById("customWorkloadBtn");
 const workspace = document.querySelector(".workspace");
 const builderPanel = document.getElementById("builderPanel");
 const previewPanel = document.getElementById("previewPanel");
+let pendingJsonFocusTarget = null;
 const runsPanel = document.getElementById("runsPanel");
 const structuredUiNormalizer =
   globalThis.TectonicUiStructuredNormalization || null;
+
+relocateRunsPanel();
 
 const INITIAL_JSON_TEXT = "{}";
 const PRESET_INDEX_PATH = "/presets/index.json";
@@ -92,6 +95,19 @@ const PROMPT_OPERATION_BLOCKED_PREFIXES = {
     "nonexistent",
   ],
 };
+
+function relocateRunsPanel() {
+  if (!previewPanel || !runsPanel) {
+    return;
+  }
+  if (
+    runsPanel.parentElement === previewPanel.parentElement &&
+    runsPanel.previousElementSibling === previewPanel
+  ) {
+    return;
+  }
+  previewPanel.insertAdjacentElement("afterend", runsPanel);
+}
 // Fallback ordering used only if schema-derived operation metadata is unavailable.
 const DEFAULT_OPERATION_ORDER = [
   "inserts",
@@ -747,7 +763,6 @@ async function initApp() {
         .catch((e) => reportUiIssue("Failed to copy JSON", e));
     });
   }
-
 }
 
 window.addEventListener("error", (event) => {
@@ -910,7 +925,11 @@ function getAdvancedFieldValue(op, field) {
   return entry[field];
 }
 
-function setAdvancedFieldValue(op, field, value) {
+function hasAdvancedFieldValue(op, field) {
+  return getAdvancedFieldValue(op, field) !== null;
+}
+
+function setAdvancedFieldValue(op, field, value, options = {}) {
   const normalized = sanitizeTypedExpression(
     value,
     field === "selection"
@@ -928,10 +947,13 @@ function setAdvancedFieldValue(op, field, value) {
   if (Object.keys(entry).length === 0) {
     operationAdvancedState.delete(op);
   }
-  refreshAdvancedExpressionSummary(op);
+  if (options.refresh !== false) {
+    refreshAdvancedExpressionSummary(op);
+    refreshStringPatternVisibility(op);
+  }
 }
 
-function clearAdvancedFieldValue(op, field) {
+function clearAdvancedFieldValue(op, field, options = {}) {
   const entry = operationAdvancedState.get(op);
   if (!entry) {
     return;
@@ -940,12 +962,18 @@ function clearAdvancedFieldValue(op, field) {
   if (Object.keys(entry).length === 0) {
     operationAdvancedState.delete(op);
   }
-  refreshAdvancedExpressionSummary(op);
+  if (options.refresh !== false) {
+    refreshAdvancedExpressionSummary(op);
+    refreshStringPatternVisibility(op);
+  }
 }
 
-function clearAllAdvancedFieldValues(op) {
+function clearAllAdvancedFieldValues(op, options = {}) {
   operationAdvancedState.delete(op);
-  refreshAdvancedExpressionSummary(op);
+  if (options.refresh !== false) {
+    refreshAdvancedExpressionSummary(op);
+    refreshStringPatternVisibility(op);
+  }
 }
 
 function lockTopField(fieldName) {
@@ -1095,7 +1123,10 @@ function normalizePatchedStructureSections(rawSections) {
 }
 
 function ensureWorkloadStructureState() {
-  if (!Array.isArray(workloadStructureState) || workloadStructureState.length === 0) {
+  if (
+    !Array.isArray(workloadStructureState) ||
+    workloadStructureState.length === 0
+  ) {
     workloadStructureState = [createEmptySectionState()];
   }
   if (activeSectionIndex < 0) {
@@ -1105,7 +1136,11 @@ function ensureWorkloadStructureState() {
     activeSectionIndex = workloadStructureState.length - 1;
   }
   const activeSection = workloadStructureState[activeSectionIndex];
-  if (!activeSection || !Array.isArray(activeSection.groups) || activeSection.groups.length === 0) {
+  if (
+    !activeSection ||
+    !Array.isArray(activeSection.groups) ||
+    activeSection.groups.length === 0
+  ) {
     workloadStructureState[activeSectionIndex] = createEmptySectionState();
   }
   const section = workloadStructureState[activeSectionIndex];
@@ -1315,6 +1350,7 @@ function renderStructureTree() {
         persistActiveStructureFromForm();
         activeSectionIndex = sectionIndex;
         activeGroupIndex = groupIndex;
+        pendingJsonFocusTarget = { sectionIndex, groupIndex };
         loadActiveStructureIntoForm();
         updateJsonFromForm();
       });
@@ -2551,7 +2587,7 @@ function createAdvancedSummaryContainer(op) {
 
   const title = document.createElement("div");
   title.className = "advanced-summary-title";
-  title.textContent = "Advanced Assistant Expressions";
+  title.textContent = "Assistant-applied advanced config";
   container.appendChild(title);
 
   const list = document.createElement("div");
@@ -2738,6 +2774,10 @@ function refreshSelectionParamVisibility(op) {
 }
 
 function refreshStringPatternVisibility(op) {
+  const opCard = document.getElementById(getOperationCardId(op));
+  if (!opCard) {
+    return;
+  }
   const patternValues = getStringPatternValues();
   ["key", "val"].forEach((target) => {
     const supportsTarget =
@@ -2747,6 +2787,19 @@ function refreshStringPatternVisibility(op) {
     if (!supportsTarget) {
       return;
     }
+
+    const targetFields = opCard.querySelectorAll(
+      '.field[data-pattern-target="' + target + '"]',
+    );
+    if (hasAdvancedFieldValue(op, target)) {
+      targetFields.forEach((fieldContainer) => {
+        fieldContainer.classList.add("hidden");
+      });
+      return;
+    }
+    targetFields.forEach((fieldContainer) => {
+      fieldContainer.classList.remove("hidden");
+    });
 
     const patternField = target === "key" ? "key_pattern" : "val_pattern";
     const uniformLenField = target === "key" ? "key_len" : "val_len";
@@ -2768,7 +2821,7 @@ function refreshStringPatternVisibility(op) {
     const showUniformLen = patternName === "uniform";
     const showHotFields = patternName === "hot_range";
 
-    const uniformLenInput = operationConfigContainer.querySelector(
+    const uniformLenInput = opCard.querySelector(
       '[data-op="' + op + '"][data-field="' + uniformLenField + '"]',
     );
     if (uniformLenInput && uniformLenInput.closest(".field")) {
@@ -2785,7 +2838,7 @@ function refreshStringPatternVisibility(op) {
     }
 
     [hotLenField, hotAmountField, hotProbabilityField].forEach((fieldName) => {
-      const input = operationConfigContainer.querySelector(
+      const input = opCard.querySelector(
         '[data-op="' + op + '"][data-field="' + fieldName + '"]',
       );
       if (!input || !input.closest(".field")) {
@@ -2969,6 +3022,764 @@ function formatExpressionSummary(value) {
   return variant + (params ? " (" + params + ")" : "");
 }
 
+function getAdvancedFieldLabel(field) {
+  if (field === "op_count") {
+    return "Operation Count";
+  }
+  if (field === "k") {
+    return "Sorted K";
+  }
+  if (field === "l") {
+    return "Sorted L";
+  }
+  return titleCaseFromSnake(field);
+}
+
+function getEffectiveOperationCharacterSet(op) {
+  const operationCharacterSet = readOperationField(op, "character_set");
+  if (operationCharacterSet) {
+    return operationCharacterSet;
+  }
+  if (formCharacterSet && formCharacterSet.value) {
+    return formCharacterSet.value;
+  }
+  return null;
+}
+
+function getSingleExpressionVariant(value) {
+  if (!isExpressionObject(value)) {
+    return null;
+  }
+  const keys = Object.keys(value);
+  if (keys.length !== 1) {
+    return null;
+  }
+  return {
+    name: keys[0],
+    value: value[keys[0]],
+  };
+}
+
+function createAdvancedFieldShell(labelText, control, hintText = "") {
+  const wrapper = document.createElement("label");
+  wrapper.className = "advanced-summary-field";
+
+  const title = document.createElement("span");
+  title.textContent = labelText;
+  wrapper.appendChild(title);
+  wrapper.appendChild(control);
+
+  if (hintText) {
+    const hint = document.createElement("small");
+    hint.className = "advanced-summary-hint";
+    hint.textContent = hintText;
+    wrapper.appendChild(hint);
+  }
+
+  return wrapper;
+}
+
+function createAdvancedTextInput(value = "", type = "text") {
+  const input = document.createElement("input");
+  input.type = type;
+  input.value = value == null ? "" : String(value);
+  return input;
+}
+
+function createAdvancedSelect(options, value = "") {
+  const select = document.createElement("select");
+  (options || []).forEach((optionValue) => {
+    const option = document.createElement("option");
+    option.value = optionValue;
+    option.textContent = optionValue;
+    select.appendChild(option);
+  });
+  if (value !== "" && value !== null && value !== undefined) {
+    select.value = String(value);
+  }
+  return select;
+}
+
+function createAdvancedTextarea(value = "", placeholder = "") {
+  const textarea = document.createElement("textarea");
+  textarea.value = value == null ? "" : String(value);
+  textarea.placeholder = placeholder;
+  return textarea;
+}
+
+function buildDistributionExpressionFromValues(distributionName, rawValues) {
+  const params = {};
+  getSelectionParamsForDistribution(distributionName).forEach((fieldName) => {
+    const fallback = SELECTION_PARAM_DEFAULTS[fieldName];
+    if (fieldName === "selection_n") {
+      params.n = intOrDefault(rawValues[fieldName], fallback || 1);
+      return;
+    }
+    params[fieldName.replace(/^selection_/, "")] = numberOrDefault(
+      rawValues[fieldName],
+      fallback,
+    );
+  });
+  return { [distributionName]: params };
+}
+
+function getAdvancedNumberExprState(field, value) {
+  if (typeof value === "number") {
+    return {
+      mode: "constant",
+      constant: value,
+      distribution: "uniform",
+      params: {},
+    };
+  }
+  const variant = getSingleExpressionVariant(value);
+  if (
+    variant &&
+    getSelectionDistributionValues().includes(variant.name) &&
+    isExpressionObject(variant.value)
+  ) {
+    return {
+      mode: field === "selection" ? "distribution" : "distribution",
+      constant:
+        field === "selectivity"
+          ? 0.01
+          : (OPERATION_DEFAULTS.sorted && OPERATION_DEFAULTS.sorted[field]) ||
+            1,
+      distribution: variant.name,
+      params: cloneJsonValue(variant.value),
+    };
+  }
+  return null;
+}
+
+function parseInlineStringExprToken(text, characterSet) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) {
+    return null;
+  }
+  const uniformMatch = trimmed.match(/^\{\{\s*uniform(?:\s*:\s*(\d+))?\s*\}\}$/i);
+  if (uniformMatch) {
+    return buildUniformStringExpr(
+      intOrDefault(uniformMatch[1], 20),
+      characterSet,
+    );
+  }
+  return trimmed;
+}
+
+function formatInlineStringExprToken(value) {
+  if (typeof value === "string") {
+    return value;
+  }
+  const variant = getSingleExpressionVariant(value);
+  if (
+    variant &&
+    variant.name === "uniform" &&
+    isExpressionObject(variant.value) &&
+    typeof variant.value.len === "number"
+  ) {
+    return "{{uniform:" + String(variant.value.len) + "}}";
+  }
+  return null;
+}
+
+function formatWeightedEditorLines(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return "";
+  }
+  const lines = [];
+  for (const item of items) {
+    if (!item || typeof item.weight !== "number") {
+      return null;
+    }
+    const valueToken = formatInlineStringExprToken(item.value);
+    if (valueToken === null) {
+      return null;
+    }
+    lines.push(String(item.weight) + " | " + valueToken);
+  }
+  return lines.join("\n");
+}
+
+function formatSegmentEditorLines(segments) {
+  if (!Array.isArray(segments) || segments.length === 0) {
+    return "";
+  }
+  const lines = [];
+  for (const segment of segments) {
+    const token = formatInlineStringExprToken(segment);
+    if (token === null) {
+      return null;
+    }
+    lines.push(token);
+  }
+  return lines.join("\n");
+}
+
+function getAdvancedStringExprState(value) {
+  if (typeof value === "string") {
+    return {
+      variant: "constant",
+      constant: value,
+      uniformLen: 20,
+      hotLen: STRING_PATTERN_DEFAULTS.key_hot_len,
+      hotAmount: STRING_PATTERN_DEFAULTS.key_hot_amount,
+      hotProbability: STRING_PATTERN_DEFAULTS.key_hot_probability,
+      weightedLines: "",
+      segmentedSeparator: ":",
+      segmentedLines: "",
+    };
+  }
+  const variant = getSingleExpressionVariant(value);
+  if (!variant) {
+    return null;
+  }
+  if (
+    variant.name === "uniform" &&
+    isExpressionObject(variant.value) &&
+    typeof variant.value.len === "number"
+  ) {
+    return {
+      variant: "uniform",
+      constant: "",
+      uniformLen: variant.value.len,
+      hotLen: STRING_PATTERN_DEFAULTS.key_hot_len,
+      hotAmount: STRING_PATTERN_DEFAULTS.key_hot_amount,
+      hotProbability: STRING_PATTERN_DEFAULTS.key_hot_probability,
+      weightedLines: "",
+      segmentedSeparator: ":",
+      segmentedLines: "",
+    };
+  }
+  if (
+    variant.name === "hot_range" &&
+    isExpressionObject(variant.value) &&
+    typeof variant.value.len === "number" &&
+    typeof variant.value.amount === "number" &&
+    typeof variant.value.probability === "number"
+  ) {
+    return {
+      variant: "hot_range",
+      constant: "",
+      uniformLen: 20,
+      hotLen: variant.value.len,
+      hotAmount: variant.value.amount,
+      hotProbability: variant.value.probability,
+      weightedLines: "",
+      segmentedSeparator: ":",
+      segmentedLines: "",
+    };
+  }
+  if (variant.name === "weighted") {
+    const weightedLines = formatWeightedEditorLines(variant.value);
+    if (weightedLines === null) {
+      return null;
+    }
+    return {
+      variant: "weighted",
+      constant: "",
+      uniformLen: 20,
+      hotLen: STRING_PATTERN_DEFAULTS.key_hot_len,
+      hotAmount: STRING_PATTERN_DEFAULTS.key_hot_amount,
+      hotProbability: STRING_PATTERN_DEFAULTS.key_hot_probability,
+      weightedLines,
+      segmentedSeparator: ":",
+      segmentedLines: "",
+    };
+  }
+  if (
+    variant.name === "segmented" &&
+    isExpressionObject(variant.value) &&
+    Array.isArray(variant.value.segments)
+  ) {
+    const segmentedLines = formatSegmentEditorLines(variant.value.segments);
+    if (segmentedLines === null) {
+      return null;
+    }
+    return {
+      variant: "segmented",
+      constant: "",
+      uniformLen: 20,
+      hotLen: STRING_PATTERN_DEFAULTS.key_hot_len,
+      hotAmount: STRING_PATTERN_DEFAULTS.key_hot_amount,
+      hotProbability: STRING_PATTERN_DEFAULTS.key_hot_probability,
+      weightedLines: "",
+      segmentedSeparator:
+        typeof variant.value.separator === "string"
+          ? variant.value.separator
+          : ":",
+      segmentedLines,
+    };
+  }
+  return null;
+}
+
+function createUnsupportedAdvancedExpressionItem(op, field, value) {
+  const item = document.createElement("div");
+  item.className = "advanced-summary-item";
+
+  const meta = document.createElement("div");
+  meta.className = "advanced-summary-meta";
+
+  const text = document.createElement("div");
+  text.className = "advanced-summary-text";
+  text.textContent =
+    getAdvancedFieldLabel(field) +
+    ": " +
+    formatExpressionSummary(value) +
+    ". This expression shape is preserved but not editable here yet.";
+  meta.appendChild(text);
+
+  const actions = document.createElement("div");
+  actions.className = "advanced-summary-actions";
+
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "advanced-summary-clear";
+  clearBtn.textContent = "Clear";
+  clearBtn.addEventListener("click", () => {
+    clearAdvancedFieldValue(op, field);
+    updateJsonFromForm();
+  });
+  actions.appendChild(clearBtn);
+  meta.appendChild(actions);
+
+  item.appendChild(meta);
+  return item;
+}
+
+function createAdvancedNumberExprItem(op, field, value) {
+  const state = getAdvancedNumberExprState(field, value);
+  if (!state) {
+    return createUnsupportedAdvancedExpressionItem(op, field, value);
+  }
+
+  const item = document.createElement("div");
+  item.className = "advanced-summary-item";
+
+  const meta = document.createElement("div");
+  meta.className = "advanced-summary-meta";
+
+  const text = document.createElement("div");
+  text.className = "advanced-summary-text";
+  text.textContent =
+    getAdvancedFieldLabel(field) +
+    ": " +
+    formatExpressionSummary(value) +
+    (field === "key" || field === "val"
+      ? ". Simple pattern and length controls are hidden while this advanced expression is active."
+      : "");
+  meta.appendChild(text);
+
+  const actions = document.createElement("div");
+  actions.className = "advanced-summary-actions";
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "advanced-summary-clear";
+  clearBtn.textContent = "Clear";
+  clearBtn.addEventListener("click", () => {
+    clearAdvancedFieldValue(op, field);
+    updateJsonFromForm();
+  });
+  actions.appendChild(clearBtn);
+  meta.appendChild(actions);
+
+  item.appendChild(meta);
+
+  const controls = document.createElement("div");
+  controls.className = "advanced-summary-controls";
+
+  const constantInput = createAdvancedTextInput(state.constant, "number");
+  constantInput.step = "any";
+  if (field === "op_count" || field === "k") {
+    constantInput.min = "0";
+  }
+
+  const distributionSelect = createAdvancedSelect(
+    getSelectionDistributionValues(),
+    state.distribution,
+  );
+  const modeSelect =
+    field === "selection"
+      ? null
+      : createAdvancedSelect(["constant", "distribution"], state.mode);
+
+  const paramInputs = {};
+  Object.entries(SELECTION_PARAM_UI).forEach(([paramField, config]) => {
+    const input = createAdvancedTextInput(
+      state.params[paramField.replace(/^selection_/, "")] ??
+        state.params[paramField] ??
+        SELECTION_PARAM_DEFAULTS[paramField],
+      "number",
+    );
+    input.step = config.step || "any";
+    if (config.min !== undefined) {
+      input.min = config.min;
+    }
+    paramInputs[paramField] = input;
+  });
+
+  function updateAdvancedNumberExpr() {
+    const rawValues = {};
+    Object.entries(paramInputs).forEach(([paramField, input]) => {
+      rawValues[paramField] = input.value;
+    });
+    const nextValue =
+      field !== "selection" && modeSelect && modeSelect.value === "constant"
+        ? numberOrDefault(constantInput.value, state.constant || 0)
+        : buildDistributionExpressionFromValues(
+            distributionSelect.value || "uniform",
+            rawValues,
+          );
+    setAdvancedFieldValue(op, field, nextValue, { refresh: false });
+    text.textContent =
+      getAdvancedFieldLabel(field) +
+      ": " +
+      formatExpressionSummary(nextValue) +
+      (field === "key" || field === "val"
+        ? ". Simple pattern and length controls are hidden while this advanced expression is active."
+        : "");
+    updateJsonFromForm();
+  }
+
+  function refreshNumberExprVisibility() {
+    const useDistribution =
+      field === "selection" ||
+      !modeSelect ||
+      modeSelect.value === "distribution";
+    constantField.classList.toggle("hidden", useDistribution);
+    distributionField.classList.toggle("hidden", !useDistribution);
+    Object.entries(paramFields).forEach(([paramField, wrapper]) => {
+      wrapper.classList.toggle(
+        "hidden",
+        !useDistribution ||
+          !getSelectionParamsForDistribution(distributionSelect.value).includes(
+            paramField,
+          ),
+      );
+    });
+  }
+
+  const constantField = createAdvancedFieldShell(
+    "Value",
+    constantInput,
+    "Use a constant number for this field.",
+  );
+  const distributionField = createAdvancedFieldShell(
+    field === "selection" ? "Distribution" : "Expression Type",
+    distributionSelect,
+    field === "selection"
+      ? "Choose how keys are sampled."
+      : "Choose a distribution instead of a constant.",
+  );
+  const paramFields = {};
+  Object.entries(SELECTION_PARAM_UI).forEach(([paramField, config]) => {
+    paramFields[paramField] = createAdvancedFieldShell(
+      config.label,
+      paramInputs[paramField],
+    );
+  });
+
+  if (modeSelect) {
+    controls.appendChild(
+      createAdvancedFieldShell(
+        "Mode",
+        modeSelect,
+        "Switch between a constant value and a sampled distribution.",
+      ),
+    );
+  }
+  controls.appendChild(constantField);
+  controls.appendChild(distributionField);
+  Object.values(paramFields).forEach((wrapper) => {
+    controls.appendChild(wrapper);
+  });
+
+  if (modeSelect) {
+    modeSelect.addEventListener("change", () => {
+      refreshNumberExprVisibility();
+      updateAdvancedNumberExpr();
+    });
+  }
+  distributionSelect.addEventListener("change", () => {
+    refreshNumberExprVisibility();
+    updateAdvancedNumberExpr();
+  });
+  constantInput.addEventListener("input", updateAdvancedNumberExpr);
+  Object.values(paramInputs).forEach((input) => {
+    input.addEventListener("input", updateAdvancedNumberExpr);
+  });
+
+  refreshNumberExprVisibility();
+  item.appendChild(controls);
+  return item;
+}
+
+function createAdvancedStringExprItem(op, field, value) {
+  const state = getAdvancedStringExprState(value);
+  if (!state) {
+    return createUnsupportedAdvancedExpressionItem(op, field, value);
+  }
+
+  const item = document.createElement("div");
+  item.className = "advanced-summary-item";
+
+  const meta = document.createElement("div");
+  meta.className = "advanced-summary-meta";
+
+  const text = document.createElement("div");
+  text.className = "advanced-summary-text";
+  text.textContent =
+    getAdvancedFieldLabel(field) +
+    ": " +
+    formatExpressionSummary(value) +
+    ". Simple pattern and length controls are hidden while this advanced expression is active.";
+  meta.appendChild(text);
+
+  item.appendChild(meta);
+
+  const controls = document.createElement("div");
+  controls.className = "advanced-summary-controls";
+
+  const variantSelect = createAdvancedSelect(
+    ["constant", "uniform", "hot_range", "weighted", "segmented"],
+    state.variant,
+  );
+  const constantInput = createAdvancedTextInput(state.constant, "text");
+  const uniformLenInput = createAdvancedTextInput(state.uniformLen, "number");
+  uniformLenInput.min = "1";
+  uniformLenInput.step = "1";
+  const hotLenInput = createAdvancedTextInput(state.hotLen, "number");
+  hotLenInput.min = "1";
+  hotLenInput.step = "1";
+  const hotAmountInput = createAdvancedTextInput(state.hotAmount, "number");
+  hotAmountInput.min = "0";
+  hotAmountInput.step = "1";
+  const hotProbabilityInput = createAdvancedTextInput(
+    state.hotProbability,
+    "number",
+  );
+  hotProbabilityInput.min = "0";
+  hotProbabilityInput.max = "1";
+  hotProbabilityInput.step = "any";
+  const weightedTextarea = createAdvancedTextarea(
+    state.weightedLines,
+    "Example: 3 | user\n1 | {{uniform:20}}",
+  );
+  const segmentedSeparatorInput = createAdvancedTextInput(
+    state.segmentedSeparator,
+    "text",
+  );
+  const segmentedTextarea = createAdvancedTextarea(
+    state.segmentedLines,
+    "Example:\ntenant\n{{uniform:12}}",
+  );
+
+  function parseWeightedExpression() {
+    const lines = weightedTextarea.value
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (lines.length === 0) {
+      weightedTextarea.setCustomValidity("Add at least one weighted entry.");
+      return null;
+    }
+    const items = [];
+    for (const line of lines) {
+      const separatorIndex = line.indexOf("|");
+      if (separatorIndex < 0) {
+        weightedTextarea.setCustomValidity('Use "weight | value" on each line.');
+        return null;
+      }
+      const weight = Number(line.slice(0, separatorIndex).trim());
+      const rawValue = line.slice(separatorIndex + 1).trim();
+      if (!Number.isFinite(weight) || weight <= 0 || !rawValue) {
+        weightedTextarea.setCustomValidity('Use "weight | value" on each line.');
+        return null;
+      }
+      const parsedValue = parseInlineStringExprToken(
+        rawValue,
+        getEffectiveOperationCharacterSet(op),
+      );
+      if (parsedValue === null) {
+        weightedTextarea.setCustomValidity(
+          "Use plain text or {{uniform}} / {{uniform:20}} values.",
+        );
+        return null;
+      }
+      items.push({ weight, value: parsedValue });
+    }
+    weightedTextarea.setCustomValidity("");
+    return { weighted: items };
+  }
+
+  function parseSegmentedExpression() {
+    const lines = segmentedTextarea.value
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (lines.length === 0) {
+      segmentedTextarea.setCustomValidity("Add at least one segment.");
+      return null;
+    }
+    const segments = [];
+    for (const line of lines) {
+      const parsedSegment = parseInlineStringExprToken(
+        line,
+        getEffectiveOperationCharacterSet(op),
+      );
+      if (parsedSegment === null) {
+        segmentedTextarea.setCustomValidity(
+          "Use plain text or {{uniform}} / {{uniform:20}} segments.",
+        );
+        return null;
+      }
+      segments.push(parsedSegment);
+    }
+    segmentedTextarea.setCustomValidity("");
+    return {
+      segmented: {
+        separator: segmentedSeparatorInput.value || "",
+        segments,
+      },
+    };
+  }
+
+  function buildStringExpressionFromEditor() {
+    const variant = variantSelect.value;
+    if (variant === "constant") {
+      return constantInput.value;
+    }
+    if (variant === "uniform") {
+      return buildUniformStringExpr(
+        intOrDefault(uniformLenInput.value, state.uniformLen || 20),
+        getEffectiveOperationCharacterSet(op),
+      );
+    }
+    if (variant === "hot_range") {
+      return {
+        hot_range: {
+          len: intOrDefault(hotLenInput.value, state.hotLen || 20),
+          amount: nonNegativeIntOrDefault(
+            hotAmountInput.value,
+            state.hotAmount || 0,
+          ),
+          probability: probabilityOrDefault(
+            hotProbabilityInput.value,
+            state.hotProbability || 0.8,
+          ),
+        },
+      };
+    }
+    if (variant === "weighted") {
+      return parseWeightedExpression();
+    }
+    if (variant === "segmented") {
+      return parseSegmentedExpression();
+    }
+    return null;
+  }
+
+  function updateAdvancedStringExpression() {
+    const nextValue = buildStringExpressionFromEditor();
+    if (nextValue === null) {
+      return;
+    }
+    setAdvancedFieldValue(op, field, nextValue, { refresh: false });
+    text.textContent =
+      getAdvancedFieldLabel(field) +
+      ": " +
+      formatExpressionSummary(nextValue);
+    updateJsonFromForm();
+  }
+
+  const variantField = createAdvancedFieldShell(
+    "Pattern",
+    variantSelect,
+    "Switch between constant, uniform, weighted, segmented, or hot-range values.",
+  );
+  const constantField = createAdvancedFieldShell(
+    "Constant Value",
+    constantInput,
+  );
+  const uniformField = createAdvancedFieldShell(
+    "Uniform Length",
+    uniformLenInput,
+  );
+  const hotLenField = createAdvancedFieldShell("Hot Prefix Length", hotLenInput);
+  const hotAmountField = createAdvancedFieldShell(
+    "Hot Range Count",
+    hotAmountInput,
+  );
+  const hotProbabilityField = createAdvancedFieldShell(
+    "Hot Probability",
+    hotProbabilityInput,
+  );
+  const weightedField = createAdvancedFieldShell(
+    "Weighted Entries",
+    weightedTextarea,
+    'One line per value. Format: "weight | value". Use {{uniform}} or {{uniform:20}} for generated values.',
+  );
+  const segmentedSeparatorField = createAdvancedFieldShell(
+    "Segment Separator",
+    segmentedSeparatorInput,
+  );
+  const segmentedField = createAdvancedFieldShell(
+    "Segments",
+    segmentedTextarea,
+    "One segment per line. Use plain text or {{uniform}} / {{uniform:20}}.",
+  );
+
+  function refreshStringEditorVisibility() {
+    const variant = variantSelect.value;
+    constantField.classList.toggle("hidden", variant !== "constant");
+    uniformField.classList.toggle("hidden", variant !== "uniform");
+    hotLenField.classList.toggle("hidden", variant !== "hot_range");
+    hotAmountField.classList.toggle("hidden", variant !== "hot_range");
+    hotProbabilityField.classList.toggle("hidden", variant !== "hot_range");
+    weightedField.classList.toggle("hidden", variant !== "weighted");
+    segmentedSeparatorField.classList.toggle("hidden", variant !== "segmented");
+    segmentedField.classList.toggle("hidden", variant !== "segmented");
+  }
+
+  controls.appendChild(variantField);
+  controls.appendChild(constantField);
+  controls.appendChild(uniformField);
+  controls.appendChild(hotLenField);
+  controls.appendChild(hotAmountField);
+  controls.appendChild(hotProbabilityField);
+  controls.appendChild(weightedField);
+  controls.appendChild(segmentedSeparatorField);
+  controls.appendChild(segmentedField);
+
+  variantSelect.addEventListener("change", () => {
+    refreshStringEditorVisibility();
+    updateAdvancedStringExpression();
+  });
+  constantInput.addEventListener("input", updateAdvancedStringExpression);
+  uniformLenInput.addEventListener("input", updateAdvancedStringExpression);
+  hotLenInput.addEventListener("input", updateAdvancedStringExpression);
+  hotAmountInput.addEventListener("input", updateAdvancedStringExpression);
+  hotProbabilityInput.addEventListener("input", updateAdvancedStringExpression);
+  weightedTextarea.addEventListener("change", updateAdvancedStringExpression);
+  segmentedSeparatorInput.addEventListener("input", updateAdvancedStringExpression);
+  segmentedTextarea.addEventListener("change", updateAdvancedStringExpression);
+
+  refreshStringEditorVisibility();
+  item.appendChild(controls);
+  return item;
+}
+
+function createAdvancedExpressionItem(op, field, value) {
+  if (["op_count", "k", "l", "selectivity", "selection"].includes(field)) {
+    return createAdvancedNumberExprItem(op, field, value);
+  }
+  if (["key", "val"].includes(field)) {
+    return createAdvancedStringExprItem(op, field, value);
+  }
+  return createUnsupportedAdvancedExpressionItem(op, field, value);
+}
+
 function refreshAdvancedExpressionSummary(op) {
   const container = document.getElementById("advanced-summary-" + op);
   if (!container) {
@@ -2988,26 +3799,7 @@ function refreshAdvancedExpressionSummary(op) {
     return;
   }
   activeFields.forEach((field) => {
-    const item = document.createElement("div");
-    item.className = "advanced-summary-item";
-
-    const text = document.createElement("div");
-    text.className = "advanced-summary-text";
-    text.textContent =
-      titleCaseFromSnake(field) + ": " + formatExpressionSummary(entry[field]);
-    item.appendChild(text);
-
-    const clearBtn = document.createElement("button");
-    clearBtn.type = "button";
-    clearBtn.className = "advanced-summary-clear";
-    clearBtn.textContent = "Clear";
-    clearBtn.addEventListener("click", () => {
-      clearAdvancedFieldValue(op, field);
-      updateJsonFromForm();
-    });
-    item.appendChild(clearBtn);
-
-    list.appendChild(item);
+    list.appendChild(createAdvancedExpressionItem(op, field, entry[field]));
   });
   container.classList.remove("hidden");
 }
@@ -3261,9 +4053,7 @@ function buildJsonFromForm() {
       Array.isArray(section.groups) &&
       section.groups.some(
         (group) =>
-          group &&
-          typeof group === "object" &&
-          Object.keys(group).length > 0,
+          group && typeof group === "object" && Object.keys(group).length > 0,
       ),
   );
   const hasSectionFlags = sections.some(
@@ -3280,6 +4070,87 @@ function buildJsonFromForm() {
 function renderGeneratedJson(json) {
   jsonOutput.value = JSON.stringify(json, null, 2);
   jsonOutput.style.display = "block";
+}
+
+function scrollJsonOutputToGroupFocus(target) {
+  if (
+    !jsonOutput ||
+    !target ||
+    !Number.isInteger(target.sectionIndex) ||
+    !Number.isInteger(target.groupIndex)
+  ) {
+    return;
+  }
+  const lineIndex = findJsonGroupLineIndex(
+    jsonOutput.value,
+    target.sectionIndex,
+    target.groupIndex,
+  );
+  if (lineIndex === null) {
+    return;
+  }
+  const style = window.getComputedStyle(jsonOutput);
+  const lineHeight =
+    Number.parseFloat(style.lineHeight) ||
+    Number.parseFloat(style.fontSize || "13") * 1.6 ||
+    20;
+  jsonOutput.scrollTop = Math.max(0, lineIndex * lineHeight - lineHeight * 2);
+}
+
+function findJsonGroupLineIndex(jsonText, targetSectionIndex, targetGroupIndex) {
+  const lines = String(jsonText || "").split("\n");
+  let inSections = false;
+  let inGroups = false;
+  let currentSectionIndex = -1;
+  let currentGroupIndex = -1;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    const indent = line.length - line.trimStart().length;
+
+    if (trimmed === '"sections": [') {
+      inSections = true;
+      inGroups = false;
+      currentSectionIndex = -1;
+      currentGroupIndex = -1;
+      continue;
+    }
+
+    if (inSections && !inGroups && indent === 4 && trimmed === "{") {
+      currentSectionIndex += 1;
+      currentGroupIndex = -1;
+      continue;
+    }
+
+    if (inSections && indent === 6 && trimmed === '"groups": [') {
+      inGroups = true;
+      currentGroupIndex = -1;
+      continue;
+    }
+
+    if (inGroups && indent === 8 && trimmed === "{") {
+      currentGroupIndex += 1;
+      if (
+        currentSectionIndex === targetSectionIndex &&
+        currentGroupIndex === targetGroupIndex
+      ) {
+        return index;
+      }
+      continue;
+    }
+
+    if (inGroups && indent === 6 && (trimmed === "]" || trimmed === "],")) {
+      inGroups = false;
+      continue;
+    }
+
+    if (inSections && indent === 2 && (trimmed === "]" || trimmed === "],")) {
+      inSections = false;
+    }
+  }
+
+  return null;
 }
 
 function shouldAutoValidateJson(json) {
@@ -3310,19 +4181,20 @@ async function getSchemaValidator() {
     throw new Error("Schema not loaded.");
   }
   if (!schemaValidatorPromise) {
-    schemaValidatorPromise = import("https://esm.sh/ajv@8.17.1/dist/2020?bundle")
-      .then(({ default: Ajv2020 }) => {
-        const ajv = new Ajv2020({
-          allErrors: true,
-          strict: false,
-          validateFormats: false,
+    schemaValidatorPromise =
+      import("https://esm.sh/ajv@8.17.1/dist/2020?bundle")
+        .then(({ default: Ajv2020 }) => {
+          const ajv = new Ajv2020({
+            allErrors: true,
+            strict: false,
+            validateFormats: false,
+          });
+          return ajv.compile(schema);
+        })
+        .catch((error) => {
+          schemaValidatorPromise = null;
+          throw error;
         });
-        return ajv.compile(schema);
-      })
-      .catch((error) => {
-        schemaValidatorPromise = null;
-        throw error;
-      });
   }
   return schemaValidatorPromise;
 }
@@ -3338,7 +4210,9 @@ async function validateGeneratedJson(json) {
   setValidationStatus("Validating...", "default");
   try {
     const validate = await getSchemaValidator();
-    const valid = validate(toSchemaValidationShape(stripValidationMetadata(json), schema));
+    const valid = validate(
+      toSchemaValidationShape(stripValidationMetadata(json), schema),
+    );
     if (validationToken !== latestValidationToken) {
       return;
     }
@@ -3416,6 +4290,10 @@ function updateInteractiveStats(json) {
 function updateJsonFromForm() {
   const generated = buildJsonFromForm();
   renderGeneratedJson(generated);
+  if (pendingJsonFocusTarget) {
+    scrollJsonOutputToGroupFocus(pendingJsonFocusTarget);
+    pendingJsonFocusTarget = null;
+  }
   updateInteractiveStats(generated);
   void validateGeneratedJson(generated);
 }
@@ -4602,7 +5480,9 @@ function getCurrentFormState() {
       formSkipKeyContainsCheck && formSkipKeyContainsCheck.checked
     ),
     operations,
-    sections: customWorkloadMode ? cloneJsonValue(workloadStructureState) : null,
+    sections: customWorkloadMode
+      ? cloneJsonValue(workloadStructureState)
+      : null,
   };
 }
 

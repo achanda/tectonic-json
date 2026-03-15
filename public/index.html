@@ -43,9 +43,11 @@
       }
 
       .app-shell {
-        max-width: 1200px;
-        margin: 0 auto;
-        padding: 28px 16px;
+        width: 100%;
+        max-width: none;
+        min-height: 100vh;
+        margin: 0;
+        padding: 24px clamp(16px, 2.2vw, 34px) 28px;
         display: flex;
         flex-direction: column;
         gap: 18px;
@@ -79,12 +81,17 @@
 
       main {
         min-height: 0;
+        flex: 1;
+        display: flex;
       }
 
       .workspace {
         display: grid;
         gap: 16px;
         min-width: 0;
+        width: 100%;
+        align-items: stretch;
+        grid-template-columns: minmax(0, 1fr);
       }
 
       .panel {
@@ -98,6 +105,8 @@
         transition:
           box-shadow 0.2s ease,
           transform 0.2s ease;
+        min-width: 0;
+        min-height: 0;
       }
 
       .panel:hover {
@@ -105,7 +114,7 @@
       }
 
       .json-panel {
-        min-height: 380px;
+        min-height: 420px;
       }
 
       .panel-header {
@@ -127,7 +136,7 @@
       .panel-body {
         flex: 1;
         overflow: auto;
-        padding: 16px;
+        padding: 18px 20px 20px;
       }
 
       textarea {
@@ -644,6 +653,10 @@
           ),
           #f9fcfb;
         box-shadow: 0 20px 40px rgba(15, 79, 74, 0.08);
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+        min-width: 0;
       }
 
       .welcome-eyebrow {
@@ -1009,8 +1022,7 @@
 
       .advanced-summary-item {
         display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
+        flex-direction: column;
         gap: 10px;
         border: 1px solid #dbe7f3;
         border-radius: 8px;
@@ -1022,6 +1034,62 @@
         font-size: 12px;
         line-height: 1.4;
         color: #2c465b;
+      }
+
+      .advanced-summary-meta {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .advanced-summary-controls {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 8px;
+      }
+
+      .advanced-summary-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .advanced-summary-field span {
+        font-size: 11px;
+        font-weight: 600;
+        color: #4d667d;
+      }
+
+      .advanced-summary-field input,
+      .advanced-summary-field select,
+      .advanced-summary-field textarea {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #ffffff;
+        color: var(--text);
+        padding: 8px 10px;
+        font-family: inherit;
+        font-size: 12px;
+      }
+
+      .advanced-summary-field textarea {
+        min-height: 84px;
+        resize: vertical;
+        font-family: "JetBrains Mono", monospace;
+        line-height: 1.45;
+      }
+
+      .advanced-summary-hint {
+        font-size: 11px;
+        line-height: 1.45;
+        color: #5f7284;
+      }
+
+      .advanced-summary-actions {
+        display: flex;
+        justify-content: flex-end;
       }
 
       .advanced-summary-clear {
@@ -1072,21 +1140,20 @@
 
       .json-output {
         height: 100%;
-        min-height: 300px;
+        min-height: 360px;
         border: 1px solid var(--border);
         border-radius: 10px;
         background: #fbfdff;
-        padding: 10px;
+        padding: 14px;
         display: flex;
         flex-direction: column;
         gap: 8px;
+        flex: 1;
+        min-width: 0;
       }
 
       .runs-panel {
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        background: #ffffff;
-        padding: 10px;
+        padding: 16px 18px 18px;
         display: flex;
         flex-direction: column;
         gap: 10px;
@@ -1280,13 +1347,38 @@
 
       @media (min-width: 980px) {
         .workspace {
-          grid-template-columns: 1.2fr 1fr;
-          align-items: start;
+          min-height: calc(100vh - 120px);
         }
-        .json-panel {
+        .workspace:has(#previewPanel:not([hidden])) {
+          grid-template-columns: minmax(0, 1.14fr) minmax(420px, 0.96fr);
+          grid-template-rows: minmax(0, 1fr) auto;
+          gap: 20px;
+        }
+        .workspace:has(#previewPanel[hidden]) {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .workspace:has(#previewPanel:not([hidden])) #welcomePanel,
+        .workspace:has(#previewPanel:not([hidden])) #builderPanel {
+          grid-column: 1;
+          grid-row: 1 / span 2;
+          min-height: calc(100vh - 120px);
+        }
+        .workspace:has(#previewPanel[hidden]) #welcomePanel {
+          min-height: calc(100vh - 120px);
+        }
+        .workspace:has(#previewPanel:not([hidden])) #previewPanel {
+          grid-column: 2;
+          grid-row: 1;
           position: sticky;
           top: 18px;
-          height: min(82vh, 860px);
+          height: calc(100vh - 300px);
+          min-height: 460px;
+          max-height: 780px;
+        }
+        .workspace:has(#runsPanel:not([hidden])) #runsPanel {
+          grid-column: 2;
+          grid-row: 2;
+          align-self: start;
         }
       }
 
@@ -1589,7 +1681,7 @@
 {}</textarea
                 >
               </div>
-              <div class="runs-panel" id="runsPanel" hidden>
+              <div class="panel runs-panel" id="runsPanel" hidden>
                 <p class="runs-panel-title">Workload Runs (Session)</p>
                 <p class="runs-known-location">
                   Known output file:

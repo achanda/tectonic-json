@@ -3,6 +3,8 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { createReadStream, promises as fs } from "node:fs";
 
+import { buildCloudflareAssistEnv } from "./cloudflare-assist-provider.mjs";
+import { buildOpenAiAssistEnv, isOpenAiAssistProvider } from "./openai-assist-provider.mjs";
 import workerEntrypoint from "./index.js";
 import { createOpenAiCompatibleBindingFromEnv } from "./openai-ai-binding.mjs";
 import { createCloudflareAiBindingFromEnv } from "./cloudflare-ai-binding.mjs";
@@ -28,7 +30,8 @@ const SHUTDOWN_FORCE_EXIT_MS = readInteger(
 );
 
 const aiProviderPreference =
-  readString(process.env.AI_PROVIDER).toLowerCase() || "auto";
+  readString(process.env.ASSIST_PROVIDER || process.env.AI_PROVIDER)
+    .toLowerCase() || "openai";
 const cloudflareAiBinding = createCloudflareAiBindingFromEnv(process.env);
 const openAiBinding = createOpenAiCompatibleBindingFromEnv(process.env);
 const aiSelection = selectAiProvider(
@@ -300,14 +303,21 @@ function normalizePathname(pathname) {
 function buildWorkerEnv(envLike, aiBinding, aiConfigError, resolvedAiProvider) {
   const env = envLike && typeof envLike === "object" ? envLike : {};
   const providerFromSelection = readString(resolvedAiProvider);
-  const providerFromEnv = readString(env.AI_PROVIDER);
+  const providerFromEnv = readString(env.ASSIST_PROVIDER || env.AI_PROVIDER);
+  const effectiveProvider =
+    providerFromSelection && providerFromSelection !== "unavailable"
+      ? providerFromSelection
+      : providerFromEnv;
+  const providerEnv = isOpenAiAssistProvider(effectiveProvider)
+    ? buildOpenAiAssistEnv(env)
+    : buildCloudflareAssistEnv(env);
   const out = {
-    AI_PROVIDER: providerFromSelection || providerFromEnv,
-    AI_NAME: readString(env.AI_NAME) || readString(env.OPENAI_MODEL) || "",
-    AI_MODELS: readString(env.AI_MODELS) || readString(env.OPENAI_MODEL) || "",
+    ASSIST_PROVIDER: effectiveProvider,
+    AI_PROVIDER: effectiveProvider,
+    ...providerEnv,
     AI_TEMPERATURE: readString(env.AI_TEMPERATURE) || "0",
     AI_RETRY_ATTEMPTS: readString(env.AI_RETRY_ATTEMPTS) || "2",
-    AI_MAX_TOKENS: readString(env.AI_MAX_TOKENS) || "420",
+    AI_MAX_TOKENS: readString(env.AI_MAX_TOKENS) || "700",
     AI_TIMEOUT_MS: readString(env.AI_TIMEOUT_MS) || "15000",
     ASSETS: {
       fetch: async () => new Response("Not found", { status: 404 }),
@@ -363,6 +373,13 @@ function selectAiProvider(
     };
   }
 
+  if (openAiBinding) {
+    return {
+      binding: openAiBinding,
+      provider: "openai_compatible",
+      error_code: null,
+    };
+  }
   if (cloudflareBinding) {
     return {
       binding: cloudflareBinding,

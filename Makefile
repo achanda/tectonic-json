@@ -2,16 +2,21 @@ PRETTIER ?= npx --yes prettier@3
 NPM ?= npm
 FORMAT_PATHS := package.json public/*.js public/*.html src/*.js src/*.mjs test/*.mjs
 
-.PHONY: format dev test check-cloudflare-env
+.PHONY: format dev test check-ai-env
 
 format:
 	$(PRETTIER) -- --write $(FORMAT_PATHS)
 
-check-cloudflare-env:
-	@test -n "$(CLOUDFLARE_ACCOUNT_ID)" || (echo "CLOUDFLARE_ACCOUNT_ID is not set" >&2; exit 1)
-	@test -n "$(CLOUDFLARE_API_TOKEN)" || (echo "CLOUDFLARE_API_TOKEN is not set" >&2; exit 1)
+check-ai-env:
+	@provider="$${ASSIST_PROVIDER:-$${AI_PROVIDER:-openai}}"; \
+	if [ "$$provider" = "cloudflare" ]; then \
+		test -n "$$CLOUDFLARE_ACCOUNT_ID" || (echo "CLOUDFLARE_ACCOUNT_ID is not set" >&2; exit 1); \
+		test -n "$$CLOUDFLARE_API_TOKEN" || (echo "CLOUDFLARE_API_TOKEN is not set" >&2; exit 1); \
+	else \
+		test -n "$$OPENAI_API_KEY" || (echo "OPENAI_API_KEY is not set" >&2; exit 1); \
+	fi
 
-dev: check-cloudflare-env
+dev: check-ai-env
 	$(NPM) run dev
 
 test:

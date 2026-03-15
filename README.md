@@ -47,29 +47,44 @@ Known artifact location on host:
 
 `/api/assist` is AI-only. Configure one provider:
 
-Cloudflare AI:
-
-```bash
-export AI_PROVIDER=cloudflare
-export CLOUDFLARE_ACCOUNT_ID=...
-export CLOUDFLARE_API_TOKEN=...
-export AI_NAME=@cf/meta/llama-3.1-8b-instruct
-# Optional multi-model retry chain:
-# export AI_MODELS=@cf/meta/llama-3.1-8b-instruct,@cf/meta/llama-3.3-70b-instruct-fp8-fast
-```
-
 OpenAI-compatible API:
 
 ```bash
-export AI_PROVIDER=openai
+export ASSIST_PROVIDER=openai
 export OPENAI_API_KEY=...
-export OPENAI_MODEL=gpt-4.1-mini
+export OPENAI_MODEL=gpt-5.1
 # Optional overrides:
+# export OPENAI_MODELS=gpt-5.1,gpt-5.4
 # export OPENAI_BASE_URL=https://api.openai.com/v1
+# export OPENAI_API_ENDPOINT=/responses
 # export OPENAI_CHAT_ENDPOINT=/chat/completions
 ```
 
-When `AI_PROVIDER=openai`, `/api/assist` uses Structured Outputs (`response_format: json_schema`, strict mode).
+Cloudflare AI:
+
+```bash
+export ASSIST_PROVIDER=cloudflare
+export CLOUDFLARE_ACCOUNT_ID=...
+export CLOUDFLARE_API_TOKEN=...
+export CLOUDFLARE_MODEL=@cf/meta/llama-3.1-8b-instruct
+# Optional multi-model retry chain:
+# export CLOUDFLARE_MODELS=@cf/meta/llama-3.1-8b-instruct,@cf/meta/llama-3.3-70b-instruct-fp8-fast
+```
+
+`openai` is now the local default when `ASSIST_PROVIDER` and `AI_PROVIDER` are both unset.
+
+Preferred naming:
+- OpenAI: `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_MODELS`
+- Cloudflare: `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_MODEL`, `CLOUDFLARE_MODELS`
+
+Legacy compatibility aliases:
+- `AI_PROVIDER` is still accepted as a provider selector alias
+- `AI_NAME` is still accepted as a Cloudflare model alias
+- `AI_MODELS` is still accepted as a Cloudflare retry-chain alias
+
+When `ASSIST_PROVIDER=openai`, `/api/assist` uses Structured Outputs (`response_format: json_schema`, strict mode).
+
+The default OpenAI endpoint is `/responses`. Set `OPENAI_API_ENDPOINT` or `OPENAI_CHAT_ENDPOINT` only if you need a non-default compatible API shape.
 
 If you set `CLOUDFLARE_AI_BASE_URL`, include the Cloudflare API version path (`/client/v4`), for example:
 `https://api.cloudflare.com/client/v4`

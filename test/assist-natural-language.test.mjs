@@ -583,7 +583,8 @@ test("two phase interleaved prompts convert percentage mixes using the phase tot
 
 test("write only phrasing defaults the follow-up phase to updates", () => {
   const result = applyPrompt({
-    prompt: "Preload the DB with 1M inserts, then write only for 250k operations",
+    prompt:
+      "Preload the DB with 1M inserts, then write only for 250k operations",
     formState: createFormState({}),
     rawPatch: {
       operations: {},
@@ -640,8 +641,14 @@ test("high-level three phase workload prompt variants normalize to the expected 
       prompt:
         "Build a three phase workload: preload the DB with 1M inserts, then interleave a write-heavy phase with 70% updates and 30% point queries for 400k operations, then interleave 60% point queries and 40% long range queries for 600k operations.",
       assertions(result) {
-        assert.equal(result.patch.sections[0].groups[0].inserts.op_count, 1000000);
-        assert.equal(result.patch.sections[0].groups[1].updates.op_count, 280000);
+        assert.equal(
+          result.patch.sections[0].groups[0].inserts.op_count,
+          1000000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[1].updates.op_count,
+          280000,
+        );
         assert.equal(
           result.patch.sections[0].groups[1].point_queries.op_count,
           120000,
@@ -665,8 +672,14 @@ test("high-level three phase workload prompt variants normalize to the expected 
       prompt:
         "Create a three phase workload with a preload phase, then a mixed read/write phase, then a query-heavy analytics phase. Preload 2M inserts, then interleave 500k updates and 500k point queries, then interleave 800k point queries and 200k long range queries.",
       assertions(result) {
-        assert.equal(result.patch.sections[0].groups[0].inserts.op_count, 2000000);
-        assert.equal(result.patch.sections[0].groups[1].updates.op_count, 500000);
+        assert.equal(
+          result.patch.sections[0].groups[0].inserts.op_count,
+          2000000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[1].updates.op_count,
+          500000,
+        );
         assert.equal(
           result.patch.sections[0].groups[1].point_queries.op_count,
           500000,
@@ -690,8 +703,14 @@ test("high-level three phase workload prompt variants normalize to the expected 
       prompt:
         "Generate a three phase workload: first load the database with 5M inserts, next run a write-only phase for 1M operations, then run an interleaved read phase with 80% point queries and 20% short range queries for 2M operations.",
       assertions(result) {
-        assert.equal(result.patch.sections[0].groups[0].inserts.op_count, 5000000);
-        assert.equal(result.patch.sections[0].groups[1].updates.op_count, 1000000);
+        assert.equal(
+          result.patch.sections[0].groups[0].inserts.op_count,
+          5000000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[1].updates.op_count,
+          1000000,
+        );
         assert.equal(
           result.patch.sections[0].groups[2].point_queries.op_count,
           1600000,
@@ -711,12 +730,18 @@ test("high-level three phase workload prompt variants normalize to the expected 
       prompt:
         "I want three phases: seed the database, then a hot serving phase, then a broader scan phase. Preload 1M inserts, then interleave 80% point queries and 20% updates for 500k operations, then interleave 70% point queries and 30% long range queries for 300k operations.",
       assertions(result) {
-        assert.equal(result.patch.sections[0].groups[0].inserts.op_count, 1000000);
+        assert.equal(
+          result.patch.sections[0].groups[0].inserts.op_count,
+          1000000,
+        );
         assert.equal(
           result.patch.sections[0].groups[1].point_queries.op_count,
           400000,
         );
-        assert.equal(result.patch.sections[0].groups[1].updates.op_count, 100000);
+        assert.equal(
+          result.patch.sections[0].groups[1].updates.op_count,
+          100000,
+        );
         assert.equal(
           result.patch.sections[0].groups[2].point_queries.op_count,
           210000,
@@ -736,8 +761,14 @@ test("high-level three phase workload prompt variants normalize to the expected 
       prompt:
         "Make a three phase workload where we first preload the DB, then do an interleaved write-heavy phase, then do an interleaved read-heavy phase. Use 1M inserts, then 600k operations at 75% updates and 25% point queries, then 900k operations at 90% point queries and 10% range queries.",
       assertions(result) {
-        assert.equal(result.patch.sections[0].groups[0].inserts.op_count, 1000000);
-        assert.equal(result.patch.sections[0].groups[1].updates.op_count, 450000);
+        assert.equal(
+          result.patch.sections[0].groups[0].inserts.op_count,
+          1000000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[1].updates.op_count,
+          450000,
+        );
         assert.equal(
           result.patch.sections[0].groups[1].point_queries.op_count,
           150000,
@@ -913,26 +944,68 @@ test("worker assist endpoint returns structured patches for phased workload prom
     }),
   });
 
+  let callCount = 0;
   const response = await workerEntrypoint.fetch(request, {
     AI: {
-      run: async () => ({
-        response: JSON.stringify({
-          summary: "Create the workload.",
-          patch: {
-            operations: {},
-          },
-          clarifications: [],
-          assumptions: [],
-        }),
-      }),
+      run: async () => {
+        callCount += 1;
+        return {
+          response: JSON.stringify({
+            summary: "Create the workload.",
+            patch: {
+              clear_operations: false,
+              sections: [
+                {
+                  groups: [
+                    {
+                      inserts: {
+                        op_count: 1000000,
+                      },
+                    },
+                    {
+                      point_queries: {
+                        op_count: 400000,
+                        selection: {
+                          uniform: {
+                            min: 0,
+                            max: 1,
+                          },
+                        },
+                      },
+                      updates: {
+                        op_count: 100000,
+                        selection: {
+                          uniform: {
+                            min: 0,
+                            max: 1,
+                          },
+                        },
+                        val: {
+                          uniform: {
+                            len: 1024,
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+            clarifications: [],
+            assumptions: [],
+          }),
+        };
+      },
     },
     ASSETS: {
       fetch: async () => new Response("not found", { status: 404 }),
     },
   });
 
+  assert.equal(callCount, 1);
   assert.equal(response.status, 200);
   const body = await response.json();
+  assert.equal(body.source, "ai");
   assert.equal(Array.isArray(body.patch.sections), true);
   assert.equal(body.patch.sections.length, 1);
   assert.equal(body.patch.sections[0].groups.length, 2);

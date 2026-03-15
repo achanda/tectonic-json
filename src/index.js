@@ -1,5 +1,15 @@
-const DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
-const DEFAULT_MAX_TOKENS = 420;
+import {
+  DEFAULT_CLOUDFLARE_MODEL,
+  getCloudflareModels,
+  isCloudflareAssistProvider,
+} from "./cloudflare-assist-provider.mjs";
+import {
+  DEFAULT_OPENAI_MODEL,
+  getOpenAiModels,
+  isOpenAiAssistProvider,
+} from "./openai-assist-provider.mjs";
+
+const DEFAULT_MAX_TOKENS = 700;
 const DEFAULT_RETRY_ATTEMPTS = 2;
 const DEFAULT_AI_TIMEOUT_MS = 15000;
 
@@ -189,67 +199,391 @@ const CLARIFICATION_INPUT_TYPES = new Set([
   "boolean",
   "text",
 ]);
+const ASSIST_OPERATION_PATCH_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "enabled",
+    "character_set",
+    "op_count",
+    "key",
+    "val",
+    "key_len",
+    "val_len",
+    "key_pattern",
+    "val_pattern",
+    "key_hot_len",
+    "key_hot_amount",
+    "key_hot_probability",
+    "val_hot_len",
+    "val_hot_amount",
+    "val_hot_probability",
+    "selection_distribution",
+    "selection_min",
+    "selection_max",
+    "selection_mean",
+    "selection_std_dev",
+    "selection_alpha",
+    "selection_beta",
+    "selection_n",
+    "selection_s",
+    "selection_lambda",
+    "selection_scale",
+    "selection_shape",
+    "selectivity",
+    "range_format",
+    "k",
+    "l",
+  ],
+  properties: {
+    enabled: { type: ["boolean", "null"] },
+    character_set: { type: ["string", "null"] },
+    op_count: { type: ["number", "null"] },
+    key: { type: ["string", "null"] },
+    val: { type: ["string", "null"] },
+    key_len: { type: ["number", "null"] },
+    val_len: { type: ["number", "null"] },
+    key_pattern: { type: ["string", "null"] },
+    val_pattern: { type: ["string", "null"] },
+    key_hot_len: { type: ["number", "null"] },
+    key_hot_amount: { type: ["number", "null"] },
+    key_hot_probability: { type: ["number", "null"] },
+    val_hot_len: { type: ["number", "null"] },
+    val_hot_amount: { type: ["number", "null"] },
+    val_hot_probability: { type: ["number", "null"] },
+    selection_distribution: { type: ["string", "null"] },
+    selection_min: { type: ["number", "null"] },
+    selection_max: { type: ["number", "null"] },
+    selection_mean: { type: ["number", "null"] },
+    selection_std_dev: { type: ["number", "null"] },
+    selection_alpha: { type: ["number", "null"] },
+    selection_beta: { type: ["number", "null"] },
+    selection_n: { type: ["number", "null"] },
+    selection_s: { type: ["number", "null"] },
+    selection_lambda: { type: ["number", "null"] },
+    selection_scale: { type: ["number", "null"] },
+    selection_shape: { type: ["number", "null"] },
+    selectivity: { type: ["number", "null"] },
+    range_format: { type: ["string", "null"] },
+    k: { type: ["number", "null"] },
+    l: { type: ["number", "null"] },
+  },
+};
+const ASSIST_GROUP_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["character_set", ...FALLBACK_OPERATION_ORDER],
+  properties: {
+    character_set: { type: ["string", "null"] },
+  },
+};
+const ASSIST_OPERATIONS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [...FALLBACK_OPERATION_ORDER],
+  properties: {},
+};
+FALLBACK_OPERATION_ORDER.forEach((operationName) => {
+  const operationPropertySchema = {
+    anyOf: [ASSIST_OPERATION_PATCH_SCHEMA, { type: "null" }],
+  };
+  ASSIST_GROUP_SCHEMA.properties[operationName] = operationPropertySchema;
+  ASSIST_OPERATIONS_SCHEMA.properties[operationName] = operationPropertySchema;
+});
+const ASSIST_SECTION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["character_set", "skip_key_contains_check", "groups"],
+  properties: {
+    character_set: { type: ["string", "null"] },
+    skip_key_contains_check: { type: ["boolean", "null"] },
+    groups: {
+      type: "array",
+      items: ASSIST_GROUP_SCHEMA,
+    },
+  },
+};
+const ASSIST_CLARIFICATION_BINDING_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["type", "field", "operation"],
+  properties: {
+    type: { type: ["string", "null"] },
+    field: { type: ["string", "null"] },
+    operation: { type: ["string", "null"] },
+  },
+};
+const ASSIST_CLARIFICATION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "id",
+    "text",
+    "required",
+    "binding",
+    "input",
+    "options",
+    "default_behavior",
+  ],
+  properties: {
+    id: { type: ["string", "null"] },
+    text: { type: ["string", "null"] },
+    required: { type: ["boolean", "null"] },
+    binding: {
+      anyOf: [ASSIST_CLARIFICATION_BINDING_SCHEMA, { type: "null" }],
+    },
+    input: { type: ["string", "null"] },
+    options: {
+      anyOf: [
+        {
+          type: "array",
+          items: { type: "string" },
+        },
+        { type: "null" },
+      ],
+    },
+    default_behavior: { type: ["string", "null"] },
+  },
+};
+const ASSIST_ASSUMPTION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "text", "field_ref", "reason", "applied_value"],
+  properties: {
+    id: { type: ["string", "null"] },
+    text: { type: ["string", "null"] },
+    field_ref: { type: ["string", "null"] },
+    reason: { type: ["string", "null"] },
+    applied_value: {
+      anyOf: [
+        { type: "string" },
+        { type: "number" },
+        { type: "boolean" },
+        { type: "null" },
+      ],
+    },
+  },
+};
 const ASSIST_RESPONSE_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["summary", "patch", "clarifications", "assumptions"],
+  required: [
+    "summary",
+    "patch",
+    "clarifications",
+    "assumptions",
+    "questions",
+    "assumption_texts",
+  ],
   properties: {
     summary: { type: "string" },
     patch: {
       type: "object",
       additionalProperties: false,
-      required: ["clear_operations"],
+      required: [
+        "character_set",
+        "sections_count",
+        "groups_per_section",
+        "sections",
+        "skip_key_contains_check",
+        "clear_operations",
+        "operations",
+      ],
       properties: {
         character_set: { type: ["string", "null"] },
         sections_count: { type: ["number", "null"] },
         groups_per_section: { type: ["number", "null"] },
         sections: {
           type: ["array", "null"],
-          items: {
-            type: "object",
-            additionalProperties: true,
-          },
+          items: ASSIST_SECTION_SCHEMA,
         },
         skip_key_contains_check: { type: "boolean" },
         clear_operations: { type: "boolean" },
         operations: {
-          type: "object",
-          additionalProperties: {
-            type: "object",
-            additionalProperties: true,
-          },
+          anyOf: [ASSIST_OPERATIONS_SCHEMA, { type: "null" }],
         },
       },
     },
     clarifications: {
       type: "array",
-      items: {
-        type: "object",
-        additionalProperties: true,
-      },
+      items: ASSIST_CLARIFICATION_SCHEMA,
     },
     assumptions: {
       type: "array",
       items: {
         anyOf: [
           { type: "string" },
-          {
-            type: "object",
-            additionalProperties: true,
-          },
+          ASSIST_ASSUMPTION_SCHEMA,
         ],
       },
     },
     questions: {
-      type: "array",
-      items: { type: "string" },
+      anyOf: [
+        {
+          type: "array",
+          items: { type: "string" },
+        },
+        { type: "null" },
+      ],
     },
     assumption_texts: {
-      type: "array",
-      items: { type: "string" },
+      anyOf: [
+        {
+          type: "array",
+          items: { type: "string" },
+        },
+        { type: "null" },
+      ],
     },
   },
 };
+const OPENAI_ASSIST_OPERATION_FIELD_ENTRY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "field",
+    "string_value",
+    "number_value",
+    "boolean_value",
+    "json_value",
+  ],
+  properties: {
+    field: { type: "string" },
+    string_value: { type: ["string", "null"] },
+    number_value: { type: ["number", "null"] },
+    boolean_value: { type: ["boolean", "null"] },
+    json_value: { type: ["string", "null"] },
+  },
+};
+const OPENAI_ASSIST_OPERATION_ENTRY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "fields"],
+  properties: {
+    name: { type: "string" },
+    fields: {
+      anyOf: [
+        {
+          type: "array",
+          items: OPENAI_ASSIST_OPERATION_FIELD_ENTRY_SCHEMA,
+        },
+        { type: "null" },
+      ],
+    },
+  },
+};
+const OPENAI_ASSIST_GROUP_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["character_set", "operations"],
+  properties: {
+    character_set: { type: ["string", "null"] },
+    operations: {
+      anyOf: [
+        {
+          type: "array",
+          items: OPENAI_ASSIST_OPERATION_ENTRY_SCHEMA,
+        },
+        { type: "null" },
+      ],
+    },
+  },
+};
+const OPENAI_ASSIST_SECTION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["character_set", "skip_key_contains_check", "groups"],
+  properties: {
+    character_set: { type: ["string", "null"] },
+    skip_key_contains_check: { type: ["boolean", "null"] },
+    groups: {
+      type: "array",
+      items: OPENAI_ASSIST_GROUP_SCHEMA,
+    },
+  },
+};
+const OPENAI_ASSIST_RESPONSE_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "summary",
+    "patch",
+    "clarifications",
+    "assumptions",
+    "questions",
+    "assumption_texts",
+  ],
+  properties: {
+    summary: { type: "string" },
+    patch: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "character_set",
+        "sections_count",
+        "groups_per_section",
+        "sections",
+        "skip_key_contains_check",
+        "clear_operations",
+        "operations",
+      ],
+      properties: {
+        character_set: { type: ["string", "null"] },
+        sections_count: { type: ["number", "null"] },
+        groups_per_section: { type: ["number", "null"] },
+        sections: {
+          anyOf: [
+            {
+              type: "array",
+              items: OPENAI_ASSIST_SECTION_SCHEMA,
+            },
+            { type: "null" },
+          ],
+        },
+        skip_key_contains_check: { type: ["boolean", "null"] },
+        clear_operations: { type: "boolean" },
+        operations: {
+          anyOf: [
+            {
+              type: "array",
+              items: OPENAI_ASSIST_OPERATION_ENTRY_SCHEMA,
+            },
+            { type: "null" },
+          ],
+        },
+      },
+    },
+    clarifications: {
+      type: "array",
+      items: ASSIST_CLARIFICATION_SCHEMA,
+    },
+    assumptions: {
+      type: "array",
+      items: {
+        anyOf: [{ type: "string" }, ASSIST_ASSUMPTION_SCHEMA],
+      },
+    },
+    questions: {
+      anyOf: [
+        {
+          type: "array",
+          items: { type: "string" },
+        },
+        { type: "null" },
+      ],
+    },
+    assumption_texts: {
+      anyOf: [
+        {
+          type: "array",
+          items: { type: "string" },
+        },
+        { type: "null" },
+      ],
+    },
+  },
+};
+const OPENAI_ASSIST_TOOL_NAME = "submit_workload_patch";
 
 export default {
   async fetch(request, env) {
@@ -393,6 +727,9 @@ async function handleAssistRequest(request, env) {
     schemaHints,
     formState,
     prompt,
+    {
+      allowDeterministicStructureFallback: false,
+    },
   );
   normalized.source = "ai";
   const aiOutput = normalizeAiOutput(outcome.ai_output);
@@ -546,7 +883,7 @@ async function runAssistantWithRetries(
   const models =
     Array.isArray(aiConfig.modelNames) && aiConfig.modelNames.length > 0
       ? aiConfig.modelNames
-      : [aiConfig.modelName || DEFAULT_MODEL];
+      : [aiConfig.modelName || DEFAULT_CLOUDFLARE_MODEL];
   const attemptsPerModel = Math.max(1, aiConfig.retryAttempts);
   const totalAttempts = models.length * attemptsPerModel;
 
@@ -633,30 +970,32 @@ async function runAssistantWithRetries(
         }
       } catch (error) {
         const sanitized = sanitizeErrorForClient(error);
+        const simpleReason = getSimpleAssistFailureReason(sanitized);
         const attemptTiming = normalizeAssistAttemptTiming(sanitized);
         const attemptEntry = {
           attempt: attemptNumber,
           model: modelName,
           max_tokens: attemptMaxTokens,
           status: "failed",
+          simple_reason: simpleReason,
           message: sanitized.message || "Unknown error",
           name: sanitized.name || "Error",
           ...attemptTiming,
         };
+        console.log(
+          "[assist-ai:attempt-failed:" +
+            modelName +
+            ":attempt=" +
+            attemptNumber +
+            "] reason=" +
+            simpleReason,
+        );
         if (sanitized.ai_output) {
           attemptEntry.ai_output = sanitized.ai_output;
           lastAiOutput = sanitized.ai_output;
           logFullAiOutputToStdout(
             "attempt-failed:" + modelName + ":attempt=" + attemptNumber,
             sanitized.ai_output,
-          );
-        } else {
-          console.log(
-            "[assist-ai:attempt-failed:" +
-              modelName +
-              ":attempt=" +
-              attemptNumber +
-              "] no_ai_output_available",
           );
         }
         attempts.push(attemptEntry);
@@ -703,6 +1042,8 @@ async function runAssistantOnce(
       ? Math.floor(maxTokensOverride)
       : aiConfig.maxTokens;
   const responseFormat = buildAssistResponseFormat(aiConfig);
+  const tools = buildAssistTools(aiConfig);
+  const toolChoice = buildAssistToolChoice(aiConfig);
   const timing = {
     duration_ms: null,
     primary_response_ms: null,
@@ -714,6 +1055,8 @@ async function runAssistantOnce(
     max_tokens: selectedMaxTokens,
     temperature: aiConfig.temperature,
     response_format: responseFormat,
+    tools,
+    tool_choice: toolChoice,
   });
   let rawResult;
   const primaryStartedAt = Date.now();
@@ -831,10 +1174,14 @@ function buildAssistantMessages(
     "Do not reset fields unless user explicitly asks.",
     "Set clear_operations=true only for explicit replace/only requests.",
     "Patch must be sparse: include only fields you want to change.",
-    "Never include null fields.",
+    "Outside compact field entries, never include null fields.",
     "Never set enabled=false unless the user explicitly asks to disable/remove an operation.",
     "When workload phase layout matters, set patch.sections to the full replacement structure.",
     "Use the Tectonic structure model: different groups in the same section share valid keys but are not interleaved; operations in the same group are interleaved.",
+    "For clear multi-phase prompts such as preload/interleave/two-phase/three-phase, prefer patch.sections and keep patch.operations empty.",
+    "Compact form is allowed and preferred: patch.operations may be an array of operation entries with { name, fields }, and section.groups[].operations may also be arrays of named operation entries with { name, fields }.",
+    "In compact form, include only changed fields. Each field entry must use one of string_value, number_value, boolean_value, or json_value.",
+    "For phased prompts, do not ask for sections_count/groups_per_section if the phase layout is already clear from the request.",
     "For selection updates, set selection directly using a Distribution object; selection_distribution and matching params are also valid fallback fields.",
     "For key/value string expression updates, set key and val directly using scalar strings or StringExpr objects; fallback to key_pattern/val_pattern is also valid.",
     "For op_count/k/l/selectivity support NumberExpr: either scalar numbers or Distribution objects when allowed by schema.",
@@ -842,7 +1189,7 @@ function buildAssistantMessages(
     "Clarifications must ask for plain-language values only. Never ask the user to type JSON, object literals, or schema syntax.",
     "If user asks for a distribution but no selection-capable operation is active, ask which operations should use it.",
     "Output contract (sparse):",
-    '{ "summary": "short sentence", "patch": { "character_set": "...", "sections_count": 1, "groups_per_section": 2, "sections": [{ "groups": [{ "inserts": { "op_count": 1000000 } }, { "point_queries": { "op_count": 800000 }, "updates": { "op_count": 200000 } }] }], "skip_key_contains_check": true, "clear_operations": false, "operations": { "<operation_name>": { "enabled": true, "op_count": 100000, "character_set": "alphanumeric", "key": "id", "val": { "uniform": { "len": 16 } }, "selection": { "normal": { "mean": 0, "std_dev": 1 } }, "selection_distribution": "normal", "selection_mean": 0.5, "selection_std_dev": 0.15 } } }, "clarifications": [{ "id": "clarify.operations", "text": "Which operations should be enabled?", "required": true, "binding": { "type": "operations_set" }, "input": "multi_enum", "options": ["inserts", "updates"], "default_behavior": "wait_for_user" }], "assumptions": [{ "id": "assume.character_set", "text": "Using alphanumeric character set.", "field_ref": "character_set", "reason": "missing_input", "applied_value": "alphanumeric" }] }',
+    '{ "summary": "short sentence", "patch": { "character_set": "alphanumeric", "sections": [{ "groups": [{ "operations": [{ "name": "inserts", "fields": [{ "field": "op_count", "number_value": 1000000, "string_value": null, "boolean_value": null, "json_value": null }] }, { "name": "point_queries", "fields": [{ "field": "op_count", "number_value": 800000, "string_value": null, "boolean_value": null, "json_value": null }] }] }] }], "clear_operations": false, "operations": null }, "clarifications": [], "assumptions": [] }',
     "clarifications[].binding.type must be one of: top_field, operation_field, operations_set.",
     "For top_field binding include field from: character_set, sections_count, groups_per_section, skip_key_contains_check.",
     "For operation_field binding include operation + field.",
@@ -905,6 +1252,8 @@ async function attemptJsonRepair(
       ? modelName.trim()
       : aiConfig.modelName;
   const responseFormat = buildAssistResponseFormat(aiConfig);
+  const tools = buildAssistTools(aiConfig);
+  const toolChoice = buildAssistToolChoice(aiConfig);
   const repairPromise = env.AI.run(selectedModel, {
     messages: [
       { role: "system", content: repairSystem },
@@ -913,6 +1262,8 @@ async function attemptJsonRepair(
     max_tokens: repairMaxTokens,
     temperature: 0,
     response_format: responseFormat,
+    tools,
+    tool_choice: toolChoice,
   });
   const repairResult = await withTimeout(
     repairPromise,
@@ -1127,15 +1478,20 @@ function normalizeAssistantAnswers(rawAnswers) {
   return normalized;
 }
 
-function normalizeAssistPayload(rawPayload, schemaHints, formState, prompt) {
+function normalizeAssistPayload(
+  rawPayload,
+  schemaHints,
+  formState,
+  prompt,
+  options = {},
+) {
   const payload =
     rawPayload && typeof rawPayload === "object" ? rawPayload : {};
   const patch = normalizePatch(payload.patch, schemaHints);
-  const structuredPatchApplied = applyPromptStructuredWorkloadFallback(
-    patch,
-    prompt,
-    schemaHints,
-  );
+  const structuredPatchApplied =
+    options.allowDeterministicStructureFallback === false
+      ? false
+      : applyPromptStructuredWorkloadFallback(patch, prompt, schemaHints);
   if (!structuredPatchApplied) {
     applyPromptOperationIntentFallback(patch, formState, prompt, schemaHints);
     applyDeleteOperationDisambiguation(patch, formState, prompt, schemaHints);
@@ -1154,6 +1510,7 @@ function normalizeAssistPayload(rawPayload, schemaHints, formState, prompt) {
       schemaHints,
     );
   }
+  applyPromptRangeProfileFallback(patch, prompt);
   const clarificationContext = {
     patch,
     formState,
@@ -1203,11 +1560,7 @@ function stripEnabledFromOperationPatch(value) {
     return stripped;
   }
   Object.entries(value).forEach(([key, fieldValue]) => {
-    if (
-      key === "enabled" ||
-      fieldValue === null ||
-      fieldValue === undefined
-    ) {
+    if (key === "enabled" || fieldValue === null || fieldValue === undefined) {
       return;
     }
     stripped[key] = cloneJsonValue(fieldValue);
@@ -1221,11 +1574,19 @@ function normalizeGroupValue(rawGroup, schemaHints) {
       ? rawGroup
       : {};
   const group = {};
+  const operationsInput = normalizeOperationEntriesValue(
+    Array.isArray(input.operations) ? input.operations : input,
+    schemaHints,
+  );
   schemaHints.operation_order.forEach((op) => {
-    if (!Object.prototype.hasOwnProperty.call(input, op)) {
+    if (!Object.prototype.hasOwnProperty.call(operationsInput, op)) {
       return;
     }
-    const normalized = normalizeOperationPatch(input[op], op, schemaHints);
+    const normalized = normalizeOperationPatch(
+      operationsInput[op],
+      op,
+      schemaHints,
+    );
     if (
       normalized.enabled === false ||
       !operationPatchHasConfiguredValues(normalized)
@@ -1251,7 +1612,9 @@ function normalizeSectionsValue(rawSections, schemaHints) {
         ? sectionInput.groups
         : [{}];
     const section = {
-      groups: groupsInput.map((group) => normalizeGroupValue(group, schemaHints)),
+      groups: groupsInput.map((group) =>
+        normalizeGroupValue(group, schemaHints),
+      ),
     };
     const characterSet = normalizeCharacterSetValue(
       sectionInput.character_set,
@@ -1285,7 +1648,10 @@ function buildEnabledOperationGroup(operations, schemaHints) {
 function synthesizeSectionsFromFlatState(baseState, schemaHints) {
   const sectionCount = Math.max(1, baseState.sections_count || 1);
   const groupsPerSection = Math.max(1, baseState.groups_per_section || 1);
-  const seedGroup = buildEnabledOperationGroup(baseState.operations, schemaHints);
+  const seedGroup = buildEnabledOperationGroup(
+    baseState.operations,
+    schemaHints,
+  );
   return Array.from({ length: sectionCount }, (_, sectionIndex) => {
     const section = {
       groups: Array.from({ length: groupsPerSection }, (_, groupIndex) => {
@@ -1321,7 +1687,9 @@ function buildAggregateOperationsFromSections(
   });
 
   sections.forEach((section) => {
-    const groups = Array.isArray(section && section.groups) ? section.groups : [];
+    const groups = Array.isArray(section && section.groups)
+      ? section.groups
+      : [];
     groups.forEach((group) => {
       schemaHints.operation_order.forEach((op) => {
         if (!Object.prototype.hasOwnProperty.call(group || {}, op)) {
@@ -1518,9 +1886,7 @@ function suppressRedundantOperationClarifications(
     (Array.isArray(patch && patch.sections) &&
       patch.sections.some(
         (section) =>
-          section &&
-          Array.isArray(section.groups) &&
-          section.groups.length > 0,
+          section && Array.isArray(section.groups) && section.groups.length > 0,
       )) ||
     Number.isFinite(patch && patch.groups_per_section);
   if (
@@ -1554,7 +1920,124 @@ function suppressRedundantOperationClarifications(
     ) {
       return false;
     }
+    if (
+      shouldSuppressRangeProfileClarification(lowerPrompt, entry, patch)
+    ) {
+      return false;
+    }
     return true;
+  });
+}
+
+function applyPromptRangeProfileFallback(patch, prompt) {
+  if (!patch || typeof patch !== "object") {
+    return;
+  }
+  const lowerPrompt = String(prompt || "").toLowerCase();
+  const rangeProfile = detectRangeQueryProfile(lowerPrompt);
+  if (!rangeProfile) {
+    return;
+  }
+  const defaultSelectivity = RANGE_QUERY_SELECTIVITY_PROFILES[rangeProfile];
+  if (!Number.isFinite(defaultSelectivity)) {
+    return;
+  }
+
+  if (patch.operations && typeof patch.operations === "object") {
+    applyRangeProfileToOperationPatch(
+      patch.operations.range_queries,
+      defaultSelectivity,
+    );
+    applyRangeProfileToOperationPatch(
+      patch.operations.range_deletes,
+      defaultSelectivity,
+    );
+  }
+
+  if (!Array.isArray(patch.sections)) {
+    return;
+  }
+  patch.sections.forEach((section) => {
+    if (!section || !Array.isArray(section.groups)) {
+      return;
+    }
+    section.groups.forEach((group) => {
+      if (!group || typeof group !== "object") {
+        return;
+      }
+      applyRangeProfileToOperationPatch(group.range_queries, defaultSelectivity);
+      applyRangeProfileToOperationPatch(group.range_deletes, defaultSelectivity);
+    });
+  });
+}
+
+function applyRangeProfileToOperationPatch(operationPatch, selectivity) {
+  if (!operationPatch || typeof operationPatch !== "object") {
+    return;
+  }
+  if (operationPatch.selectivity === null || operationPatch.selectivity === undefined) {
+    operationPatch.selectivity = selectivity;
+  }
+  if (
+    operationPatch.range_format === null ||
+    operationPatch.range_format === undefined
+  ) {
+    operationPatch.range_format = "StartCount";
+  }
+}
+
+function shouldSuppressRangeProfileClarification(lowerPrompt, entry, patch) {
+  const rangeProfile = detectRangeQueryProfile(lowerPrompt);
+  if (!rangeProfile || !entry || !entry.binding) {
+    return false;
+  }
+  const binding = entry.binding;
+  const questionText = typeof entry.text === "string" ? entry.text.toLowerCase() : "";
+  if (
+    binding.type !== "operation_field" ||
+    binding.operation !== "range_queries"
+  ) {
+    return false;
+  }
+  if (
+    binding.field === "selection_mean" ||
+    binding.field === "selectivity" ||
+    /\brange\b/.test(questionText)
+  ) {
+    return true;
+  }
+  return hasResolvedRangeProfileInPatch(patch);
+}
+
+function hasResolvedRangeProfileInPatch(patch) {
+  if (!patch || typeof patch !== "object") {
+    return false;
+  }
+  if (
+    patch.operations &&
+    patch.operations.range_queries &&
+    typeof patch.operations.range_queries === "object" &&
+    patch.operations.range_queries.selectivity !== null &&
+    patch.operations.range_queries.selectivity !== undefined
+  ) {
+    return true;
+  }
+  if (!Array.isArray(patch.sections)) {
+    return false;
+  }
+  return patch.sections.some((section) => {
+    if (!section || !Array.isArray(section.groups)) {
+      return false;
+    }
+    return section.groups.some((group) => {
+      return !!(
+        group &&
+        group.range_queries &&
+        typeof group.range_queries === "object" &&
+        group.range_queries.selectivity !== null &&
+        group.range_queries.selectivity !== undefined
+      );
+    });
   });
 }
 
@@ -1859,7 +2342,9 @@ function deriveStructuredSectionsFromPrompt(prompt, schemaHints) {
       (group) =>
         group &&
         Object.keys(group).length > 0 &&
-        Object.values(group).some((spec) => operationPatchHasConfiguredValues(spec)),
+        Object.values(group).some((spec) =>
+          operationPatchHasConfiguredValues(spec),
+        ),
     );
   if (groups.length === 0) {
     return null;
@@ -2028,7 +2513,10 @@ function deriveStructuredGroupFromClause(clause, schemaHints) {
     if (opCount !== null) {
       spec.op_count = opCount;
     }
-    if (operationName === "range_queries" || operationName === "range_deletes") {
+    if (
+      operationName === "range_queries" ||
+      operationName === "range_deletes"
+    ) {
       const rangeProfile = detectRangeQueryProfile(lowerClause);
       if (rangeProfile) {
         spec.selectivity = RANGE_QUERY_SELECTIVITY_PROFILES[rangeProfile];
@@ -2423,10 +2911,7 @@ function normalizePatch(rawPatch, schemaHints) {
     operations: {},
   };
 
-  const operationsPatch =
-    patch.operations && typeof patch.operations === "object"
-      ? patch.operations
-      : {};
+  const operationsPatch = normalizeOperationEntriesValue(patch.operations, schemaHints);
 
   schemaHints.operation_order.forEach((op) => {
     if (!Object.prototype.hasOwnProperty.call(operationsPatch, op)) {
@@ -2624,6 +3109,70 @@ function normalizeOperationPatch(rawPatch, op, schemaHints) {
   }
 
   return normalized;
+}
+
+function normalizeOperationEntriesValue(rawValue, schemaHints) {
+  if (Array.isArray(rawValue)) {
+    const mapped = {};
+    rawValue.forEach((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        return;
+      }
+      const name =
+        typeof entry.name === "string" && entry.name.trim()
+          ? entry.name.trim()
+          : "";
+      if (!name || !schemaHints.operation_order.includes(name)) {
+        return;
+      }
+      const nextEntry = Array.isArray(entry.fields)
+        ? normalizeOperationFieldEntries(entry.fields)
+        : { ...entry };
+      delete nextEntry.name;
+      delete nextEntry.fields;
+      mapped[name] = nextEntry;
+    });
+    return mapped;
+  }
+  return rawValue && typeof rawValue === "object" && !Array.isArray(rawValue)
+    ? rawValue
+    : {};
+}
+
+function normalizeOperationFieldEntries(rawFields) {
+  if (!Array.isArray(rawFields)) {
+    return {};
+  }
+  const mapped = {};
+  rawFields.forEach((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return;
+    }
+    const field =
+      typeof entry.field === "string" && entry.field.trim()
+        ? entry.field.trim()
+        : "";
+    if (!field) {
+      return;
+    }
+    if (typeof entry.boolean_value === "boolean") {
+      mapped[field] = entry.boolean_value;
+      return;
+    }
+    if (Number.isFinite(Number(entry.number_value))) {
+      mapped[field] = Number(entry.number_value);
+      return;
+    }
+    if (typeof entry.string_value === "string") {
+      mapped[field] = entry.string_value;
+      return;
+    }
+    if (typeof entry.json_value === "string" && entry.json_value.trim()) {
+      const parsedJson = safeJsonParse(entry.json_value);
+      mapped[field] = parsedJson === null ? entry.json_value : parsedJson;
+    }
+  });
+  return mapped;
 }
 
 function inferOperationEnabledFromPatch(operationPatch, op, schemaHints) {
@@ -2878,7 +3427,9 @@ function buildEffectiveState(patch, formState, schemaHints) {
     maxGroupsPerSection(normalizedSections) ?? effective.groups_per_section;
   effective.skip_key_contains_check =
     effective.skip_key_contains_check ||
-    normalizedSections.some((section) => section.skip_key_contains_check === true);
+    normalizedSections.some(
+      (section) => section.skip_key_contains_check === true,
+    );
   effective.operations = buildAggregateOperationsFromSections(
     normalizedSections,
     schemaHints,
@@ -4124,21 +4675,36 @@ function isAssistPayloadShape(value) {
   if (
     value.patch.operations !== undefined &&
     (!value.patch.operations ||
-      typeof value.patch.operations !== "object" ||
-      Array.isArray(value.patch.operations))
+      typeof value.patch.operations !== "object")
   ) {
     return false;
   }
-  if (value.questions !== undefined && !Array.isArray(value.questions)) {
+  if (
+    value.questions !== undefined &&
+    value.questions !== null &&
+    !Array.isArray(value.questions)
+  ) {
     return false;
   }
   if (
     value.clarifications !== undefined &&
+    value.clarifications !== null &&
     !Array.isArray(value.clarifications)
   ) {
     return false;
   }
-  if (value.assumptions !== undefined && !Array.isArray(value.assumptions)) {
+  if (
+    value.assumptions !== undefined &&
+    value.assumptions !== null &&
+    !Array.isArray(value.assumptions)
+  ) {
+    return false;
+  }
+  if (
+    value.assumption_texts !== undefined &&
+    value.assumption_texts !== null &&
+    !Array.isArray(value.assumption_texts)
+  ) {
     return false;
   }
   return true;
@@ -4205,6 +4771,92 @@ function extractAiText(result) {
 
 function normalizeStringOrNull(value) {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+function getSimpleAssistFailureReason(errorLike) {
+  const error =
+    errorLike && typeof errorLike === "object" ? errorLike : Object.create(null);
+  const outputReason = extractSimpleAssistFailureReasonFromOutput(error.ai_output);
+  if (outputReason) {
+    return outputReason;
+  }
+  const message =
+    typeof error.message === "string" && error.message.trim()
+      ? error.message.trim()
+      : "";
+  if (!message) {
+    return "Assist request failed.";
+  }
+  return simplifyAssistFailureMessage(message);
+}
+
+function extractSimpleAssistFailureReasonFromOutput(aiOutput) {
+  if (typeof aiOutput !== "string" || !aiOutput.trim()) {
+    return "";
+  }
+  const parsed = safeJsonParse(aiOutput);
+  if (!parsed || typeof parsed !== "object") {
+    if (looksLikeTruncatedJson(aiOutput)) {
+      return "Model output was truncated before the JSON completed.";
+    }
+    return "";
+  }
+  if (
+    parsed.error &&
+    typeof parsed.error === "object" &&
+    typeof parsed.error.message === "string" &&
+    parsed.error.message.trim()
+  ) {
+    return simplifyAssistFailureMessage(parsed.error.message.trim());
+  }
+  const outputText =
+    typeof parsed.output_text === "string" ? parsed.output_text.trim() : "";
+  const reasoningTokens =
+    parsed.usage &&
+    typeof parsed.usage === "object" &&
+    parsed.usage.output_tokens_details &&
+    typeof parsed.usage.output_tokens_details === "object"
+      ? Number(parsed.usage.output_tokens_details.reasoning_tokens)
+      : NaN;
+  if (!outputText && Number.isFinite(reasoningTokens) && reasoningTokens > 0) {
+    return "Model returned no JSON output; it used the output budget for reasoning.";
+  }
+  return "";
+}
+
+function simplifyAssistFailureMessage(message) {
+  if (typeof message !== "string" || !message.trim()) {
+    return "Assist request failed.";
+  }
+  const normalized = message.trim();
+  if (normalized.includes("Invalid schema for response_format")) {
+    return "OpenAI rejected the structured-output schema.";
+  }
+  if (normalized.includes("Unsupported parameter: 'temperature'")) {
+    return "The selected OpenAI model does not support temperature.";
+  }
+  if (
+    normalized.includes("returned no assistant text") ||
+    normalized.includes("returned no text")
+  ) {
+    return "Model returned no JSON output.";
+  }
+  if (normalized.toLowerCase().includes("timed out")) {
+    return "AI request timed out.";
+  }
+  return normalized;
+}
+
+function looksLikeTruncatedJson(textValue) {
+  const text = typeof textValue === "string" ? textValue.trim() : "";
+  if (!text) {
+    return false;
+  }
+  if (!text.startsWith("{") && !text.startsWith("[")) {
+    return false;
+  }
+  const lastChar = text[text.length - 1];
+  return lastChar !== "}" && lastChar !== "]";
 }
 
 function numberOrNull(value) {
@@ -4332,10 +4984,7 @@ function getAiRequestConfig(env) {
     env.AI_RETRY_ATTEMPTS,
     DEFAULT_RETRY_ATTEMPTS,
   );
-  const provider =
-    typeof env.AI_PROVIDER === "string"
-      ? env.AI_PROVIDER.trim().toLowerCase()
-      : "";
+  const provider = readAssistProvider(env);
   const responseFormatOverride =
     typeof env.AI_RESPONSE_FORMAT_MODE === "string"
       ? env.AI_RESPONSE_FORMAT_MODE.trim().toLowerCase()
@@ -4355,50 +5004,73 @@ function getAiRequestConfig(env) {
   };
 }
 
+function readAssistProvider(env) {
+  if (
+    env &&
+    typeof env === "object" &&
+    typeof env.ASSIST_PROVIDER === "string" &&
+    env.ASSIST_PROVIDER.trim()
+  ) {
+    return env.ASSIST_PROVIDER.trim().toLowerCase();
+  }
+  if (
+    env &&
+    typeof env === "object" &&
+    typeof env.AI_PROVIDER === "string" &&
+    env.AI_PROVIDER.trim()
+  ) {
+    return env.AI_PROVIDER.trim().toLowerCase();
+  }
+  return "";
+}
+
 function buildAssistResponseFormat(aiConfig) {
   if (aiConfig && aiConfig.responseFormatMode === "json_schema") {
-    const provider =
-      typeof aiConfig.provider === "string"
-        ? aiConfig.provider.toLowerCase()
-        : "";
-    if (provider === "cloudflare") {
+    if (isCloudflareAssistProvider(aiConfig.provider)) {
       return {
         type: "json_schema",
         json_schema: ASSIST_RESPONSE_JSON_SCHEMA,
       };
     }
-    return {
-      type: "json_schema",
-      json_schema: {
-        name: "assist_response",
-        strict: true,
-        schema: ASSIST_RESPONSE_JSON_SCHEMA,
-      },
-    };
+    return null;
   }
   return {
     type: "json_object",
   };
 }
 
-function parseModelNames(env) {
-  const explicitChain =
-    typeof env.AI_MODELS === "string" && env.AI_MODELS.trim()
-      ? env.AI_MODELS
-      : "";
-  const fromChain = explicitChain
-    .split(",")
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
-  if (fromChain.length > 0) {
-    return uniqueStrings(fromChain);
+function buildAssistTools(aiConfig) {
+  if (!aiConfig || !isOpenAiAssistProvider(aiConfig.provider)) {
+    return null;
   }
+  return [
+    {
+      type: "function",
+      name: OPENAI_ASSIST_TOOL_NAME,
+      description:
+        "Return the workload patch, clarifications, and assumptions as structured arguments only.",
+      parameters: OPENAI_ASSIST_RESPONSE_JSON_SCHEMA,
+      strict: true,
+    },
+  ];
+}
 
-  const configured =
-    typeof env.AI_NAME === "string" && env.AI_NAME.trim()
-      ? env.AI_NAME.trim()
-      : DEFAULT_MODEL;
-  return uniqueStrings([configured]);
+function buildAssistToolChoice(aiConfig) {
+  if (!aiConfig || !isOpenAiAssistProvider(aiConfig.provider)) {
+    return null;
+  }
+  return {
+    type: "function",
+    name: OPENAI_ASSIST_TOOL_NAME,
+  };
+}
+
+
+function parseModelNames(env) {
+  const provider = readAssistProvider(env);
+  return isOpenAiAssistProvider(provider)
+    ? uniqueStrings(getOpenAiModels(env))
+    : uniqueStrings(getCloudflareModels(env));
 }
 
 function buildAiDebugFromOutcome(aiConfig, outcome) {

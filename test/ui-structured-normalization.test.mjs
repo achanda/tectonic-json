@@ -81,10 +81,7 @@ function createUiStructuredConfig() {
 
 test("structured UI normalization expands sparse phased operations to schema-valid specs", async () => {
   const helper = await loadUiStructuredNormalizer();
-  assert.equal(
-    typeof helper.normalizePatchedStructureSections,
-    "function",
-  );
+  assert.equal(typeof helper.normalizePatchedStructureSections, "function");
 
   const normalized = helper.normalizePatchedStructureSections(
     [
@@ -113,18 +110,9 @@ test("structured UI normalization expands sparse phased operations to schema-val
   assert.equal(normalizedJson.length, 1);
   assert.equal(normalizedJson[0].groups.length, 2);
   assert.equal(normalizedJson[0].groups[0].inserts.op_count, 1000000);
-  assert.equal(
-    normalizedJson[0].groups[0].inserts.key.uniform.len,
-    20,
-  );
-  assert.equal(
-    normalizedJson[0].groups[0].inserts.val.uniform.len,
-    1024,
-  );
-  assert.equal(
-    normalizedJson[0].groups[1].point_queries.op_count,
-    400000,
-  );
+  assert.equal(normalizedJson[0].groups[0].inserts.key.uniform.len, 20);
+  assert.equal(normalizedJson[0].groups[0].inserts.val.uniform.len, 1024);
+  assert.equal(normalizedJson[0].groups[1].point_queries.op_count, 400000);
   assert.deepEqual(normalizedJson[0].groups[1].point_queries.selection, {
     uniform: {
       min: 0,
