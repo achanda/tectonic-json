@@ -63,6 +63,8 @@ const workspace = document.querySelector(".workspace");
 const builderPanel = document.getElementById("builderPanel");
 const previewPanel = document.getElementById("previewPanel");
 const runsPanel = document.getElementById("runsPanel");
+const structuredUiNormalizer =
+  globalThis.TectonicUiStructuredNormalization || null;
 
 const INITIAL_JSON_TEXT = "{}";
 const PRESET_INDEX_PATH = "/presets/index.json";
@@ -1063,6 +1065,33 @@ function createEmptySectionState() {
     skip_key_contains_check: false,
     groups: [createEmptyGroupSpec()],
   };
+}
+
+function normalizePatchedStructureSections(rawSections) {
+  if (
+    !structuredUiNormalizer ||
+    typeof structuredUiNormalizer.normalizePatchedStructureSections !==
+      "function"
+  ) {
+    return [createEmptySectionState()];
+  }
+  return structuredUiNormalizer.normalizePatchedStructureSections(rawSections, {
+    defaultCharacterSet:
+      formCharacterSet && formCharacterSet.value
+        ? formCharacterSet.value.trim()
+        : "",
+    operationDefaults: OPERATION_DEFAULTS,
+    stringPatternDefaults: STRING_PATTERN_DEFAULTS,
+    selectionParamDefaults: SELECTION_PARAM_DEFAULTS,
+    selectionDistributionParams: SELECTION_DISTRIBUTION_PARAMS,
+    rangeFormats: getRangeFormatValues(),
+    opsWithOpCount: Array.from(formOpsWithOpCountFields),
+    opsWithSorted: Array.from(formOpsWithSortedFields),
+    opsWithKey: Array.from(formOpsWithKeyFields),
+    opsWithValue: Array.from(formOpsWithValueFields),
+    opsWithSelection: Array.from(formOpsWithSelectionFields),
+    opsWithRange: Array.from(formOpsWithRangeFields),
+  });
 }
 
 function ensureWorkloadStructureState() {
@@ -4475,6 +4504,9 @@ function toFiniteNumber(value) {
 }
 
 function getCurrentFormState() {
+  if (customWorkloadMode) {
+    persistActiveStructureFromForm();
+  }
   const operations = {};
   operationOrder.forEach((op) => {
     const toggle = getOperationToggle(op);
@@ -4570,6 +4602,7 @@ function getCurrentFormState() {
       formSkipKeyContainsCheck && formSkipKeyContainsCheck.checked
     ),
     operations,
+    sections: customWorkloadMode ? cloneJsonValue(workloadStructureState) : null,
   };
 }
 
@@ -4626,6 +4659,16 @@ function applyAssistantPatch(patch) {
     if (optionValues.includes(patch.character_set)) {
       formCharacterSet.value = patch.character_set;
     }
+  }
+
+  if (Array.isArray(patch.sections) && patch.sections.length > 0) {
+    workloadStructureState = normalizePatchedStructureSections(patch.sections);
+    activeSectionIndex = 0;
+    activeGroupIndex = 0;
+    customWorkloadMode = true;
+    syncLandingUi();
+    loadActiveStructureIntoForm();
+    return;
   }
 
   if (

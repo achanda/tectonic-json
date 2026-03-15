@@ -523,6 +523,153 @@ test("multi-turn regression flow preserves inserts and applies range delete edit
   assert.equal(state.operations.range_deletes.enabled, false);
 });
 
+test("single shot prompts resolve to a single group structure", () => {
+  const result = applyPrompt({
+    prompt: "Generate a single shot workload with 1M inserts",
+    formState: createFormState({}),
+    rawPatch: {
+      operations: {},
+    },
+  });
+
+  assert.equal(Array.isArray(result.patch.sections), true);
+  assert.equal(result.patch.sections.length, 1);
+  assert.equal(result.patch.sections[0].groups.length, 1);
+  assert.equal(result.patch.sections[0].groups[0].inserts.op_count, 1000000);
+});
+
+test("two phase interleaved prompts create preload and mixed groups from raw counts", () => {
+  const result = applyPrompt({
+    prompt:
+      "Preload the DB with 1M inserts, then interleave 300k updates and 200k short range queries",
+    formState: createFormState({}),
+    rawPatch: {
+      operations: {},
+    },
+  });
+
+  assert.equal(Array.isArray(result.patch.sections), true);
+  assert.equal(result.patch.sections.length, 1);
+  assert.equal(result.patch.sections[0].groups.length, 2);
+  assert.equal(result.patch.sections[0].groups[0].inserts.op_count, 1000000);
+  assert.equal(result.patch.sections[0].groups[1].updates.op_count, 300000);
+  assert.equal(
+    result.patch.sections[0].groups[1].range_queries.op_count,
+    200000,
+  );
+  assert.equal(
+    result.patch.sections[0].groups[1].range_queries.selectivity,
+    0.001,
+  );
+});
+
+test("two phase interleaved prompts convert percentage mixes using the phase total", () => {
+  const result = applyPrompt({
+    prompt:
+      "Preload the DB with 1M inserts, then interleave 80% point queries and 20% updates for 500k operations",
+    formState: createFormState({}),
+    rawPatch: {
+      operations: {},
+    },
+  });
+
+  assert.equal(result.patch.sections[0].groups.length, 2);
+  assert.equal(
+    result.patch.sections[0].groups[1].point_queries.op_count,
+    400000,
+  );
+  assert.equal(result.patch.sections[0].groups[1].updates.op_count, 100000);
+});
+
+test("write only phrasing defaults the follow-up phase to updates", () => {
+  const result = applyPrompt({
+    prompt: "Preload the DB with 1M inserts, then write only for 250k operations",
+    formState: createFormState({}),
+    rawPatch: {
+      operations: {},
+    },
+  });
+
+  assert.equal(result.patch.sections[0].groups.length, 2);
+  assert.equal(result.patch.sections[0].groups[1].updates.op_count, 250000);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      result.patch.sections[0].groups[1],
+      "point_queries",
+    ),
+    false,
+  );
+});
+
+test("three phase prompts keep each interleaved phase in its own group", () => {
+  const result = applyPrompt({
+    prompt:
+      "Build a three phase workload: preload the DB with 1M inserts, then interleave a write heavy phase with 70% updates and 30% point queries for 400k operations, then interleave 60% point queries and 40% long range queries for 600k operations",
+    formState: createFormState({}),
+    rawPatch: {
+      operations: {},
+    },
+  });
+
+  assert.equal(result.patch.sections.length, 1);
+  assert.equal(result.patch.sections[0].groups.length, 3);
+  assert.equal(result.patch.sections[0].groups[0].inserts.op_count, 1000000);
+  assert.equal(result.patch.sections[0].groups[1].updates.op_count, 280000);
+  assert.equal(
+    result.patch.sections[0].groups[1].point_queries.op_count,
+    120000,
+  );
+  assert.equal(
+    result.patch.sections[0].groups[2].point_queries.op_count,
+    360000,
+  );
+  assert.equal(
+    result.patch.sections[0].groups[2].range_queries.op_count,
+    240000,
+  );
+  assert.equal(
+    result.patch.sections[0].groups[2].range_queries.selectivity,
+    0.1,
+  );
+});
+
+test("structured phased prompts suppress redundant section and group clarifications", () => {
+  const result = applyPrompt({
+    prompt:
+      "Preload the DB with 1M inserts, then interleave 80% point queries and 20% updates for 500k operations.",
+    formState: createFormState({}),
+    rawPatch: {
+      operations: {},
+    },
+    clarifications: [
+      {
+        id: "clarify.sections",
+        text: "How many sections should be used?",
+        required: true,
+        binding: { type: "top_field", field: "sections_count" },
+        input: "number",
+      },
+      {
+        id: "clarify.groups",
+        text: "How many groups should be used per section?",
+        required: true,
+        binding: { type: "top_field", field: "groups_per_section" },
+        input: "number",
+      },
+    ],
+  });
+
+  assert.equal(result.clarifications.length, 0);
+  assert.equal(result.patch.sections_count, 1);
+  assert.equal(result.patch.groups_per_section, 2);
+  assert.equal(result.patch.sections[0].groups[0].inserts.op_count, 1000000);
+  assert.equal(
+    result.patch.sections[0].groups[1].point_queries.op_count,
+    400000,
+  );
+  assert.equal(result.patch.sections[0].groups[1].updates.op_count, 100000);
+});
+
 test("required operation clarifications suppress guessed operation patches for ambiguous prompts", () => {
   const formState = createFormState({
     inserts: createInsertSeed(),
@@ -609,6 +756,96 @@ test("worker assist endpoint returns normalized patches for natural-language pro
     ),
     false,
   );
+});
+
+test("worker assist endpoint returns structured patches for phased workload prompts", async () => {
+  const request = new Request("https://example.com/api/assist", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      prompt:
+        "Preload the DB with 1M inserts, then interleave 80% point queries and 20% updates for 500k operations",
+      form_state: createFormState({}),
+      schema_hints: SCHEMA_HINTS,
+      current_json: null,
+      conversation: [],
+      answers: {},
+    }),
+  });
+
+  const response = await workerEntrypoint.fetch(request, {
+    AI: {
+      run: async () => ({
+        response: JSON.stringify({
+          summary: "Create the workload.",
+          patch: {
+            operations: {},
+          },
+          clarifications: [],
+          assumptions: [],
+        }),
+      }),
+    },
+    ASSETS: {
+      fetch: async () => new Response("not found", { status: 404 }),
+    },
+  });
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(Array.isArray(body.patch.sections), true);
+  assert.equal(body.patch.sections.length, 1);
+  assert.equal(body.patch.sections[0].groups.length, 2);
+  assert.equal(body.patch.sections[0].groups[0].inserts.op_count, 1000000);
+  assert.equal(body.patch.sections[0].groups[1].point_queries.op_count, 400000);
+  assert.equal(body.patch.sections[0].groups[1].updates.op_count, 100000);
+});
+
+test("worker assist endpoint falls back to deterministic phased parsing when AI output is truncated", async () => {
+  const request = new Request("https://example.com/api/assist", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      prompt:
+        "Preload the DB with 1M inserts, then interleave 80% point queries and 20% updates for 500k operations.",
+      form_state: createFormState({}),
+      schema_hints: SCHEMA_HINTS,
+      current_json: null,
+      conversation: [],
+      answers: {},
+    }),
+  });
+
+  let callCount = 0;
+  const response = await workerEntrypoint.fetch(request, {
+    AI: {
+      run: async () => {
+        callCount += 1;
+        return {
+          response:
+            '{"summary":"Preload the DB with 1M inserts, then interleave 80% point queries and 20% updates for 500k operations.","patch":{"clear_operations":false,"operations":{"inserts":{"enabled":true,"op_count":1000000}}},"clarifications":[{"id":"clarify.sections"',
+        };
+      },
+    },
+    ASSETS: {
+      fetch: async () => new Response("not found", { status: 404 }),
+    },
+  });
+
+  assert.equal(callCount >= 1, true);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.source, "deterministic_fallback");
+  assert.equal(Array.isArray(body.patch.sections), true);
+  assert.equal(body.patch.sections.length, 1);
+  assert.equal(body.patch.sections[0].groups.length, 2);
+  assert.equal(body.patch.sections[0].groups[0].inserts.op_count, 1000000);
+  assert.equal(body.patch.sections[0].groups[1].point_queries.op_count, 400000);
+  assert.equal(body.patch.sections[0].groups[1].updates.op_count, 100000);
 });
 
 test("point query paraphrases normalize to the same operation patch", () => {

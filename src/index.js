@@ -132,6 +132,16 @@ const STRING_PATTERN_DEFAULTS = {
   val_hot_amount: 100,
   val_hot_probability: 0.8,
 };
+const STRUCTURED_WORKLOAD_PATTERN =
+  /\b(?:single[- ]shot|one[- ]phase|two[- ]phase|three[- ]phase|preload|interleave|interleaved|phase\s+[123]|write[- ]heavy|write[- ]only)\b/i;
+const RANGE_QUERY_SELECTIVITY_PROFILES = {
+  short: 0.001,
+  long: 0.1,
+};
+const WRITE_HEAVY_DEFAULT_SPLIT = {
+  write: 80,
+  read: 20,
+};
 const TOP_LEVEL_BINDING_FIELDS = new Set([
   "character_set",
   "sections_count",
@@ -188,17 +198,18 @@ const ASSIST_RESPONSE_JSON_SCHEMA = {
     patch: {
       type: "object",
       additionalProperties: false,
-      required: [
-        "character_set",
-        "sections_count",
-        "groups_per_section",
-        "clear_operations",
-        "operations",
-      ],
+      required: ["clear_operations"],
       properties: {
         character_set: { type: ["string", "null"] },
         sections_count: { type: ["number", "null"] },
         groups_per_section: { type: ["number", "null"] },
+        sections: {
+          type: ["array", "null"],
+          items: {
+            type: "object",
+            additionalProperties: true,
+          },
+        },
         skip_key_contains_check: { type: "boolean" },
         clear_operations: { type: "boolean" },
         operations: {
@@ -264,6 +275,7 @@ export const __test = {
   normalizeFormState,
   normalizeAssistPayload,
   buildEffectiveState,
+  buildDeterministicStructuredAssistFallback,
 };
 
 async function handleAssistRequest(request, env) {
@@ -322,6 +334,16 @@ async function handleAssistRequest(request, env) {
       aiConfig,
     );
   } catch (error) {
+    const fallback = buildDeterministicStructuredAssistFallback(
+      prompt,
+      schemaHints,
+      formState,
+      "ai_request_failed",
+    );
+    if (fallback) {
+      fallback.source = "deterministic_fallback";
+      return jsonResponse(fallback, 200);
+    }
     console.error("Assist AI call failed:", error);
     logAssistFailureAiOutput("assist-error.exception", error, null);
     return jsonResponse(
@@ -335,6 +357,26 @@ async function handleAssistRequest(request, env) {
   }
 
   if (!outcome || !outcome.payload || typeof outcome.payload !== "object") {
+    const fallback = buildDeterministicStructuredAssistFallback(
+      prompt,
+      schemaHints,
+      formState,
+      "ai_invalid_output",
+    );
+    if (fallback) {
+      fallback.source = "deterministic_fallback";
+      const aiTiming = buildAiTimingFromOutcome(outcome);
+      if (aiTiming) {
+        fallback.ai_timing = aiTiming;
+      }
+      const aiOutput = normalizeAiOutput(
+        outcome && outcome.last_ai_output ? outcome.last_ai_output : null,
+      );
+      if (aiOutput) {
+        fallback.ai_output = aiOutput;
+      }
+      return jsonResponse(fallback, 200);
+    }
     logAssistFailureAiOutput("assist-error.ai_invalid_output", null, outcome);
     return jsonResponse(
       {
@@ -362,6 +404,54 @@ async function handleAssistRequest(request, env) {
     normalized.ai_timing = aiTiming;
   }
   return jsonResponse(normalized, 200);
+}
+
+function buildDeterministicStructuredAssistFallback(
+  prompt,
+  schemaHints,
+  formState,
+  reason,
+) {
+  if (!STRUCTURED_WORKLOAD_PATTERN.test(String(prompt || ""))) {
+    return null;
+  }
+  const normalized = normalizeAssistPayload(
+    {
+      summary: "Generated the workload structure directly from the prompt.",
+      patch: {
+        clear_operations: false,
+        operations: {},
+      },
+      clarifications: [],
+      assumptions: [],
+    },
+    schemaHints,
+    formState,
+    prompt,
+  );
+  if (
+    !normalized ||
+    !normalized.patch ||
+    !Array.isArray(normalized.patch.sections) ||
+    normalized.patch.sections.length === 0
+  ) {
+    return null;
+  }
+  normalized.assumptions = [
+    ...normalized.assumptions,
+    {
+      id: "assume.deterministic_structured_fallback",
+      text:
+        reason === "ai_request_failed"
+          ? "Generated the phased workload directly from the prompt because the AI request failed."
+          : "Generated the phased workload directly from the prompt because the AI response was incomplete.",
+    },
+  ];
+  normalized.assumption_texts = normalized.assumptions.map(
+    (entry) => entry.text,
+  );
+  normalized.questions = normalized.clarifications.map((entry) => entry.text);
+  return normalized;
 }
 
 async function handleLocalWorkloadProxy(request, env, requestUrl) {
@@ -743,6 +833,8 @@ function buildAssistantMessages(
     "Patch must be sparse: include only fields you want to change.",
     "Never include null fields.",
     "Never set enabled=false unless the user explicitly asks to disable/remove an operation.",
+    "When workload phase layout matters, set patch.sections to the full replacement structure.",
+    "Use the Tectonic structure model: different groups in the same section share valid keys but are not interleaved; operations in the same group are interleaved.",
     "For selection updates, set selection directly using a Distribution object; selection_distribution and matching params are also valid fallback fields.",
     "For key/value string expression updates, set key and val directly using scalar strings or StringExpr objects; fallback to key_pattern/val_pattern is also valid.",
     "For op_count/k/l/selectivity support NumberExpr: either scalar numbers or Distribution objects when allowed by schema.",
@@ -750,7 +842,7 @@ function buildAssistantMessages(
     "Clarifications must ask for plain-language values only. Never ask the user to type JSON, object literals, or schema syntax.",
     "If user asks for a distribution but no selection-capable operation is active, ask which operations should use it.",
     "Output contract (sparse):",
-    '{ "summary": "short sentence", "patch": { "character_set": "...", "sections_count": 1, "groups_per_section": 1, "skip_key_contains_check": true, "clear_operations": false, "operations": { "<operation_name>": { "enabled": true, "op_count": 100000, "character_set": "alphanumeric", "key": "id", "val": { "uniform": { "len": 16 } }, "selection": { "normal": { "mean": 0, "std_dev": 1 } }, "selection_distribution": "normal", "selection_mean": 0.5, "selection_std_dev": 0.15 } } }, "clarifications": [{ "id": "clarify.operations", "text": "Which operations should be enabled?", "required": true, "binding": { "type": "operations_set" }, "input": "multi_enum", "options": ["inserts", "updates"], "default_behavior": "wait_for_user" }], "assumptions": [{ "id": "assume.character_set", "text": "Using alphanumeric character set.", "field_ref": "character_set", "reason": "missing_input", "applied_value": "alphanumeric" }] }',
+    '{ "summary": "short sentence", "patch": { "character_set": "...", "sections_count": 1, "groups_per_section": 2, "sections": [{ "groups": [{ "inserts": { "op_count": 1000000 } }, { "point_queries": { "op_count": 800000 }, "updates": { "op_count": 200000 } }] }], "skip_key_contains_check": true, "clear_operations": false, "operations": { "<operation_name>": { "enabled": true, "op_count": 100000, "character_set": "alphanumeric", "key": "id", "val": { "uniform": { "len": 16 } }, "selection": { "normal": { "mean": 0, "std_dev": 1 } }, "selection_distribution": "normal", "selection_mean": 0.5, "selection_std_dev": 0.15 } } }, "clarifications": [{ "id": "clarify.operations", "text": "Which operations should be enabled?", "required": true, "binding": { "type": "operations_set" }, "input": "multi_enum", "options": ["inserts", "updates"], "default_behavior": "wait_for_user" }], "assumptions": [{ "id": "assume.character_set", "text": "Using alphanumeric character set.", "field_ref": "character_set", "reason": "missing_input", "applied_value": "alphanumeric" }] }',
     "clarifications[].binding.type must be one of: top_field, operation_field, operations_set.",
     "For top_field binding include field from: character_set, sections_count, groups_per_section, skip_key_contains_check.",
     "For operation_field binding include operation + field.",
@@ -915,12 +1007,42 @@ function normalizeFormState(rawState, schemaHints) {
     operations[op].enabled = !!(rawOperation && rawOperation.enabled === true);
   });
 
-  return {
-    character_set: normalizeCharacterSetValue(input.character_set, schemaHints),
-    sections_count: positiveIntegerOrNull(input.sections_count),
-    groups_per_section: positiveIntegerOrNull(input.groups_per_section),
-    skip_key_contains_check: input.skip_key_contains_check === true,
+  const characterSet = normalizeCharacterSetValue(
+    input.character_set,
+    schemaHints,
+  );
+  let sections = normalizeSectionsValue(input.sections, schemaHints);
+  if (sections.length === 0) {
+    sections = synthesizeSectionsFromFlatState(
+      {
+        character_set: characterSet,
+        sections_count: positiveIntegerOrNull(input.sections_count),
+        groups_per_section: positiveIntegerOrNull(input.groups_per_section),
+        skip_key_contains_check: input.skip_key_contains_check === true,
+        operations,
+      },
+      schemaHints,
+    );
+  }
+  const aggregatedOperations = buildAggregateOperationsFromSections(
+    sections,
+    schemaHints,
     operations,
+  );
+
+  return {
+    character_set: characterSet,
+    sections_count:
+      positiveIntegerOrNull(input.sections_count) ??
+      (sections.length > 0 ? sections.length : null),
+    groups_per_section:
+      positiveIntegerOrNull(input.groups_per_section) ??
+      maxGroupsPerSection(sections),
+    skip_key_contains_check:
+      input.skip_key_contains_check === true ||
+      sections.some((section) => section.skip_key_contains_check === true),
+    operations: aggregatedOperations,
+    sections,
   };
 }
 
@@ -1009,17 +1131,29 @@ function normalizeAssistPayload(rawPayload, schemaHints, formState, prompt) {
   const payload =
     rawPayload && typeof rawPayload === "object" ? rawPayload : {};
   const patch = normalizePatch(payload.patch, schemaHints);
-  applyPromptOperationIntentFallback(patch, formState, prompt, schemaHints);
-  applyDeleteOperationDisambiguation(patch, formState, prompt, schemaHints);
-  applyPromptOperationFieldFallback(patch, formState, prompt, schemaHints);
-  restrictPatchToMentionedOperations(patch, prompt, schemaHints);
-  constrainPatchToCurrentOperationScope(patch, formState, prompt, schemaHints);
-  suppressSelectionPatchForStringDistributionPrompts(
+  const structuredPatchApplied = applyPromptStructuredWorkloadFallback(
     patch,
-    formState,
     prompt,
     schemaHints,
   );
+  if (!structuredPatchApplied) {
+    applyPromptOperationIntentFallback(patch, formState, prompt, schemaHints);
+    applyDeleteOperationDisambiguation(patch, formState, prompt, schemaHints);
+    applyPromptOperationFieldFallback(patch, formState, prompt, schemaHints);
+    restrictPatchToMentionedOperations(patch, prompt, schemaHints);
+    constrainPatchToCurrentOperationScope(
+      patch,
+      formState,
+      prompt,
+      schemaHints,
+    );
+    suppressSelectionPatchForStringDistributionPrompts(
+      patch,
+      formState,
+      prompt,
+      schemaHints,
+    );
+  }
   const clarificationContext = {
     patch,
     formState,
@@ -1035,6 +1169,7 @@ function normalizeAssistPayload(rawPayload, schemaHints, formState, prompt) {
     clarifications,
     prompt,
     schemaHints,
+    patch,
   );
   suppressOperationPatchWhenSelectionIsAmbiguous(patch, filteredClarifications);
   const assumptions = normalizeAssumptionEntries(payload.assumptions);
@@ -1051,6 +1186,168 @@ function normalizeAssistPayload(rawPayload, schemaHints, formState, prompt) {
     questions: filteredClarifications.map((entry) => entry.text),
     assumption_texts: assumptions.map((entry) => entry.text),
   };
+}
+
+function operationPatchHasConfiguredValues(value) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  return Object.entries(value).some(([key, fieldValue]) => {
+    return key !== "enabled" && fieldValue !== null && fieldValue !== undefined;
+  });
+}
+
+function stripEnabledFromOperationPatch(value) {
+  const stripped = {};
+  if (!value || typeof value !== "object") {
+    return stripped;
+  }
+  Object.entries(value).forEach(([key, fieldValue]) => {
+    if (
+      key === "enabled" ||
+      fieldValue === null ||
+      fieldValue === undefined
+    ) {
+      return;
+    }
+    stripped[key] = cloneJsonValue(fieldValue);
+  });
+  return stripped;
+}
+
+function normalizeGroupValue(rawGroup, schemaHints) {
+  const input =
+    rawGroup && typeof rawGroup === "object" && !Array.isArray(rawGroup)
+      ? rawGroup
+      : {};
+  const group = {};
+  schemaHints.operation_order.forEach((op) => {
+    if (!Object.prototype.hasOwnProperty.call(input, op)) {
+      return;
+    }
+    const normalized = normalizeOperationPatch(input[op], op, schemaHints);
+    if (
+      normalized.enabled === false ||
+      !operationPatchHasConfiguredValues(normalized)
+    ) {
+      return;
+    }
+    group[op] = stripEnabledFromOperationPatch(normalized);
+  });
+  return group;
+}
+
+function normalizeSectionsValue(rawSections, schemaHints) {
+  if (!Array.isArray(rawSections)) {
+    return [];
+  }
+  return rawSections.map((rawSection) => {
+    const sectionInput =
+      rawSection && typeof rawSection === "object" && !Array.isArray(rawSection)
+        ? rawSection
+        : {};
+    const groupsInput =
+      Array.isArray(sectionInput.groups) && sectionInput.groups.length > 0
+        ? sectionInput.groups
+        : [{}];
+    const section = {
+      groups: groupsInput.map((group) => normalizeGroupValue(group, schemaHints)),
+    };
+    const characterSet = normalizeCharacterSetValue(
+      sectionInput.character_set,
+      schemaHints,
+    );
+    if (characterSet) {
+      section.character_set = characterSet;
+    }
+    if (sectionInput.skip_key_contains_check === true) {
+      section.skip_key_contains_check = true;
+    }
+    return section;
+  });
+}
+
+function buildEnabledOperationGroup(operations, schemaHints) {
+  const group = {};
+  schemaHints.operation_order.forEach((op) => {
+    const entry =
+      operations && operations[op] && operations[op].enabled
+        ? operations[op]
+        : null;
+    if (!entry) {
+      return;
+    }
+    group[op] = stripEnabledFromOperationPatch(entry);
+  });
+  return group;
+}
+
+function synthesizeSectionsFromFlatState(baseState, schemaHints) {
+  const sectionCount = Math.max(1, baseState.sections_count || 1);
+  const groupsPerSection = Math.max(1, baseState.groups_per_section || 1);
+  const seedGroup = buildEnabledOperationGroup(baseState.operations, schemaHints);
+  return Array.from({ length: sectionCount }, (_, sectionIndex) => {
+    const section = {
+      groups: Array.from({ length: groupsPerSection }, (_, groupIndex) => {
+        if (sectionIndex === 0 && groupIndex === 0) {
+          return cloneJsonValue(seedGroup);
+        }
+        return {};
+      }),
+    };
+    if (baseState.character_set) {
+      section.character_set = baseState.character_set;
+    }
+    if (baseState.skip_key_contains_check === true) {
+      section.skip_key_contains_check = true;
+    }
+    return section;
+  });
+}
+
+function buildAggregateOperationsFromSections(
+  sections,
+  schemaHints,
+  fallbackOperations,
+) {
+  const operations = {};
+  schemaHints.operation_order.forEach((op) => {
+    const fallback =
+      fallbackOperations && fallbackOperations[op]
+        ? cloneJsonValue(fallbackOperations[op])
+        : normalizeOperationPatch(null, op, schemaHints);
+    operations[op] = fallback;
+    operations[op].enabled = !!operations[op].enabled;
+  });
+
+  sections.forEach((section) => {
+    const groups = Array.isArray(section && section.groups) ? section.groups : [];
+    groups.forEach((group) => {
+      schemaHints.operation_order.forEach((op) => {
+        if (!Object.prototype.hasOwnProperty.call(group || {}, op)) {
+          return;
+        }
+        const normalized = normalizeOperationPatch(group[op], op, schemaHints);
+        operations[op] = {
+          ...operations[op],
+          ...normalized,
+          enabled: true,
+        };
+      });
+    });
+  });
+
+  return operations;
+}
+
+function maxGroupsPerSection(sections) {
+  const maxGroups = sections.reduce((currentMax, section) => {
+    const groupCount = Array.isArray(section && section.groups)
+      ? section.groups.length
+      : 0;
+    return Math.max(currentMax, groupCount);
+  }, 0);
+  return maxGroups > 0 ? maxGroups : null;
 }
 
 function applyPromptOperationIntentFallback(
@@ -1130,6 +1427,25 @@ function applyPromptOperationIntentFallback(
   }
 }
 
+function applyPromptStructuredWorkloadFallback(patch, prompt, schemaHints) {
+  if (!patch || typeof patch !== "object") {
+    return false;
+  }
+  if (Array.isArray(patch.sections) && patch.sections.length > 0) {
+    return true;
+  }
+  const sections = deriveStructuredSectionsFromPrompt(prompt, schemaHints);
+  if (!sections) {
+    return false;
+  }
+  patch.sections = normalizeSectionsValue(sections, schemaHints);
+  patch.sections_count = patch.sections.length;
+  patch.groups_per_section = maxGroupsPerSection(patch.sections);
+  patch.clear_operations = false;
+  patch.operations = {};
+  return true;
+}
+
 function restrictPatchToMentionedOperations(patch, prompt, schemaHints) {
   if (
     !patch ||
@@ -1184,6 +1500,7 @@ function suppressRedundantOperationClarifications(
   clarifications,
   prompt,
   schemaHints,
+  patch,
 ) {
   if (!Array.isArray(clarifications) || clarifications.length === 0) {
     return [];
@@ -1194,14 +1511,50 @@ function suppressRedundantOperationClarifications(
     schemaHints,
   );
   const shouldSuppressOperationQuestion = mentionedOps.length > 0;
-  if (!shouldSuppressOperationQuestion) {
+  const hasResolvedSections =
+    (Array.isArray(patch && patch.sections) && patch.sections.length > 0) ||
+    Number.isFinite(patch && patch.sections_count);
+  const hasResolvedGroups =
+    (Array.isArray(patch && patch.sections) &&
+      patch.sections.some(
+        (section) =>
+          section &&
+          Array.isArray(section.groups) &&
+          section.groups.length > 0,
+      )) ||
+    Number.isFinite(patch && patch.groups_per_section);
+  if (
+    !shouldSuppressOperationQuestion &&
+    !hasResolvedSections &&
+    !hasResolvedGroups
+  ) {
     return clarifications;
   }
   return clarifications.filter((entry) => {
-    if (!entry || !entry.binding || entry.binding.type !== "operations_set") {
+    if (!entry || !entry.binding) {
       return true;
     }
-    return false;
+    if (
+      shouldSuppressOperationQuestion &&
+      entry.binding.type === "operations_set"
+    ) {
+      return false;
+    }
+    if (
+      hasResolvedSections &&
+      entry.binding.type === "top_field" &&
+      entry.binding.field === "sections_count"
+    ) {
+      return false;
+    }
+    if (
+      hasResolvedGroups &&
+      entry.binding.type === "top_field" &&
+      entry.binding.field === "groups_per_section"
+    ) {
+      return false;
+    }
+    return true;
   });
 }
 
@@ -1492,20 +1845,215 @@ function applyPromptOperationFieldFallback(
   }
 }
 
+function deriveStructuredSectionsFromPrompt(prompt, schemaHints) {
+  const text = typeof prompt === "string" ? prompt.trim() : "";
+  if (!text || !STRUCTURED_WORKLOAD_PATTERN.test(text)) {
+    return null;
+  }
+
+  const lowerPrompt = text.toLowerCase();
+  const clauses = splitPromptIntoPhaseClauses(text);
+  const groups = clauses
+    .map((clause) => deriveStructuredGroupFromClause(clause, schemaHints))
+    .filter((group) => group && Object.keys(group).length > 0);
+  if (groups.length === 0) {
+    return null;
+  }
+
+  const declaredPhaseCount = /\bthree[- ]phase\b/.test(lowerPrompt)
+    ? 3
+    : /\btwo[- ]phase\b/.test(lowerPrompt)
+      ? 2
+      : /\bsingle[- ]shot\b|\bone[- ]phase\b/.test(lowerPrompt)
+        ? 1
+        : null;
+  if (declaredPhaseCount !== null && groups.length < declaredPhaseCount) {
+    return null;
+  }
+  if (groups.length === 1 && declaredPhaseCount === null) {
+    return null;
+  }
+
+  return [{ groups }];
+}
+
+function splitPromptIntoPhaseClauses(prompt) {
+  const normalized = String(prompt || "")
+    .replace(/\bphase\s+(?:1|2|3|one|two|three)\b\s*:?\s*/gi, " || ")
+    .replace(
+      /\b(?:then|followed by|after that|afterwards|next|finally)\b/gi,
+      " || ",
+    )
+    .replace(
+      /,\s*(?=(?:preload|interleave|interleaved|phase\s+(?:1|2|3|one|two|three)|write[- ]heavy|write[- ]only)\b)/gi,
+      " || ",
+    );
+  return normalized
+    .split("||")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function extractOperationAmountHints(text, operations) {
+  const lowerText = String(text || "").toLowerCase();
+  const hints = {};
+  operations.forEach((operationName) => {
+    const patternSource = getOperationPromptPatternSource(operationName);
+    if (!patternSource) {
+      return;
+    }
+    const amountPatternSource =
+      operationName === "range_queries" || operationName === "range_deletes"
+        ? `(?:short\\s+|long\\s+)?(?:${patternSource})`
+        : patternSource;
+    const patterns = [
+      new RegExp(
+        `\\b(\\d[\\d,]*(?:\\.\\d+)?\\s*[kmb]?|\\d+(?:\\.\\d+)?)\\s*(%)?\\s+(?:of\\s+)?(?:the\\s+)?${amountPatternSource}\\b`,
+        "i",
+      ),
+      new RegExp(
+        `\\b${amountPatternSource}\\b\\s+(?:at|with)\\s+(\\d[\\d,]*(?:\\.\\d+)?\\s*[kmb]?|\\d+(?:\\.\\d+)?)\\s*(%)?\\b`,
+        "i",
+      ),
+    ];
+    for (const pattern of patterns) {
+      const match = lowerText.match(pattern);
+      if (!match || !match[1]) {
+        continue;
+      }
+      if (match[2] === "%") {
+        const percent = numberOrNull(match[1]);
+        if (percent !== null) {
+          hints[operationName] = { type: "percent", value: percent };
+        }
+        break;
+      }
+      const count = parseHumanCountToken(match[1]);
+      if (count !== null) {
+        hints[operationName] = { type: "count", value: count };
+      }
+      break;
+    }
+  });
+  return hints;
+}
+
+function detectRangeQueryProfile(lowerPrompt) {
+  const text = String(lowerPrompt || "");
+  if (/\bshort\s+range\s+quer(?:y|ie|ies)\b/.test(text)) {
+    return "short";
+  }
+  if (/\blong\s+range\s+quer(?:y|ie|ies)\b/.test(text)) {
+    return "long";
+  }
+  return null;
+}
+
+function deriveStructuredGroupFromClause(clause, schemaHints) {
+  const text = String(clause || "").trim();
+  if (!text) {
+    return null;
+  }
+  const lowerClause = text.toLowerCase();
+  let operations = getMentionedOperationsFromPrompt(lowerClause, schemaHints);
+  const isPreload =
+    /\bpreload\b|\bseed\b|\bprime\b|\bload\s+the\s+db\b/.test(lowerClause);
+  const isWriteOnly = /\bwrite[- ]only\b/.test(lowerClause);
+  const isWriteHeavy = /\bwrite[- ]heavy\b/.test(lowerClause);
+
+  if (isPreload && !operations.includes("inserts")) {
+    operations.unshift("inserts");
+  }
+  if (
+    /\b(?:short|long)\s+range\s+quer(?:y|ie|ies)\b/.test(lowerClause) &&
+    !operations.includes("range_queries")
+  ) {
+    operations.push("range_queries");
+  }
+
+  let defaultPercents = null;
+  if (isWriteOnly) {
+    operations = uniqueStrings(["updates", ...operations]);
+    defaultPercents = { updates: 100 };
+  } else if (isWriteHeavy) {
+    const readOperation = operations.includes("range_queries")
+      ? "range_queries"
+      : operations.includes("point_queries")
+        ? "point_queries"
+        : "point_queries";
+    operations = uniqueStrings(["updates", ...operations, readOperation]);
+    defaultPercents = {
+      updates: WRITE_HEAVY_DEFAULT_SPLIT.write,
+      [readOperation]: WRITE_HEAVY_DEFAULT_SPLIT.read,
+    };
+  }
+
+  if (operations.length === 0) {
+    return null;
+  }
+
+  const totalCount = extractPromptCountHint(text);
+  const amountHints = extractOperationAmountHints(text, operations);
+  const group = {};
+
+  operations.forEach((operationName) => {
+    const amountHint = amountHints[operationName] || null;
+    let opCount = null;
+    if (amountHint && amountHint.type === "count") {
+      opCount = amountHint.value;
+    } else if (
+      amountHint &&
+      amountHint.type === "percent" &&
+      totalCount !== null
+    ) {
+      opCount = Math.round((totalCount * amountHint.value) / 100);
+    } else if (
+      defaultPercents &&
+      Object.prototype.hasOwnProperty.call(defaultPercents, operationName) &&
+      totalCount !== null
+    ) {
+      opCount = Math.round((totalCount * defaultPercents[operationName]) / 100);
+    } else if (operations.length === 1 && totalCount !== null) {
+      opCount = totalCount;
+    }
+
+    const spec = {};
+    if (opCount !== null) {
+      spec.op_count = opCount;
+    }
+    if (operationName === "range_queries" || operationName === "range_deletes") {
+      const rangeProfile = detectRangeQueryProfile(lowerClause);
+      if (rangeProfile) {
+        spec.selectivity = RANGE_QUERY_SELECTIVITY_PROFILES[rangeProfile];
+        spec.range_format = "StartCount";
+      }
+    }
+    group[operationName] = spec;
+  });
+
+  return group;
+}
+
 function extractPromptCountHint(prompt) {
   const text = String(prompt || "");
   if (!text) {
     return null;
   }
-  const contextualMatch = text.match(
-    /(\d[\d,]*(?:\.\d+)?\s*[kmb]?)(?=\s+(?:operations?|ops?|inserts?|updates?|merges?|deletes?|queries?|reads?))/i,
-  );
-  if (contextualMatch && contextualMatch[1]) {
-    return parseHumanCountToken(contextualMatch[1]);
+  const contextualMatches = [
+    ...text.matchAll(
+      /(\d[\d,]*(?:\.\d+)?\s*[kmb]?)(?!\s*%)(?=\s+(?:operations?|ops?|inserts?|updates?|merges?|deletes?|queries?|reads?))/gi,
+    ),
+  ];
+  if (contextualMatches.length > 0) {
+    return parseHumanCountToken(
+      contextualMatches[contextualMatches.length - 1][1],
+    );
   }
-  const genericMatch = text.match(/\b(\d[\d,]*(?:\.\d+)?\s*[kmb]?)\b/i);
-  if (genericMatch && genericMatch[1]) {
-    return parseHumanCountToken(genericMatch[1]);
+  const genericMatches = [
+    ...text.matchAll(/\b(\d[\d,]*(?:\.\d+)?\s*[kmb]?)\b(?!\s*%)/gi),
+  ];
+  if (genericMatches.length > 0) {
+    return parseHumanCountToken(genericMatches[genericMatches.length - 1][1]);
   }
   return null;
 }
@@ -1855,6 +2403,9 @@ function normalizePatch(rawPatch, schemaHints) {
     character_set: normalizeCharacterSetValue(patch.character_set, schemaHints),
     sections_count: positiveIntegerOrNull(patch.sections_count),
     groups_per_section: positiveIntegerOrNull(patch.groups_per_section),
+    sections: Object.prototype.hasOwnProperty.call(patch, "sections")
+      ? normalizeSectionsValue(patch.sections, schemaHints)
+      : undefined,
     skip_key_contains_check: Object.prototype.hasOwnProperty.call(
       patch,
       "skip_key_contains_check",
@@ -2304,6 +2855,28 @@ function buildEffectiveState(patch, formState, schemaHints) {
       range_format: next.range_format || current.range_format || null,
     };
   });
+
+  const normalizedSections =
+    Array.isArray(patch.sections) && patch.sections.length > 0
+      ? normalizeSectionsValue(patch.sections, schemaHints)
+      : Array.isArray(formState.sections) && formState.sections.length > 0
+        ? normalizeSectionsValue(formState.sections, schemaHints)
+        : synthesizeSectionsFromFlatState(effective, schemaHints);
+  effective.sections = normalizedSections;
+  effective.sections_count =
+    normalizedSections.length > 0
+      ? normalizedSections.length
+      : effective.sections_count;
+  effective.groups_per_section =
+    maxGroupsPerSection(normalizedSections) ?? effective.groups_per_section;
+  effective.skip_key_contains_check =
+    effective.skip_key_contains_check ||
+    normalizedSections.some((section) => section.skip_key_contains_check === true);
+  effective.operations = buildAggregateOperationsFromSections(
+    normalizedSections,
+    schemaHints,
+    Array.isArray(patch.sections) ? null : effective.operations,
+  );
 
   return effective;
 }
@@ -3542,9 +4115,10 @@ function isAssistPayloadShape(value) {
     return false;
   }
   if (
-    !value.patch.operations ||
-    typeof value.patch.operations !== "object" ||
-    Array.isArray(value.patch.operations)
+    value.patch.operations !== undefined &&
+    (!value.patch.operations ||
+      typeof value.patch.operations !== "object" ||
+      Array.isArray(value.patch.operations))
   ) {
     return false;
   }
