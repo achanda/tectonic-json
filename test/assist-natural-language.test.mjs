@@ -633,6 +633,144 @@ test("three phase prompts keep each interleaved phase in its own group", () => {
   );
 });
 
+test("high-level three phase workload prompt variants normalize to the expected groups", async (t) => {
+  const scenarios = [
+    {
+      name: "write-heavy then long-range",
+      prompt:
+        "Build a three phase workload: preload the DB with 1M inserts, then interleave a write-heavy phase with 70% updates and 30% point queries for 400k operations, then interleave 60% point queries and 40% long range queries for 600k operations.",
+      assertions(result) {
+        assert.equal(result.patch.sections[0].groups[0].inserts.op_count, 1000000);
+        assert.equal(result.patch.sections[0].groups[1].updates.op_count, 280000);
+        assert.equal(
+          result.patch.sections[0].groups[1].point_queries.op_count,
+          120000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[2].point_queries.op_count,
+          360000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[2].range_queries.op_count,
+          240000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[2].range_queries.selectivity,
+          0.1,
+        );
+      },
+    },
+    {
+      name: "mixed read-write then analytics",
+      prompt:
+        "Create a three phase workload with a preload phase, then a mixed read/write phase, then a query-heavy analytics phase. Preload 2M inserts, then interleave 500k updates and 500k point queries, then interleave 800k point queries and 200k long range queries.",
+      assertions(result) {
+        assert.equal(result.patch.sections[0].groups[0].inserts.op_count, 2000000);
+        assert.equal(result.patch.sections[0].groups[1].updates.op_count, 500000);
+        assert.equal(
+          result.patch.sections[0].groups[1].point_queries.op_count,
+          500000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[2].point_queries.op_count,
+          800000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[2].range_queries.op_count,
+          200000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[2].range_queries.selectivity,
+          0.1,
+        );
+      },
+    },
+    {
+      name: "write-only then short-range read phase",
+      prompt:
+        "Generate a three phase workload: first load the database with 5M inserts, next run a write-only phase for 1M operations, then run an interleaved read phase with 80% point queries and 20% short range queries for 2M operations.",
+      assertions(result) {
+        assert.equal(result.patch.sections[0].groups[0].inserts.op_count, 5000000);
+        assert.equal(result.patch.sections[0].groups[1].updates.op_count, 1000000);
+        assert.equal(
+          result.patch.sections[0].groups[2].point_queries.op_count,
+          1600000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[2].range_queries.op_count,
+          400000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[2].range_queries.selectivity,
+          0.001,
+        );
+      },
+    },
+    {
+      name: "hot serving then broader scan",
+      prompt:
+        "I want three phases: seed the database, then a hot serving phase, then a broader scan phase. Preload 1M inserts, then interleave 80% point queries and 20% updates for 500k operations, then interleave 70% point queries and 30% long range queries for 300k operations.",
+      assertions(result) {
+        assert.equal(result.patch.sections[0].groups[0].inserts.op_count, 1000000);
+        assert.equal(
+          result.patch.sections[0].groups[1].point_queries.op_count,
+          400000,
+        );
+        assert.equal(result.patch.sections[0].groups[1].updates.op_count, 100000);
+        assert.equal(
+          result.patch.sections[0].groups[2].point_queries.op_count,
+          210000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[2].range_queries.op_count,
+          90000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[2].range_queries.selectivity,
+          0.1,
+        );
+      },
+    },
+    {
+      name: "preload then explicit percentage mixes",
+      prompt:
+        "Make a three phase workload where we first preload the DB, then do an interleaved write-heavy phase, then do an interleaved read-heavy phase. Use 1M inserts, then 600k operations at 75% updates and 25% point queries, then 900k operations at 90% point queries and 10% range queries.",
+      assertions(result) {
+        assert.equal(result.patch.sections[0].groups[0].inserts.op_count, 1000000);
+        assert.equal(result.patch.sections[0].groups[1].updates.op_count, 450000);
+        assert.equal(
+          result.patch.sections[0].groups[1].point_queries.op_count,
+          150000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[2].point_queries.op_count,
+          810000,
+        );
+        assert.equal(
+          result.patch.sections[0].groups[2].range_queries.op_count,
+          90000,
+        );
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, () => {
+      const result = applyPrompt({
+        prompt: scenario.prompt,
+        formState: createFormState({}),
+        rawPatch: {
+          operations: {},
+        },
+      });
+
+      assert.equal(result.patch.sections.length, 1);
+      assert.equal(result.patch.sections[0].groups.length, 3);
+      scenario.assertions(result);
+    });
+  }
+});
+
 test("structured phased prompts suppress redundant section and group clarifications", () => {
   const result = applyPrompt({
     prompt:

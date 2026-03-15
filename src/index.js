@@ -1855,7 +1855,12 @@ function deriveStructuredSectionsFromPrompt(prompt, schemaHints) {
   const clauses = splitPromptIntoPhaseClauses(text);
   const groups = clauses
     .map((clause) => deriveStructuredGroupFromClause(clause, schemaHints))
-    .filter((group) => group && Object.keys(group).length > 0);
+    .filter(
+      (group) =>
+        group &&
+        Object.keys(group).length > 0 &&
+        Object.values(group).some((spec) => operationPatchHasConfiguredValues(spec)),
+    );
   if (groups.length === 0) {
     return null;
   }
@@ -1957,7 +1962,9 @@ function deriveStructuredGroupFromClause(clause, schemaHints) {
   const lowerClause = text.toLowerCase();
   let operations = getMentionedOperationsFromPrompt(lowerClause, schemaHints);
   const isPreload =
-    /\bpreload\b|\bseed\b|\bprime\b|\bload\s+the\s+db\b/.test(lowerClause);
+    /\bpreload\b|\bseed\b|\bprime\b|\bload\s+the\s+db\b|\bload\s+the\s+database\b|\bload\s+database\b/.test(
+      lowerClause,
+    );
   const isWriteOnly = /\bwrite[- ]only\b/.test(lowerClause);
   const isWriteHeavy = /\bwrite[- ]heavy\b/.test(lowerClause);
 
