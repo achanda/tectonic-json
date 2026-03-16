@@ -8,10 +8,18 @@ import {
   getOpenAiModels,
   isOpenAiAssistProvider,
 } from "./openai-assist-provider.mjs";
+import {
+  DEFAULT_OLLAMA_MODEL,
+  getOllamaModels,
+  isOllamaAssistProvider,
+} from "./ollama-assist-provider.mjs";
 
 const DEFAULT_MAX_TOKENS = 700;
 const DEFAULT_RETRY_ATTEMPTS = 2;
 const DEFAULT_AI_TIMEOUT_MS = 15000;
+const DEFAULT_OLLAMA_MAX_TOKENS = 400;
+const DEFAULT_OLLAMA_RETRY_ATTEMPTS = 1;
+const DEFAULT_OLLAMA_AI_TIMEOUT_MS = 60000;
 
 const FALLBACK_OPERATION_ORDER = [
   "inserts",
@@ -5550,23 +5558,32 @@ function jsonResponse(payload, status) {
 }
 
 function getAiRequestConfig(env) {
+  const provider = readAssistProvider(env);
+  const defaultMaxTokens = isOllamaAssistProvider(provider)
+    ? DEFAULT_OLLAMA_MAX_TOKENS
+    : DEFAULT_MAX_TOKENS;
   const modelNames = parseModelNames(env);
   const modelName = modelNames[0];
   const configuredMaxTokens = parseIntegerWithDefault(
     env.AI_MAX_TOKENS,
-    DEFAULT_MAX_TOKENS,
+    defaultMaxTokens,
   );
   const maxTokens = clamp(configuredMaxTokens, 120, 900);
   const temperature = parseFloatWithDefault(env.AI_TEMPERATURE, 0);
+  const defaultTimeoutMs = isOllamaAssistProvider(provider)
+    ? DEFAULT_OLLAMA_AI_TIMEOUT_MS
+    : DEFAULT_AI_TIMEOUT_MS;
   const timeoutMs = parseIntegerWithDefault(
     env.AI_TIMEOUT_MS,
-    DEFAULT_AI_TIMEOUT_MS,
+    defaultTimeoutMs,
   );
+  const defaultRetryAttempts = isOllamaAssistProvider(provider)
+    ? DEFAULT_OLLAMA_RETRY_ATTEMPTS
+    : DEFAULT_RETRY_ATTEMPTS;
   const retryAttempts = parseIntegerWithDefault(
     env.AI_RETRY_ATTEMPTS,
-    DEFAULT_RETRY_ATTEMPTS,
+    defaultRetryAttempts,
   );
-  const provider = readAssistProvider(env);
   const responseFormatOverride =
     typeof env.AI_RESPONSE_FORMAT_MODE === "string"
       ? env.AI_RESPONSE_FORMAT_MODE.trim().toLowerCase()
@@ -5590,14 +5607,6 @@ function readAssistProvider(env) {
   if (
     env &&
     typeof env === "object" &&
-    typeof env.ASSIST_PROVIDER === "string" &&
-    env.ASSIST_PROVIDER.trim()
-  ) {
-    return env.ASSIST_PROVIDER.trim().toLowerCase();
-  }
-  if (
-    env &&
-    typeof env === "object" &&
     typeof env.AI_PROVIDER === "string" &&
     env.AI_PROVIDER.trim()
   ) {
@@ -5608,7 +5617,7 @@ function readAssistProvider(env) {
 
 function buildAssistResponseFormat(aiConfig) {
   if (aiConfig && aiConfig.responseFormatMode === "json_schema") {
-    if (isCloudflareAssistProvider(aiConfig.provider)) {
+    if (!isOpenAiAssistProvider(aiConfig.provider)) {
       return {
         type: "json_object",
       };
@@ -5649,9 +5658,13 @@ function buildAssistToolChoice(aiConfig) {
 
 function parseModelNames(env) {
   const provider = readAssistProvider(env);
-  return isOpenAiAssistProvider(provider)
-    ? uniqueStrings(getOpenAiModels(env))
-    : uniqueStrings(getCloudflareModels(env));
+  if (isOpenAiAssistProvider(provider)) {
+    return uniqueStrings(getOpenAiModels(env));
+  }
+  if (isOllamaAssistProvider(provider)) {
+    return uniqueStrings(getOllamaModels(env));
+  }
+  return uniqueStrings(getCloudflareModels(env));
 }
 
 function buildAiDebugFromOutcome(aiConfig, outcome) {

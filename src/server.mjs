@@ -5,9 +5,11 @@ import { createReadStream, promises as fs } from "node:fs";
 
 import { buildCloudflareAssistEnv } from "./cloudflare-assist-provider.mjs";
 import { buildOpenAiAssistEnv, isOpenAiAssistProvider } from "./openai-assist-provider.mjs";
+import { buildOllamaAssistEnv, isOllamaAssistProvider } from "./ollama-assist-provider.mjs";
 import workerEntrypoint from "./index.js";
 import { createOpenAiCompatibleBindingFromEnv } from "./openai-ai-binding.mjs";
 import { createCloudflareAiBindingFromEnv } from "./cloudflare-ai-binding.mjs";
+import { createOllamaAiBindingFromEnv } from "./ollama-ai-binding.mjs";
 import {
   getLocalRunnerConfig,
   handleWorkloadRequest,
@@ -30,14 +32,15 @@ const SHUTDOWN_FORCE_EXIT_MS = readInteger(
 );
 
 const aiProviderPreference =
-  readString(process.env.ASSIST_PROVIDER || process.env.AI_PROVIDER)
-    .toLowerCase() || "openai";
+  readString(process.env.AI_PROVIDER).toLowerCase() || "openai";
 const cloudflareAiBinding = createCloudflareAiBindingFromEnv(process.env);
 const openAiBinding = createOpenAiCompatibleBindingFromEnv(process.env);
+const ollamaAiBinding = createOllamaAiBindingFromEnv(process.env);
 const aiSelection = selectAiProvider(
   aiProviderPreference,
   cloudflareAiBinding,
   openAiBinding,
+  ollamaAiBinding,
   process.env,
 );
 const localAiBinding = aiSelection.binding;
@@ -303,16 +306,17 @@ function normalizePathname(pathname) {
 function buildWorkerEnv(envLike, aiBinding, aiConfigError, resolvedAiProvider) {
   const env = envLike && typeof envLike === "object" ? envLike : {};
   const providerFromSelection = readString(resolvedAiProvider);
-  const providerFromEnv = readString(env.ASSIST_PROVIDER || env.AI_PROVIDER);
+  const providerFromEnv = readString(env.AI_PROVIDER);
   const effectiveProvider =
     providerFromSelection && providerFromSelection !== "unavailable"
       ? providerFromSelection
       : providerFromEnv;
   const providerEnv = isOpenAiAssistProvider(effectiveProvider)
     ? buildOpenAiAssistEnv(env)
-    : buildCloudflareAssistEnv(env);
+    : isOllamaAssistProvider(effectiveProvider)
+      ? buildOllamaAssistEnv(env)
+      : buildCloudflareAssistEnv(env);
   const out = {
-    ASSIST_PROVIDER: effectiveProvider,
     AI_PROVIDER: effectiveProvider,
     ...providerEnv,
     AI_TEMPERATURE: readString(env.AI_TEMPERATURE) || "0",
@@ -335,11 +339,14 @@ function selectAiProvider(
   preference,
   cloudflareBinding,
   openAiBinding,
+  ollamaBinding,
   envLike,
 ) {
   const env = envLike && typeof envLike === "object" ? envLike : {};
   const pref =
-    preference === "cloudflare" || preference === "openai"
+    preference === "cloudflare" ||
+    preference === "openai" ||
+    preference === "ollama"
       ? preference
       : "auto";
 
@@ -373,6 +380,21 @@ function selectAiProvider(
     };
   }
 
+  if (pref === "ollama") {
+    if (ollamaBinding) {
+      return {
+        binding: ollamaBinding,
+        provider: "ollama",
+        error_code: null,
+      };
+    }
+    return {
+      binding: null,
+      provider: "unavailable",
+      error_code: "ollama_unavailable",
+    };
+  }
+
   if (openAiBinding) {
     return {
       binding: openAiBinding,
@@ -387,10 +409,10 @@ function selectAiProvider(
       error_code: null,
     };
   }
-  if (openAiBinding) {
+  if (ollamaBinding) {
     return {
-      binding: openAiBinding,
-      provider: "openai_compatible",
+      binding: ollamaBinding,
+      provider: "ollama",
       error_code: null,
     };
   }
@@ -410,6 +432,18 @@ function selectAiProvider(
       binding: null,
       provider: "unavailable",
       error_code: "openai_token_missing",
+    };
+  }
+  if (
+    isOllamaAssistProvider(env.AI_PROVIDER) ||
+    readString(env.OLLAMA_BASE_URL || env.OLLAMA_HOST) ||
+    readString(env.OLLAMA_MODEL) ||
+    readString(env.OLLAMA_MODELS)
+  ) {
+    return {
+      binding: null,
+      provider: "unavailable",
+      error_code: "ollama_unavailable",
     };
   }
   return {

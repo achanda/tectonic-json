@@ -14,7 +14,10 @@ A chat + form interface for designing Tectonic workload specs, then generating r
 
 - Node.js 18+
 - `tectonic-cli` installed on host machine and available on PATH
-- OpenAI-compatible API key for assistant prompts (`OPENAI_API_KEY`)
+- one configured AI provider for assistant prompts:
+  - OpenAI-compatible API
+  - Cloudflare AI
+  - local Ollama
 
 ## Setup
 
@@ -31,6 +34,14 @@ npm run dev
 ```
 
 Open [http://localhost:8787](http://localhost:8787).
+
+To force a specific provider in local development:
+
+```bash
+AI_PROVIDER=openai npm run dev
+AI_PROVIDER=cloudflare npm run dev
+AI_PROVIDER=ollama npm run dev
+```
 
 This starts:
 - static UI hosting from `public/`
@@ -108,12 +119,18 @@ Those additional suites cover:
 - synonym and filler-phrase variants such as `seed the database`, `load the database`, `Please ...`, and `Can you ...`
 - operation synonyms such as `point reads`, `read-modify-write`, and `rmw`
 - multi-turn regressions where later prompts refine or remove earlier workload choices
-- provider-path coverage for both Cloudflare and OpenAI assist modes
+- provider-path coverage for OpenAI, Cloudflare, and Ollama assist modes
 
 Run the demo-oriented NL coverage with:
 
 ```bash
 make test-demo
+```
+
+Run the local Ollama-backed demo coverage with:
+
+```bash
+AI_PROVIDER=ollama make test-demo-ollama
 ```
 
 ## LLM env vars
@@ -123,7 +140,7 @@ make test-demo
 OpenAI-compatible API:
 
 ```bash
-export ASSIST_PROVIDER=openai
+export AI_PROVIDER=openai
 export OPENAI_API_KEY=...
 export OPENAI_MODEL=gpt-5.1
 # Optional overrides:
@@ -136,7 +153,7 @@ export OPENAI_MODEL=gpt-5.1
 Cloudflare AI:
 
 ```bash
-export ASSIST_PROVIDER=cloudflare
+export AI_PROVIDER=cloudflare
 export CLOUDFLARE_ACCOUNT_ID=...
 export CLOUDFLARE_API_TOKEN=...
 export CLOUDFLARE_MODEL=@cf/meta/llama-3.1-8b-instruct
@@ -144,18 +161,73 @@ export CLOUDFLARE_MODEL=@cf/meta/llama-3.1-8b-instruct
 # export CLOUDFLARE_MODELS=@cf/meta/llama-3.1-8b-instruct,@cf/meta/llama-3.3-70b-instruct-fp8-fast
 ```
 
-`openai` is now the local default when `ASSIST_PROVIDER` and `AI_PROVIDER` are both unset.
+Local Ollama:
+
+```bash
+export AI_PROVIDER=ollama
+export OLLAMA_MODEL=llama3
+# Optional overrides:
+# export OLLAMA_BASE_URL=http://127.0.0.1:11434
+# export OLLAMA_API_ENDPOINT=/api/generate
+# export OLLAMA_TIMEOUT_MS=60000
+```
+
+### Set up Ollama locally
+
+1. Install Ollama.
+
+macOS with Homebrew:
+
+```bash
+brew install ollama
+```
+
+Or install the desktop app from [ollama.com](https://ollama.com/download).
+
+2. Start the Ollama server.
+
+```bash
+ollama serve
+```
+
+3. Pull a local model.
+
+```bash
+ollama pull llama3
+```
+
+4. Verify the local API is reachable.
+
+```bash
+curl http://127.0.0.1:11434/api/tags
+```
+
+5. Start this app against Ollama.
+
+```bash
+AI_PROVIDER=ollama OLLAMA_MODEL=llama3 make dev
+```
+
+6. Run the Ollama-backed demo tests.
+
+```bash
+AI_PROVIDER=ollama make test-demo-ollama
+```
+
+`openai` is the local default when `AI_PROVIDER` is unset.
 
 Preferred naming:
 - OpenAI: `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_MODELS`
 - Cloudflare: `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_MODEL`, `CLOUDFLARE_MODELS`
+- Ollama: `OLLAMA_MODEL`, `OLLAMA_BASE_URL`, `OLLAMA_API_ENDPOINT`, `OLLAMA_TIMEOUT_MS`
 
 Legacy compatibility aliases:
-- `AI_PROVIDER` is still accepted as a provider selector alias
 - `AI_NAME` is still accepted as a Cloudflare model alias
 - `AI_MODELS` is still accepted as a Cloudflare retry-chain alias
 
-When `ASSIST_PROVIDER=openai`, `/api/assist` uses Structured Outputs (`response_format: json_schema`, strict mode).
+When `AI_PROVIDER=openai`, `/api/assist` uses Structured Outputs via the OpenAI tool/structured-output path.
+
+When `AI_PROVIDER=ollama`, `/api/assist` uses the local Ollama HTTP API. The default endpoint is `/api/generate`.
 
 The default OpenAI endpoint is `/responses`. Set `OPENAI_API_ENDPOINT` or `OPENAI_CHAT_ENDPOINT` only if you need a non-default compatible API shape.
 

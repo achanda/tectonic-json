@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import workerEntrypoint, { __test } from "../src/index.js";
 import { createCloudflareAiBindingFromEnv } from "../src/cloudflare-ai-binding.mjs";
 import { createOpenAiCompatibleBindingFromEnv } from "../src/openai-ai-binding.mjs";
+import { createOllamaAiBindingFromEnv } from "../src/ollama-ai-binding.mjs";
 
 const { buildEffectiveState, normalizeFormState, normalizeSchemaHints } = __test;
 
@@ -158,15 +159,22 @@ export function configuredOperations(group) {
 }
 
 export function getSelectedProviderName(envLike = process.env) {
-  const rawProvider = String(
-    envLike.ASSIST_PROVIDER || envLike.AI_PROVIDER || "openai",
-  ).toLowerCase();
-  return rawProvider === "cloudflare" ? "cloudflare" : "openai";
+  const rawProvider = String(envLike.AI_PROVIDER || "openai").toLowerCase();
+  if (rawProvider === "cloudflare") {
+    return "cloudflare";
+  }
+  if (rawProvider === "ollama") {
+    return "ollama";
+  }
+  return "openai";
 }
 
 export function createLiveBinding(providerName, envLike = process.env) {
   if (providerName === "cloudflare") {
     return createCloudflareAiBindingFromEnv(envLike);
+  }
+  if (providerName === "ollama") {
+    return createOllamaAiBindingFromEnv(envLike);
   }
   return createOpenAiCompatibleBindingFromEnv(envLike);
 }
@@ -183,14 +191,30 @@ export function getSelectedProviderConfig(envLike = process.env) {
 function buildProviderEnv(providerName, envLike = process.env) {
   if (providerName === "cloudflare") {
     return {
-      ASSIST_PROVIDER: "cloudflare",
+      AI_PROVIDER: "cloudflare",
       CLOUDFLARE_MODEL:
         envLike.CLOUDFLARE_MODEL ||
         "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
     };
   }
+  if (providerName === "ollama") {
+    const out = {
+      AI_PROVIDER: "ollama",
+      OLLAMA_MODEL: envLike.OLLAMA_MODEL || "llama3",
+    };
+    if (envLike.OLLAMA_BASE_URL) {
+      out.OLLAMA_BASE_URL = envLike.OLLAMA_BASE_URL;
+    }
+    if (envLike.OLLAMA_API_ENDPOINT) {
+      out.OLLAMA_API_ENDPOINT = envLike.OLLAMA_API_ENDPOINT;
+    }
+    if (envLike.OLLAMA_TIMEOUT_MS) {
+      out.OLLAMA_TIMEOUT_MS = envLike.OLLAMA_TIMEOUT_MS;
+    }
+    return out;
+  }
   return {
-    ASSIST_PROVIDER: "openai",
+    AI_PROVIDER: "openai",
     OPENAI_MODEL: envLike.OPENAI_MODEL || "gpt-5.1",
   };
 }
