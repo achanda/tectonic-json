@@ -2,7 +2,7 @@ PRETTIER ?= npx --yes prettier@3
 NPM ?= npm
 FORMAT_PATHS := package.json public/*.js public/*.html src/*.js src/*.mjs test/*.mjs
 
-.PHONY: format dev test test-demo check-ai-env
+.PHONY: format dev test test-demo check-ai-env check-demo-ai-env
 
 format:
 	$(PRETTIER) -- --write $(FORMAT_PATHS)
@@ -16,11 +16,17 @@ check-ai-env:
 		test -n "$$OPENAI_API_KEY" || (echo "OPENAI_API_KEY is not set" >&2; exit 1); \
 	fi
 
+check-demo-ai-env:
+	@test -n "$$OPENAI_API_KEY" || (echo "OPENAI_API_KEY is not set" >&2; exit 1)
+	@test -n "$$CLOUDFLARE_ACCOUNT_ID" || (echo "CLOUDFLARE_ACCOUNT_ID is not set" >&2; exit 1)
+	@test -n "$$CLOUDFLARE_API_TOKEN" || (echo "CLOUDFLARE_API_TOKEN is not set" >&2; exit 1)
+
 dev: check-ai-env
 	$(NPM) run dev
 
 test:
 	$(NPM) test
 
-test-demo:
-	node --test test/assist-natural-language-demo.test.mjs test/assist-provider-coverage.test.mjs
+test-demo: check-demo-ai-env
+	ASSIST_PROVIDER=openai node --test test/assist-natural-language-demo.test.mjs test/assist-natural-language-extended.test.mjs test/assist-provider-coverage.test.mjs
+	ASSIST_PROVIDER=cloudflare node --test test/assist-natural-language-demo.test.mjs test/assist-natural-language-extended.test.mjs test/assist-provider-coverage.test.mjs

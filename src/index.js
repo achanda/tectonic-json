@@ -711,6 +711,26 @@ async function handleAssistRequest(request, env) {
       }
       return jsonResponse(fallback, 200);
     }
+    const clarificationFallback = buildDeterministicClarificationAssistFallback(
+      prompt,
+      schemaHints,
+      formState,
+      "ai_request_failed",
+    );
+    if (clarificationFallback) {
+      clarificationFallback.source = "deterministic_fallback";
+      const aiTiming = buildAiTimingFromOutcome(outcome);
+      if (aiTiming) {
+        clarificationFallback.ai_timing = aiTiming;
+      }
+      const aiOutput = normalizeAiOutput(
+        outcome && outcome.last_ai_output ? outcome.last_ai_output : null,
+      );
+      if (aiOutput) {
+        clarificationFallback.ai_output = aiOutput;
+      }
+      return jsonResponse(clarificationFallback, 200);
+    }
     logAssistFailureAiOutput("assist-error.ai_invalid_output", null, outcome);
     return jsonResponse(
       {
@@ -782,6 +802,53 @@ function buildDeterministicStructuredAssistFallback(
         reason === "ai_request_failed"
           ? "Generated the phased workload directly from the prompt because the AI request failed."
           : "Generated the phased workload directly from the prompt because the AI response was incomplete.",
+    },
+  ];
+  normalized.assumption_texts = normalized.assumptions.map(
+    (entry) => entry.text,
+  );
+  normalized.questions = normalized.clarifications.map((entry) => entry.text);
+  return normalized;
+}
+
+function buildDeterministicClarificationAssistFallback(
+  prompt,
+  schemaHints,
+  formState,
+  reason,
+) {
+  const normalized = normalizeAssistPayload(
+    {
+      summary: "Asked for clarification.",
+      patch: {
+        clear_operations: false,
+        operations: {},
+      },
+      clarifications: [],
+      assumptions: [],
+    },
+    schemaHints,
+    formState,
+    prompt,
+    {
+      allowDeterministicStructureFallback: false,
+    },
+  );
+  if (
+    !normalized ||
+    !Array.isArray(normalized.clarifications) ||
+    normalized.clarifications.length === 0
+  ) {
+    return null;
+  }
+  normalized.assumptions = [
+    ...normalized.assumptions,
+    {
+      id: "assume.deterministic_clarification_fallback",
+      text:
+        reason === "ai_request_failed"
+          ? "Asked for clarification directly because the AI request failed."
+          : "Asked for clarification directly because the AI response was incomplete.",
     },
   ];
   normalized.assumption_texts = normalized.assumptions.map(
@@ -1166,64 +1233,200 @@ function buildAssistantMessages(
   answers,
 ) {
   const systemMessage = [
-    "You are a form-patch generator for workload specs.",
-    "Return one JSON object only.",
-    "Never output code, markdown, prose, comments, or backticks.",
-    'First character must be "{" and last character must be "}".',
-    "Treat this as an update over current_generated_json/current_form_state.",
-    "Do not reset fields unless user explicitly asks.",
-    "Set clear_operations=true only for explicit replace/only requests.",
-    "Patch must be sparse: include only fields you want to change.",
-    "Outside compact field entries, never include null fields.",
-    "Never set enabled=false unless the user explicitly asks to disable/remove an operation.",
-    "When workload phase layout matters, set patch.sections to the full replacement structure.",
-    "Use the Tectonic structure model: different groups in the same section share valid keys but are not interleaved; operations in the same group are interleaved.",
-    "For clear multi-phase prompts such as preload/interleave/two-phase/three-phase, prefer patch.sections and keep patch.operations empty.",
-    "Compact form is allowed and preferred: patch.operations may be an array of operation entries with { name, fields }, and section.groups[].operations may also be arrays of named operation entries with { name, fields }.",
-    "In compact form, include only changed fields. Each field entry must use one of string_value, number_value, boolean_value, or json_value.",
-    "For phased prompts, do not ask for sections_count/groups_per_section if the phase layout is already clear from the request.",
-    "For selection updates, set selection directly using a Distribution object; selection_distribution and matching params are also valid fallback fields.",
-    "For key/value string expression updates, set key and val directly using scalar strings or StringExpr objects; fallback to key_pattern/val_pattern is also valid.",
-    "For op_count/k/l/selectivity support NumberExpr: either scalar numbers or Distribution objects when allowed by schema.",
-    "For operation-level character_set, set operation.character_set.",
-    "Clarifications must ask for plain-language values only. Never ask the user to type JSON, object literals, or schema syntax.",
-    "If user asks for a distribution but no selection-capable operation is active, ask which operations should use it.",
-    "Output contract (sparse):",
-    '{ "summary": "short sentence", "patch": { "character_set": "alphanumeric", "sections": [{ "groups": [{ "operations": [{ "name": "inserts", "fields": [{ "field": "op_count", "number_value": 1000000, "string_value": null, "boolean_value": null, "json_value": null }] }, { "name": "point_queries", "fields": [{ "field": "op_count", "number_value": 800000, "string_value": null, "boolean_value": null, "json_value": null }] }] }] }], "clear_operations": false, "operations": null }, "clarifications": [], "assumptions": [] }',
+    "Generate one workload patch JSON object only.",
+    "No markdown or extra prose.",
+    "Patch must be sparse and conservative.",
+    "Do not disable unrelated operations.",
+    "Use patch.operations for simple add/remove/edit prompts.",
+    "Use patch.sections only when phase layout matters.",
+    "Tectonic semantics: same section shares valid keys; same group is interleaved; different groups in one section are phased.",
+    "For phased prompts, prefer one section with multiple groups.",
+    "Do not ask for sections_count/groups_per_section when the phase layout is clear.",
+    "Compact form is preferred: patch.operations and section.groups[].operations may be arrays of { name, fields }.",
+    "In compact form include only changed fields. Each field entry uses one of string_value, number_value, boolean_value, or json_value.",
+    "Clarifications must ask for plain-language values only.",
     "clarifications[].binding.type must be one of: top_field, operation_field, operations_set.",
-    "For top_field binding include field from: character_set, sections_count, groups_per_section, skip_key_contains_check.",
-    "For operation_field binding include operation + field.",
+    "top_field.field must be one of: character_set, sections_count, groups_per_section, skip_key_contains_check.",
+    "operation_field must include operation and field.",
     "input must be one of: number, enum, multi_enum, boolean, text.",
-    "If clarification asks for distribution parameters (mean/std_dev/alpha/beta/lambda/scale/shape/min/max/n/s), bind it to operation_field + numeric input, not operations_set.",
-    "Allowed operation field names: enabled, character_set, op_count, key, val, selection, key_len, val_len, key_pattern, val_pattern, key_hot_len, key_hot_amount, key_hot_probability, val_hot_len, val_hot_amount, val_hot_probability, selection_distribution, selection_min, selection_max, selection_mean, selection_std_dev, selection_alpha, selection_beta, selection_n, selection_s, selection_lambda, selection_scale, selection_shape, selectivity, range_format, k, l.",
+    "Allowed operation fields: enabled, character_set, op_count, key, val, selection, key_len, val_len, key_pattern, val_pattern, key_hot_len, key_hot_amount, key_hot_probability, val_hot_len, val_hot_amount, val_hot_probability, selection_distribution, selection_min, selection_max, selection_mean, selection_std_dev, selection_alpha, selection_beta, selection_n, selection_s, selection_lambda, selection_scale, selection_shape, selectivity, range_format, k, l.",
     "Allowed key/val patterns: uniform, weighted, segmented, hot_range.",
-    "Rules:",
-    "- Ask only for missing information.",
-    "- Keep clarifications high-level and user-friendly.",
-    "- Use safe defaults when missing; list them in assumptions.",
-    "- Keep output compact. Do not emit untouched operations.",
-    "- Convert units/counts: 1KB=1024, 100K=100000, 1M=1000000.",
-    "- Use only operation names and enum values from schema_hints.",
-    "- If unsure, return a conservative patch and clarifications.",
+    "Use safe defaults when missing and list them in assumptions.",
+    "Convert 1KB=1024, 100K=100000, 1M=1000000.",
   ].join("\n");
 
   const userMessage = JSON.stringify(
-    {
-      request: prompt,
+    buildCompactAssistContext(
+      prompt,
+      schemaHints,
+      formState,
+      currentJson,
       conversation,
       answers,
-      current_form_state: formState,
-      current_generated_json: currentJson,
-      schema_hints: schemaHints,
-    },
-    null,
-    2,
+    ),
   );
 
   return [
     { role: "system", content: systemMessage },
     { role: "user", content: userMessage },
   ];
+}
+
+function buildCompactAssistContext(
+  prompt,
+  schemaHints,
+  formState,
+  currentJson,
+  conversation,
+  answers,
+) {
+  const payload = {
+    request: prompt,
+    current_form_state: compactAssistFormState(formState, schemaHints),
+    schema_hints: compactAssistSchemaHints(schemaHints),
+  };
+  const compactConversation = normalizeConversation(conversation);
+  if (compactConversation.length > 0) {
+    payload.conversation = compactConversation;
+  }
+  const compactAnswers = normalizeAssistantAnswers(answers);
+  if (Object.keys(compactAnswers).length > 0) {
+    payload.answers = compactAnswers;
+  }
+  const compactJson = compactAssistCurrentJson(currentJson);
+  if (compactJson !== null) {
+    payload.current_generated_json = compactJson;
+  }
+  return payload;
+}
+
+function compactAssistSchemaHints(schemaHints) {
+  const compactCapabilities = {};
+  (schemaHints.operation_order || []).forEach((operationName) => {
+    const capabilities =
+      schemaHints.capabilities && schemaHints.capabilities[operationName]
+        ? schemaHints.capabilities[operationName]
+        : {};
+    compactCapabilities[operationName] = Object.keys(capabilities).filter(
+      (key) => capabilities[key] === true,
+    );
+  });
+  return {
+    operation_order: schemaHints.operation_order || [],
+    character_sets: schemaHints.character_sets || [],
+    range_formats: schemaHints.range_formats || [],
+    selection_distributions: schemaHints.selection_distributions || [],
+    string_patterns: schemaHints.string_patterns || [],
+    capabilities: compactCapabilities,
+  };
+}
+
+function compactAssistFormState(formState, schemaHints) {
+  const input = formState && typeof formState === "object" ? formState : {};
+  const compact = {};
+  if (typeof input.character_set === "string" && input.character_set.trim()) {
+    compact.character_set = input.character_set;
+  }
+  if (Number.isFinite(input.sections_count)) {
+    compact.sections_count = input.sections_count;
+  }
+  if (Number.isFinite(input.groups_per_section)) {
+    compact.groups_per_section = input.groups_per_section;
+  }
+  if (input.skip_key_contains_check === true) {
+    compact.skip_key_contains_check = true;
+  }
+  const compactOperations = {};
+  (schemaHints.operation_order || []).forEach((operationName) => {
+    const operation =
+      input.operations && input.operations[operationName]
+        ? input.operations[operationName]
+        : null;
+    if (!operation || operation.enabled !== true) {
+      return;
+    }
+    const nextOperation = {
+      enabled: true,
+      ...stripNullFields(stripEnabledFromOperationPatch(operation)),
+    };
+    compactOperations[operationName] = nextOperation;
+  });
+  if (Object.keys(compactOperations).length > 0) {
+    compact.operations = compactOperations;
+  }
+  if (Array.isArray(input.sections) && input.sections.length > 0) {
+    const compactSections = compactAssistSections(input.sections);
+    if (compactSections.length > 0) {
+      compact.sections = compactSections;
+    }
+  }
+  return compact;
+}
+
+function compactAssistSections(sections) {
+  return sections
+    .map((section) => {
+      if (!section || !Array.isArray(section.groups)) {
+        return null;
+      }
+      const nextSection = {
+        groups: section.groups
+          .map((group) => compactAssistGroup(group))
+          .filter((group) => group && Object.keys(group).length > 0),
+      };
+      if (typeof section.character_set === "string" && section.character_set) {
+        nextSection.character_set = section.character_set;
+      }
+      if (section.skip_key_contains_check === true) {
+        nextSection.skip_key_contains_check = true;
+      }
+      return nextSection.groups.length > 0 ? nextSection : null;
+    })
+    .filter(Boolean);
+}
+
+function compactAssistGroup(group) {
+  if (!group || typeof group !== "object") {
+    return null;
+  }
+  const nextGroup = {};
+  Object.entries(group).forEach(([operationName, operationSpec]) => {
+    if (!operationSpec || typeof operationSpec !== "object") {
+      return;
+    }
+    nextGroup[operationName] = stripNullFields(operationSpec);
+  });
+  return nextGroup;
+}
+
+function compactAssistCurrentJson(currentJson) {
+  const normalized = normalizeCurrentJson(currentJson);
+  if (!normalized || typeof normalized !== "object") {
+    return null;
+  }
+  if (
+    Array.isArray(normalized.sections) &&
+    normalized.sections.length > 0 &&
+    Object.keys(normalized).length <= 3
+  ) {
+    return {
+      character_set: normalized.character_set || null,
+      sections: compactAssistSections(normalized.sections),
+    };
+  }
+  return null;
+}
+
+function stripNullFields(value) {
+  const input = value && typeof value === "object" ? value : {};
+  const next = {};
+  Object.entries(input).forEach(([key, fieldValue]) => {
+    if (fieldValue === null || fieldValue === undefined) {
+      return;
+    }
+    next[key] = sanitizeSerializableValue(fieldValue);
+  });
+  return next;
 }
 
 async function attemptJsonRepair(
@@ -1488,10 +1691,22 @@ function normalizeAssistPayload(
   const payload =
     rawPayload && typeof rawPayload === "object" ? rawPayload : {};
   const patch = normalizePatch(payload.patch, schemaHints);
+  const structuredPrompt = isStructuredWorkloadPrompt(prompt);
+  if (!structuredPrompt) {
+    collapseUnexpectedStructuredPatchToOperations(patch, schemaHints);
+    if (!patch.operations || typeof patch.operations !== "object") {
+      patch.operations = {};
+    }
+  }
   const structuredPatchApplied =
-    options.allowDeterministicStructureFallback === false
+    structuredPrompt && options.allowDeterministicStructureFallback === false
       ? false
-      : applyPromptStructuredWorkloadFallback(patch, prompt, schemaHints);
+      : structuredPrompt
+        ? applyPromptStructuredWorkloadFallback(patch, prompt, schemaHints)
+        : false;
+  if (structuredPrompt) {
+    reconcileStructuredPromptPatch(patch, prompt, schemaHints);
+  }
   if (!structuredPatchApplied) {
     applyPromptOperationIntentFallback(patch, formState, prompt, schemaHints);
     applyDeleteOperationDisambiguation(patch, formState, prompt, schemaHints);
@@ -1510,6 +1725,7 @@ function normalizeAssistPayload(
       schemaHints,
     );
   }
+  canonicalizePhasedSectionsLayout(patch, prompt, schemaHints);
   applyPromptRangeProfileFallback(patch, prompt);
   const clarificationContext = {
     patch,
@@ -1527,8 +1743,22 @@ function normalizeAssistPayload(
     prompt,
     schemaHints,
     patch,
+    formState,
   );
-  suppressOperationPatchWhenSelectionIsAmbiguous(patch, filteredClarifications);
+  const ambiguityClarification = buildAmbiguousOperationClarification(prompt);
+  const effectiveClarifications = ambiguityClarification
+    ? [ambiguityClarification]
+    : structuredPrompt && deriveStructuredSectionsFromPrompt(prompt, schemaHints)
+      ? []
+      : filteredClarifications;
+  if (ambiguityClarification) {
+    patch.clear_operations = false;
+    patch.operations = {};
+    patch.sections = null;
+    patch.sections_count = null;
+    patch.groups_per_section = null;
+  }
+  suppressOperationPatchWhenSelectionIsAmbiguous(patch, effectiveClarifications);
   const assumptions = normalizeAssumptionEntries(payload.assumptions);
   const summary =
     typeof payload.summary === "string" && payload.summary.trim()
@@ -1538,9 +1768,9 @@ function normalizeAssistPayload(
   return {
     summary,
     patch,
-    clarifications: filteredClarifications,
+    clarifications: effectiveClarifications,
     assumptions,
-    questions: filteredClarifications.map((entry) => entry.text),
+    questions: effectiveClarifications.map((entry) => entry.text),
     assumption_texts: assumptions.map((entry) => entry.text),
   };
 }
@@ -1628,6 +1858,276 @@ function normalizeSectionsValue(rawSections, schemaHints) {
     }
     return section;
   });
+}
+
+function isStructuredWorkloadPrompt(prompt) {
+  const text = typeof prompt === "string" ? prompt.trim() : "";
+  return !!text && STRUCTURED_WORKLOAD_PATTERN.test(text);
+}
+
+function buildAmbiguousOperationClarification(prompt) {
+  const lowerPrompt = String(prompt || "").toLowerCase();
+  if (!lowerPrompt) {
+    return null;
+  }
+  const mentionsSpecificQueryOperation =
+    /\bpoint\s+quer(?:y|ie|ies)\b|\brange\s+quer(?:y|ie|ies)\b|\bempty\s+point\s+quer(?:y|ie|ies)\b|\bpoint\s+reads?\b/.test(
+      lowerPrompt,
+    );
+  if (
+    /\bqueries\b|\bquery\b/.test(lowerPrompt) &&
+    !mentionsSpecificQueryOperation
+  ) {
+    return {
+      id: "clarify.operations.queries",
+      text: "Which queries should be added?",
+      required: true,
+      binding: { type: "operations_set" },
+      input: "multi_enum",
+      options: ["point_queries", "range_queries"],
+      default_behavior: "wait_for_user",
+    };
+  }
+  const mentionsSpecificDeleteOperation =
+    /\bpoint\s+deletes?\b|\brange\s+deletes?\b|\bempty\s+point\s+deletes?\b/.test(
+      lowerPrompt,
+    );
+  if (
+    /\bdeletes?\b/.test(lowerPrompt) &&
+    !mentionsSpecificDeleteOperation
+  ) {
+    return {
+      id: "clarify.operations.deletes",
+      text: "Which deletes should be added or removed?",
+      required: true,
+      binding: { type: "operations_set" },
+      input: "multi_enum",
+      options: ["point_deletes", "range_deletes", "empty_point_deletes"],
+      default_behavior: "wait_for_user",
+    };
+  }
+  return null;
+}
+
+function canonicalizePhasedSectionsLayout(patch, prompt, schemaHints) {
+  if (
+    !patch ||
+    typeof patch !== "object" ||
+    !Array.isArray(patch.sections) ||
+    patch.sections.length <= 1
+  ) {
+    return;
+  }
+  const text = typeof prompt === "string" ? prompt.trim() : "";
+  if (!text || !STRUCTURED_WORKLOAD_PATTERN.test(text)) {
+    return;
+  }
+  const normalizedSections = normalizeSectionsValue(patch.sections, schemaHints);
+  if (
+    normalizedSections.length <= 1 ||
+    normalizedSections.some(
+      (section) =>
+        !section ||
+        !Array.isArray(section.groups) ||
+        section.groups.length !== 1,
+    )
+  ) {
+    return;
+  }
+
+  const mergedSection = {
+    groups: normalizedSections.map((section) => cloneJsonValue(section.groups[0])),
+  };
+  const sharedCharacterSet = getSharedSectionCharacterSet(normalizedSections);
+  if (sharedCharacterSet) {
+    mergedSection.character_set = sharedCharacterSet;
+  }
+  if (
+    normalizedSections.some(
+      (section) => section && section.skip_key_contains_check === true,
+    )
+  ) {
+    mergedSection.skip_key_contains_check = true;
+  }
+
+  patch.sections = [mergedSection];
+  patch.sections_count = 1;
+  patch.groups_per_section = mergedSection.groups.length;
+}
+
+function getSharedSectionCharacterSet(sections) {
+  let shared = null;
+  for (const section of sections) {
+    const characterSet =
+      section && typeof section.character_set === "string"
+        ? section.character_set
+        : null;
+    if (!characterSet) {
+      continue;
+    }
+    if (shared === null) {
+      shared = characterSet;
+      continue;
+    }
+    if (shared !== characterSet) {
+      return null;
+    }
+  }
+  return shared;
+}
+
+function collapseUnexpectedStructuredPatchToOperations(patch, schemaHints) {
+  if (
+    !patch ||
+    typeof patch !== "object" ||
+    !Array.isArray(patch.sections) ||
+    patch.sections.length === 0
+  ) {
+    return false;
+  }
+  const normalizedSections = normalizeSectionsValue(patch.sections, schemaHints);
+  const aggregated = buildAggregateOperationsFromSections(
+    normalizedSections,
+    schemaHints,
+    patch.operations,
+  );
+  const nextOperations = {};
+  schemaHints.operation_order.forEach((operationName) => {
+    const operationPatch = aggregated[operationName];
+    if (!operationPatch || operationPatch.enabled !== true) {
+      return;
+    }
+    nextOperations[operationName] = operationPatch;
+  });
+  patch.operations = nextOperations;
+  patch.sections = null;
+  patch.sections_count = null;
+  patch.groups_per_section = null;
+  return true;
+}
+
+function reconcileStructuredPromptPatch(patch, prompt, schemaHints) {
+  if (!patch || typeof patch !== "object") {
+    return;
+  }
+  const expectedSections = deriveStructuredSectionsFromPrompt(prompt, schemaHints);
+  if (!expectedSections) {
+    return;
+  }
+  const normalizedExpected = normalizeSectionsValue(expectedSections, schemaHints);
+  if (
+    !Array.isArray(patch.sections) ||
+    patch.sections.length === 0 ||
+    !structuredSectionsSemanticallyMatch(
+      normalizeSectionsValue(patch.sections, schemaHints),
+      normalizedExpected,
+    )
+  ) {
+    patch.sections = normalizedExpected;
+    patch.sections_count = normalizedExpected.length;
+    patch.groups_per_section = maxGroupsPerSection(normalizedExpected);
+    patch.clear_operations = false;
+    patch.operations = {};
+  }
+}
+
+function structuredSectionsSemanticallyMatch(actualSections, expectedSections) {
+  const actualCanonical = canonicalizePhasedSectionsForComparison(actualSections);
+  const expectedCanonical =
+    canonicalizePhasedSectionsForComparison(expectedSections);
+  if (
+    actualCanonical.length !== expectedCanonical.length ||
+    actualCanonical.some(
+      (section, index) =>
+        !section ||
+        !expectedCanonical[index] ||
+        section.groups.length !== expectedCanonical[index].groups.length,
+    )
+  ) {
+    return false;
+  }
+  for (let sectionIndex = 0; sectionIndex < expectedCanonical.length; sectionIndex += 1) {
+    const actualGroups = actualCanonical[sectionIndex].groups;
+    const expectedGroups = expectedCanonical[sectionIndex].groups;
+    for (let groupIndex = 0; groupIndex < expectedGroups.length; groupIndex += 1) {
+      if (
+        !groupSemanticallyMatches(
+          actualGroups[groupIndex],
+          expectedGroups[groupIndex],
+        )
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function canonicalizePhasedSectionsForComparison(sections) {
+  if (!Array.isArray(sections)) {
+    return [];
+  }
+  if (
+    sections.length > 1 &&
+    sections.every(
+      (section) =>
+        section && Array.isArray(section.groups) && section.groups.length === 1,
+    )
+  ) {
+    return [
+      {
+        groups: sections.map((section) => cloneJsonValue(section.groups[0])),
+      },
+    ];
+  }
+  return sections;
+}
+
+function groupSemanticallyMatches(actualGroup, expectedGroup) {
+  const actual = actualGroup && typeof actualGroup === "object" ? actualGroup : {};
+  const expected =
+    expectedGroup && typeof expectedGroup === "object" ? expectedGroup : {};
+  const actualOperations = Object.keys(actual).sort();
+  const expectedOperations = Object.keys(expected).sort();
+  if (actualOperations.length !== expectedOperations.length) {
+    return false;
+  }
+  for (let index = 0; index < expectedOperations.length; index += 1) {
+    if (actualOperations[index] !== expectedOperations[index]) {
+      return false;
+    }
+  }
+  for (const operationName of expectedOperations) {
+    const actualSpec =
+      actual[operationName] && typeof actual[operationName] === "object"
+        ? actual[operationName]
+        : {};
+    const expectedSpec =
+      expected[operationName] && typeof expected[operationName] === "object"
+        ? expected[operationName]
+        : {};
+    if (
+      Number.isFinite(expectedSpec.op_count) &&
+      actualSpec.op_count !== expectedSpec.op_count
+    ) {
+      return false;
+    }
+    if (
+      expectedSpec.selectivity !== null &&
+      expectedSpec.selectivity !== undefined &&
+      actualSpec.selectivity !== expectedSpec.selectivity
+    ) {
+      return false;
+    }
+    if (
+      expectedSpec.range_format !== null &&
+      expectedSpec.range_format !== undefined &&
+      actualSpec.range_format !== expectedSpec.range_format
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function buildEnabledOperationGroup(operations, schemaHints) {
@@ -1869,6 +2369,7 @@ function suppressRedundantOperationClarifications(
   prompt,
   schemaHints,
   patch,
+  formState,
 ) {
   if (!Array.isArray(clarifications) || clarifications.length === 0) {
     return [];
@@ -1889,10 +2390,25 @@ function suppressRedundantOperationClarifications(
           section && Array.isArray(section.groups) && section.groups.length > 0,
       )) ||
     Number.isFinite(patch && patch.groups_per_section);
+  const promptRequestsStructure =
+    /\bphase\b|\binterleave\b|\bpreload\b|\bsection(?:s)?\b|\bgroup(?:s)?\b/.test(
+      lowerPrompt,
+    );
+  const hasKnownSectionsInState = Number.isFinite(
+    formState && formState.sections_count,
+  );
+  const hasKnownGroupsInState = Number.isFinite(
+    formState && formState.groups_per_section,
+  );
   if (
     !shouldSuppressOperationQuestion &&
     !hasResolvedSections &&
-    !hasResolvedGroups
+    !hasResolvedGroups &&
+    !(
+      !promptRequestsStructure &&
+      hasKnownSectionsInState &&
+      hasKnownGroupsInState
+    )
   ) {
     return clarifications;
   }
@@ -1907,14 +2423,16 @@ function suppressRedundantOperationClarifications(
       return false;
     }
     if (
-      hasResolvedSections &&
+      (hasResolvedSections ||
+        (!promptRequestsStructure && hasKnownSectionsInState)) &&
       entry.binding.type === "top_field" &&
       entry.binding.field === "sections_count"
     ) {
       return false;
     }
     if (
-      hasResolvedGroups &&
+      (hasResolvedGroups ||
+        (!promptRequestsStructure && hasKnownGroupsInState)) &&
       entry.binding.type === "top_field" &&
       entry.binding.field === "groups_per_section"
     ) {
@@ -2521,6 +3039,9 @@ function deriveStructuredGroupFromClause(clause, schemaHints) {
       if (rangeProfile) {
         spec.selectivity = RANGE_QUERY_SELECTIVITY_PROFILES[rangeProfile];
         spec.range_format = "StartCount";
+      } else {
+        spec.selectivity = 0.01;
+        spec.range_format = "StartCount";
       }
     }
     group[operationName] = spec;
@@ -2894,13 +3415,19 @@ function distributionNameFromValue(value) {
 
 function normalizePatch(rawPatch, schemaHints) {
   const patch = rawPatch && typeof rawPatch === "object" ? rawPatch : {};
+  const normalizedSections = Object.prototype.hasOwnProperty.call(
+    patch,
+    "sections",
+  )
+    ? patch.sections === null
+      ? null
+      : normalizeSectionsValue(patch.sections, schemaHints)
+    : undefined;
   const normalized = {
     character_set: normalizeCharacterSetValue(patch.character_set, schemaHints),
     sections_count: positiveIntegerOrNull(patch.sections_count),
     groups_per_section: positiveIntegerOrNull(patch.groups_per_section),
-    sections: Object.prototype.hasOwnProperty.call(patch, "sections")
-      ? normalizeSectionsValue(patch.sections, schemaHints)
-      : undefined,
+    sections: normalizedSections,
     skip_key_contains_check: Object.prototype.hasOwnProperty.call(
       patch,
       "skip_key_contains_check",
@@ -3357,6 +3884,8 @@ function buildEffectiveState(patch, formState, schemaHints) {
         : !!formState.skip_key_contains_check,
     operations: {},
   };
+  const patchHasStructuredSections =
+    Array.isArray(patch.sections) && patch.sections.length > 0;
 
   const clear = patch.clear_operations === true;
   schemaHints.operation_order.forEach((op) => {
@@ -3412,13 +3941,11 @@ function buildEffectiveState(patch, formState, schemaHints) {
     };
   });
 
-  const normalizedSections =
-    Array.isArray(patch.sections) && patch.sections.length > 0
-      ? normalizeSectionsValue(patch.sections, schemaHints)
-      : Array.isArray(formState.sections) && formState.sections.length > 0
-        ? normalizeSectionsValue(formState.sections, schemaHints)
-        : synthesizeSectionsFromFlatState(effective, schemaHints);
-  effective.sections = normalizedSections;
+  let normalizedSections = patchHasStructuredSections
+    ? normalizeSectionsValue(patch.sections, schemaHints)
+    : Array.isArray(formState.sections) && formState.sections.length > 0
+      ? normalizeSectionsValue(formState.sections, schemaHints)
+      : synthesizeSectionsFromFlatState(effective, schemaHints);
   effective.sections_count =
     normalizedSections.length > 0
       ? normalizedSections.length
@@ -3433,10 +3960,65 @@ function buildEffectiveState(patch, formState, schemaHints) {
   effective.operations = buildAggregateOperationsFromSections(
     normalizedSections,
     schemaHints,
-    Array.isArray(patch.sections) ? null : effective.operations,
+    patchHasStructuredSections ? null : effective.operations,
   );
+  if (
+    !patchHasStructuredSections &&
+    sectionsNeedSynthesisFromFlatOperations(
+      normalizedSections,
+      effective.operations,
+      schemaHints,
+    )
+  ) {
+    normalizedSections = synthesizeSectionsFromFlatState(effective, schemaHints);
+    effective.sections_count =
+      normalizedSections.length > 0
+        ? normalizedSections.length
+        : effective.sections_count;
+    effective.groups_per_section =
+      maxGroupsPerSection(normalizedSections) ?? effective.groups_per_section;
+    effective.skip_key_contains_check =
+      effective.skip_key_contains_check ||
+      normalizedSections.some(
+        (section) => section.skip_key_contains_check === true,
+      );
+    effective.operations = buildAggregateOperationsFromSections(
+      normalizedSections,
+      schemaHints,
+      effective.operations,
+    );
+  }
+  effective.sections = normalizedSections;
 
   return effective;
+}
+
+function sectionsNeedSynthesisFromFlatOperations(
+  sections,
+  operations,
+  schemaHints,
+) {
+  if (!Array.isArray(sections) || sections.length === 0) {
+    return true;
+  }
+  const sectionOperations = buildAggregateOperationsFromSections(
+    sections,
+    schemaHints,
+    null,
+  );
+  return schemaHints.operation_order.some((operationName) => {
+    const flatState =
+      operations && operations[operationName] ? operations[operationName] : null;
+    const sectionState =
+      sectionOperations && sectionOperations[operationName]
+        ? sectionOperations[operationName]
+        : null;
+    return !!(
+      flatState &&
+      flatState.enabled === true &&
+      (!sectionState || sectionState.enabled !== true)
+    );
+  });
 }
 
 function getEnabledOperationNames(state, schemaHints) {
@@ -4674,8 +5256,8 @@ function isAssistPayloadShape(value) {
   }
   if (
     value.patch.operations !== undefined &&
-    (!value.patch.operations ||
-      typeof value.patch.operations !== "object")
+    value.patch.operations !== null &&
+    (!value.patch.operations || typeof value.patch.operations !== "object")
   ) {
     return false;
   }
@@ -5028,8 +5610,7 @@ function buildAssistResponseFormat(aiConfig) {
   if (aiConfig && aiConfig.responseFormatMode === "json_schema") {
     if (isCloudflareAssistProvider(aiConfig.provider)) {
       return {
-        type: "json_schema",
-        json_schema: ASSIST_RESPONSE_JSON_SCHEMA,
+        type: "json_object",
       };
     }
     return null;

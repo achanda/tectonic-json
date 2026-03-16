@@ -99,10 +99,21 @@ Expected shape:
 The dedicated regression coverage for these demo prompt families lives in:
 - `test/assist-natural-language-demo.test.mjs`
 
-Run only that suite with:
+Additional natural-language regression coverage lives in:
+- `test/assist-natural-language-extended.test.mjs`
+- `test/assist-provider-coverage.test.mjs`
+
+Those additional suites cover:
+- ambiguity handling, where the app should clarify instead of guessing
+- synonym and filler-phrase variants such as `seed the database`, `load the database`, `Please ...`, and `Can you ...`
+- operation synonyms such as `point reads`, `read-modify-write`, and `rmw`
+- multi-turn regressions where later prompts refine or remove earlier workload choices
+- provider-path coverage for both Cloudflare and OpenAI assist modes
+
+Run the demo-oriented NL coverage with:
 
 ```bash
-node --test test/assist-natural-language-demo.test.mjs
+make test-demo
 ```
 
 ## LLM env vars
