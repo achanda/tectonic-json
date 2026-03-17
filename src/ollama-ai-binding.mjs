@@ -4,8 +4,8 @@ import {
 } from "./ollama-assist-provider.mjs";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:11434";
-const DEFAULT_TIMEOUT_MS = 25000;
-const DEFAULT_ENDPOINT_PATH = "/api/generate";
+const DEFAULT_TIMEOUT_MS = 65000;
+const DEFAULT_ENDPOINT_PATH = "/api/chat";
 
 export function createOllamaAiBindingFromEnv(envLike = process.env) {
   const env = envLike && typeof envLike === "object" ? envLike : {};

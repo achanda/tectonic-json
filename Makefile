@@ -29,9 +29,8 @@ dev: check-ai-env
 test:
 	$(NPM) test
 
-test-demo: check-demo-ai-env
-	AI_PROVIDER=openai node --test test/assist-natural-language-demo.test.mjs test/assist-natural-language-extended.test.mjs test/assist-provider-coverage.test.mjs
-	AI_PROVIDER=cloudflare node --test test/assist-natural-language-demo.test.mjs test/assist-natural-language-extended.test.mjs test/assist-provider-coverage.test.mjs
+test-demo:
+	AI_PROVIDER=ollama OLLAMA_MODEL=llama3 node --test test/assist-natural-language-demo.test.mjs test/assist-natural-language-extended.test.mjs test/assist-provider-coverage.test.mjs
 
 test-demo-ollama:
 	AI_PROVIDER=ollama node --test test/assist-natural-language-demo.test.mjs test/assist-natural-language-extended.test.mjs test/assist-provider-coverage.test.mjs

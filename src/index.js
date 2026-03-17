@@ -17,7 +17,7 @@ import {
 const DEFAULT_MAX_TOKENS = 700;
 const DEFAULT_RETRY_ATTEMPTS = 2;
 const DEFAULT_AI_TIMEOUT_MS = 15000;
-const DEFAULT_OLLAMA_MAX_TOKENS = 400;
+const DEFAULT_OLLAMA_MAX_TOKENS = 220;
 const DEFAULT_OLLAMA_RETRY_ATTEMPTS = 1;
 const DEFAULT_OLLAMA_AI_TIMEOUT_MS = 60000;
 
@@ -961,6 +961,7 @@ async function runAssistantOnce(
     currentJson,
     conversation,
     answers,
+    aiConfig,
   );
   const selectedModel =
     typeof modelName === "string" && modelName.trim()
@@ -1093,11 +1094,17 @@ function buildAssistantMessages(
   currentJson,
   conversation,
   answers,
+  aiConfig,
 ) {
-  const systemMessage = [
+  const systemLines = [
     "Generate one workload patch JSON object only.",
     "No markdown or extra prose.",
     "Patch must be sparse and conservative.",
+    "This is a workload specification, not sample data.",
+    "Do not generate example rows, record lists, query ids, or key/value samples.",
+    "Interpret read-modify-write and rmw as merges.",
+    "Interpret point reads as point_queries.",
+    "Never add operations that are not explicitly requested or already enabled in current_form_state.",
     "Do not disable unrelated operations.",
     "Use patch.operations for simple add/remove/edit prompts.",
     "Use patch.sections only when phase layout matters.",
@@ -1105,6 +1112,8 @@ function buildAssistantMessages(
     "For phased prompts, prefer one section with multiple groups.",
     "Do not ask for sections_count/groups_per_section when the phase layout is clear.",
     "Compact form is preferred: patch.operations and section.groups[].operations may be arrays of { name, fields }.",
+    "Operation names must be exactly one of: inserts, updates, merges, point_queries, range_queries, point_deletes, range_deletes, empty_point_queries, empty_point_deletes, sorted.",
+    "Field entries must use key field, not name.",
     "In compact form include only changed fields. Each field entry uses one of string_value, number_value, boolean_value, or json_value.",
     "Clarifications must ask for plain-language values only.",
     "clarifications[].binding.type must be one of: top_field, operation_field, operations_set.",
@@ -1115,7 +1124,16 @@ function buildAssistantMessages(
     "Allowed key/val patterns: uniform, weighted, segmented, hot_range.",
     "Use safe defaults when missing and list them in assumptions.",
     "Convert 1KB=1024, 100K=100000, 1M=1000000.",
-  ].join("\n");
+  ];
+  if (isOllamaAssistProvider(aiConfig && aiConfig.provider)) {
+    systemLines.push(
+      "For local models, prefer the smallest valid JSON response.",
+      'A minimal valid response is: {"summary":"Updated the workload.","patch":{"operations":[]},"clarifications":[],"assumptions":[]}.',
+      "Do not invent placeholder field1/field2 names or sample datasets.",
+      "If the prompt is clear, omit uncertain fields instead of guessing.",
+    );
+  }
+  const systemMessage = systemLines.join("\n");
 
   const userMessage = JSON.stringify(
     buildCompactAssistContext(
@@ -1142,11 +1160,15 @@ function buildCompactAssistContext(
   conversation,
   answers,
 ) {
+  const interpretedRequest = canonicalizeAssistRequest(prompt);
   const payload = {
     request: prompt,
     current_form_state: compactAssistFormState(formState, schemaHints),
     schema_hints: compactAssistSchemaHints(schemaHints),
   };
+  if (interpretedRequest !== prompt) {
+    payload.interpreted_request = interpretedRequest;
+  }
   const compactConversation = normalizeConversation(conversation);
   if (compactConversation.length > 0) {
     payload.conversation = compactConversation;
@@ -1160,6 +1182,17 @@ function buildCompactAssistContext(
     payload.current_generated_json = compactJson;
   }
   return payload;
+}
+
+function canonicalizeAssistRequest(prompt) {
+  const input = typeof prompt === "string" ? prompt : "";
+  if (!input) {
+    return "";
+  }
+  return input
+    .replace(/\bread[- ]?modify[- ]?write\b/gi, "merges")
+    .replace(/\brmw\b/gi, "merges")
+    .replace(/\bpoint reads\b/gi, "point queries");
 }
 
 function compactAssistSchemaHints(schemaHints) {
@@ -1311,7 +1344,9 @@ async function attemptJsonRepair(
       ? maxTokensHint
       : aiConfig.maxTokens;
   const repairMaxTokens = clamp(Math.floor(baseTokens * 1.1), 180, 900);
-  const repairTimeout = Math.max(3000, Math.min(aiConfig.timeoutMs, 12000));
+  const repairTimeout = isOllamaAssistProvider(aiConfig.provider)
+    ? Math.max(5000, Math.min(aiConfig.timeoutMs, 30000))
+    : Math.max(3000, Math.min(aiConfig.timeoutMs, 12000));
   const selectedModel =
     typeof modelName === "string" && modelName.trim()
       ? modelName.trim()
@@ -5099,10 +5134,92 @@ function parseJsonFromText(text) {
   const lastBrace = text.lastIndexOf("}");
   if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
     const slice = text.slice(firstBrace, lastBrace + 1);
-    return safeJsonParse(slice);
+    const sliced = safeJsonParse(slice);
+    if (sliced) {
+      return sliced;
+    }
+  }
+
+  const recovered = recoverTruncatedJsonObject(text);
+  if (recovered) {
+    return recovered;
   }
 
   return null;
+}
+
+function recoverTruncatedJsonObject(text) {
+  if (typeof text !== "string" || !text.trim()) {
+    return null;
+  }
+  const firstBrace = text.indexOf("{");
+  if (firstBrace === -1) {
+    return null;
+  }
+  const candidate = text.slice(firstBrace);
+  let inString = false;
+  let escaping = false;
+  const stack = [];
+  let lastRecoverableIndex = -1;
+  let lastRecoverableStack = null;
+
+  for (let index = 0; index < candidate.length; index += 1) {
+    const ch = candidate[index];
+    if (inString) {
+      if (escaping) {
+        escaping = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaping = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      stack.push("{");
+      continue;
+    }
+    if (ch === "[") {
+      stack.push("[");
+      continue;
+    }
+    if (ch === "}" || ch === "]") {
+      const opener = stack[stack.length - 1];
+      if (
+        (ch === "}" && opener === "{") ||
+        (ch === "]" && opener === "[")
+      ) {
+        stack.pop();
+        lastRecoverableIndex = index;
+        lastRecoverableStack = [...stack];
+        if (stack.length === 0) {
+          const complete = safeJsonParse(candidate.slice(0, index + 1));
+          if (complete) {
+            return complete;
+          }
+        }
+      }
+    }
+  }
+
+  if (lastRecoverableIndex === -1 || !Array.isArray(lastRecoverableStack)) {
+    return null;
+  }
+  const prefix = candidate.slice(0, lastRecoverableIndex + 1).replace(/,\s*$/, "");
+  const closing = lastRecoverableStack
+    .slice()
+    .reverse()
+    .map((entry) => (entry === "{" ? "}" : "]"))
+    .join("");
+  return safeJsonParse(prefix + closing);
 }
 
 function isAssistPayloadShape(value) {
