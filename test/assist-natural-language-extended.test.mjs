@@ -178,6 +178,98 @@ test(
 );
 
 test(
+  "multi-turn regression: insert-only then add point reads",
+  { skip: !LIVE_PROVIDER.binding, timeout: 180000 },
+  async () => {
+    let state = createFormState({});
+
+    const first = await requestAssist(
+      "Generate an insert-only workload with 250k inserts",
+      state,
+    );
+    state = applyPatchToState(state, first.patch);
+
+    const second = await requestAssist("Add 5k point reads", state);
+    state = applyPatchToState(state, second.patch);
+
+    assert.equal(state.sections_count, 1);
+    assert.equal(state.groups_per_section, 1);
+    assert.deepEqual(
+      configuredOperations(state.sections[0].groups[0]),
+      ["inserts", "point_queries"],
+    );
+    assert.equal(state.operations.inserts.op_count, 250000);
+    assert.equal(state.operations.point_queries.op_count, 5000);
+  },
+);
+
+test(
+  "multi-turn regression: insert-only then interleave point queries with inserts",
+  { skip: !LIVE_PROVIDER.binding, timeout: 180000 },
+  async () => {
+    let state = createFormState({});
+
+    const first = await requestAssist(
+      "Generate a insert-only workload with 250k inserts",
+      state,
+    );
+    state = applyPatchToState(state, first.patch);
+
+    const second = await requestAssist(
+      "interleave 5k point queries with the inserts",
+      state,
+    );
+    state = applyPatchToState(state, second.patch);
+
+    assert.equal(state.sections_count, 1);
+    assert.equal(state.groups_per_section, 1);
+    assert.deepEqual(
+      configuredOperations(state.sections[0].groups[0]),
+      ["inserts", "point_queries"],
+    );
+    assert.equal(state.operations.inserts.enabled, true);
+    assert.equal(state.operations.inserts.op_count, 250000);
+    assert.equal(state.operations.point_queries.enabled, true);
+    assert.equal(state.operations.point_queries.op_count, 5000);
+    assert.equal(second.patch.sections, null);
+    assert.equal(second.patch.operations.point_queries.op_count, 5000);
+  },
+);
+
+test(
+  "multi-turn regression: insert-only then add a later phase",
+  { skip: !LIVE_PROVIDER.binding, timeout: 180000 },
+  async () => {
+    let state = createFormState({});
+
+    const first = await requestAssist(
+      "Generate an insert-only workload with 250k inserts",
+      state,
+    );
+    state = applyPatchToState(state, first.patch);
+
+    const second = await requestAssist(
+      "then add a second phase with 5k point queries",
+      state,
+    );
+    state = applyPatchToState(state, second.patch);
+
+    assert.equal(state.sections_count, 1);
+    assert.equal(state.groups_per_section, 2);
+    assert.deepEqual(
+      configuredOperations(state.sections[0].groups[0]),
+      ["inserts"],
+    );
+    assert.deepEqual(
+      configuredOperations(state.sections[0].groups[1]),
+      ["point_queries"],
+    );
+    assert.equal(state.sections[0].groups[0].inserts.op_count, 250000);
+    assert.equal(state.sections[0].groups[1].point_queries.op_count, 5000);
+  },
+);
+
+test(
   "multi-turn regression: add range deletes, edit distribution, then remove",
   { skip: !LIVE_PROVIDER.binding, timeout: 180000 },
   async () => {

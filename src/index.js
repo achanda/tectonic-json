@@ -151,7 +151,7 @@ const STRING_PATTERN_DEFAULTS = {
   val_hot_probability: 0.8,
 };
 const STRUCTURED_WORKLOAD_PATTERN =
-  /\b(?:single[- ]shot|one[- ]phase|two[- ]phase|three[- ]phase|preload|interleave|interleaved|phase\s+[123]|write[- ]heavy|write[- ]only)\b/i;
+  /\b(?:single[- ]shot|one[- ]phase|two[- ]phase|three[- ]phase|preload|interleave|interleaved|phase\s+[123]|(?:first|second|third|next|later)\s+phase|write[- ]heavy|write[- ]only)\b/i;
 const RANGE_QUERY_SELECTIVITY_PROFILES = {
   short: 0.001,
   long: 0.1,
@@ -1589,6 +1589,13 @@ function normalizeAssistPayload(
     rawPayload && typeof rawPayload === "object" ? rawPayload : {};
   const patch = normalizePatch(payload.patch, schemaHints);
   const structuredPrompt = isStructuredWorkloadPrompt(prompt);
+  const structuredLayoutEditRequested =
+    structuredPrompt &&
+    !promptDefinesFreshStructuredWorkload(prompt, formState, schemaHints) &&
+    promptRequestsStructuredLayoutEdit(prompt);
+  const structuredPromptOwnsLayout =
+    structuredPrompt &&
+    promptDefinesFreshStructuredWorkload(prompt, formState, schemaHints);
   if (!structuredPrompt) {
     collapseUnexpectedStructuredPatchToOperations(patch, schemaHints);
     if (!patch.operations || typeof patch.operations !== "object") {
@@ -1596,15 +1603,26 @@ function normalizeAssistPayload(
     }
   }
   const structuredPatchApplied =
-    structuredPrompt && options.allowDeterministicStructureFallback === false
+    structuredPromptOwnsLayout &&
+    options.allowDeterministicStructureFallback === false
       ? false
-      : structuredPrompt
+      : structuredPromptOwnsLayout
         ? applyPromptStructuredWorkloadFallback(patch, prompt, schemaHints)
         : false;
-  if (structuredPrompt) {
+  const structuredLayoutEditApplied = structuredLayoutEditRequested
+    ? applyPromptStructuredLayoutEditFallback(
+        patch,
+        formState,
+        prompt,
+        schemaHints,
+      )
+    : false;
+  if (structuredPromptOwnsLayout) {
     reconcileStructuredPromptPatch(patch, prompt, schemaHints);
+  } else if (!structuredLayoutEditApplied && structuredPrompt) {
+    applyPromptStructuredOperationMergeFallback(patch, prompt, schemaHints);
   }
-  if (!structuredPatchApplied) {
+  if (!structuredPatchApplied && !structuredLayoutEditApplied) {
     applyPromptOperationIntentFallback(patch, formState, prompt, schemaHints);
     applyDeleteOperationDisambiguation(patch, formState, prompt, schemaHints);
     applyPromptOperationFieldFallback(patch, formState, prompt, schemaHints);
@@ -1645,7 +1663,8 @@ function normalizeAssistPayload(
   const ambiguityClarification = buildAmbiguousOperationClarification(prompt);
   const effectiveClarifications = ambiguityClarification
     ? [ambiguityClarification]
-    : structuredPrompt && deriveStructuredSectionsFromPrompt(prompt, schemaHints)
+    : (structuredPromptOwnsLayout || structuredLayoutEditApplied) &&
+        deriveStructuredSectionsFromPrompt(prompt, schemaHints)
       ? []
       : filteredClarifications;
   if (ambiguityClarification) {
@@ -1760,6 +1779,27 @@ function normalizeSectionsValue(rawSections, schemaHints) {
 function isStructuredWorkloadPrompt(prompt) {
   const text = typeof prompt === "string" ? prompt.trim() : "";
   return !!text && STRUCTURED_WORKLOAD_PATTERN.test(text);
+}
+
+function promptDefinesFreshStructuredWorkload(prompt, formState, schemaHints) {
+  const hasExistingOperations =
+    getEnabledOperationNames(formState || { operations: {} }, schemaHints)
+      .length > 0;
+  return !hasExistingOperations;
+}
+
+function promptRequestsStructuredLayoutEdit(prompt) {
+  const lowerPrompt = String(prompt || "").toLowerCase();
+  if (!lowerPrompt) {
+    return false;
+  }
+  return (
+    /\b(?:then|next|after(?: that|wards)?|later|finally)\b/.test(lowerPrompt) ||
+    /\b(?:add|append|make|turn|convert|split)\b[\s\S]{0,36}\bphase\b/.test(
+      lowerPrompt,
+    ) ||
+    /\b(?:second|third|later|next)\s+phase\b/.test(lowerPrompt)
+  );
 }
 
 function buildAmbiguousOperationClarification(prompt) {
@@ -2208,6 +2248,153 @@ function applyPromptStructuredWorkloadFallback(patch, prompt, schemaHints) {
   patch.groups_per_section = maxGroupsPerSection(patch.sections);
   patch.clear_operations = false;
   patch.operations = {};
+  return true;
+}
+
+function applyPromptStructuredOperationMergeFallback(
+  patch,
+  prompt,
+  schemaHints,
+) {
+  if (!patch || typeof patch !== "object") {
+    return false;
+  }
+  const sections = deriveStructuredSectionsFromPrompt(prompt, schemaHints);
+  if (!sections) {
+    return false;
+  }
+  const normalizedSections = normalizeSectionsValue(sections, schemaHints);
+  const derivedOperations = buildAggregateOperationsFromSections(
+    normalizedSections,
+    schemaHints,
+    null,
+  );
+  const existingOperations =
+    patch.operations && typeof patch.operations === "object"
+      ? patch.operations
+      : {};
+  const nextOperations = {};
+  schemaHints.operation_order.forEach((operationName) => {
+    const derivedPatch = derivedOperations[operationName];
+    if (!derivedPatch || derivedPatch.enabled !== true) {
+      return;
+    }
+    const currentPatch =
+      existingOperations[operationName] &&
+      typeof existingOperations[operationName] === "object"
+        ? existingOperations[operationName]
+        : {};
+    nextOperations[operationName] = {
+      ...currentPatch,
+      ...derivedPatch,
+      enabled: true,
+      op_count: derivedPatch.op_count ?? currentPatch.op_count ?? null,
+      selectivity:
+        derivedPatch.selectivity ?? currentPatch.selectivity ?? null,
+      range_format:
+        derivedPatch.range_format ?? currentPatch.range_format ?? null,
+    };
+  });
+  patch.operations = nextOperations;
+  patch.sections = null;
+  patch.sections_count = null;
+  patch.groups_per_section = null;
+  patch.clear_operations = false;
+  return true;
+}
+
+function canonicalizeSectionsForStructuredEdit(rawSections, schemaHints) {
+  const normalized = normalizeSectionsValue(rawSections, schemaHints);
+  if (
+    normalized.length > 1 &&
+    normalized.every(
+      (section) =>
+        section && Array.isArray(section.groups) && section.groups.length === 1,
+    )
+  ) {
+    return [
+      {
+        groups: normalized.map((section) => cloneJsonValue(section.groups[0])),
+      },
+    ];
+  }
+  return normalized;
+}
+
+function applyPromptStructuredLayoutEditFallback(
+  patch,
+  formState,
+  prompt,
+  schemaHints,
+) {
+  if (!patch || typeof patch !== "object") {
+    return false;
+  }
+  const derivedSections = deriveStructuredSectionsFromPrompt(prompt, schemaHints);
+  if (!derivedSections) {
+    return false;
+  }
+  const currentSections = canonicalizeSectionsForStructuredEdit(
+    formState && Array.isArray(formState.sections) ? formState.sections : [],
+    schemaHints,
+  );
+  const nextSections = canonicalizeSectionsForStructuredEdit(
+    derivedSections,
+    schemaHints,
+  );
+  if (
+    currentSections.length === 0 ||
+    nextSections.length === 0 ||
+    !Array.isArray(currentSections[0].groups) ||
+    !Array.isArray(nextSections[0].groups)
+  ) {
+    return false;
+  }
+
+  const currentGroups = currentSections[0].groups.map((group) =>
+    cloneJsonValue(group),
+  );
+  const derivedGroups = nextSections[0].groups.map((group) =>
+    cloneJsonValue(group),
+  );
+
+  let prefixLength = 0;
+  while (
+    prefixLength < currentGroups.length &&
+    prefixLength < derivedGroups.length &&
+    groupSemanticallyMatches(
+      currentGroups[prefixLength],
+      derivedGroups[prefixLength],
+    )
+  ) {
+    prefixLength += 1;
+  }
+
+  const groupsToAppend = derivedGroups.slice(prefixLength);
+  if (groupsToAppend.length === 0) {
+    return false;
+  }
+
+  const mergedSection = {
+    groups: [...currentGroups, ...groupsToAppend],
+  };
+  const characterSet =
+    currentSections[0].character_set || nextSections[0].character_set || null;
+  if (characterSet) {
+    mergedSection.character_set = characterSet;
+  }
+  if (
+    currentSections[0].skip_key_contains_check === true ||
+    nextSections[0].skip_key_contains_check === true
+  ) {
+    mergedSection.skip_key_contains_check = true;
+  }
+
+  patch.sections = [mergedSection];
+  patch.sections_count = 1;
+  patch.groups_per_section = mergedSection.groups.length;
+  patch.operations = {};
+  patch.clear_operations = false;
   return true;
 }
 
@@ -2776,7 +2963,18 @@ function deriveStructuredSectionsFromPrompt(prompt, schemaHints) {
     return null;
   }
   if (groups.length === 1 && declaredPhaseCount === null) {
-    return null;
+    const singleGroup = groups[0] && typeof groups[0] === "object" ? groups[0] : {};
+    const operationNames = Object.keys(singleGroup);
+    const isExplicitSingleGroupInterleave =
+      /\binterleave(?:d)?\b/.test(lowerPrompt) && operationNames.length > 1;
+    const isExplicitSingleGroupPhaseLayout =
+      operationNames.length > 0 &&
+      /\b(?:phase|then|next|after(?: that|wards)?|later|finally)\b/.test(
+        lowerPrompt,
+      );
+    if (!isExplicitSingleGroupInterleave && !isExplicitSingleGroupPhaseLayout) {
+      return null;
+    }
   }
 
   return [{ groups }];
@@ -2785,6 +2983,14 @@ function deriveStructuredSectionsFromPrompt(prompt, schemaHints) {
 function splitPromptIntoPhaseClauses(prompt) {
   const normalized = String(prompt || "")
     .replace(/\bphase\s+(?:1|2|3|one|two|three)\b\s*:?\s*/gi, " || ")
+    .replace(
+      /(?:\r?\n)+\s*(?=(?:preload|interleave|interleaved|phase\s+(?:1|2|3|one|two|three)|write[- ]heavy|write[- ]only)\b)/gi,
+      " || ",
+    )
+    .replace(
+      /[.!?]\s*(?=(?:preload|interleave|interleaved|phase\s+(?:1|2|3|one|two|three)|write[- ]heavy|write[- ]only)\b)/gi,
+      " || ",
+    )
     .replace(
       /\b(?:then|followed by|after that|afterwards|next|finally)\b/gi,
       " || ",
@@ -3840,6 +4046,8 @@ function buildEffectiveState(patch, formState, schemaHints) {
 
   let normalizedSections = patchHasStructuredSections
     ? normalizeSectionsValue(patch.sections, schemaHints)
+    : clear
+      ? synthesizeSectionsFromFlatState(effective, schemaHints)
     : Array.isArray(formState.sections) && formState.sections.length > 0
       ? normalizeSectionsValue(formState.sections, schemaHints)
       : synthesizeSectionsFromFlatState(effective, schemaHints);
