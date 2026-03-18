@@ -1132,6 +1132,45 @@
         flex-wrap: wrap;
       }
 
+      .panel-header-preview {
+        align-items: stretch;
+      }
+
+      .preview-header-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .preview-header-copy {
+        display: grid;
+        gap: 4px;
+      }
+
+      .preview-header-caption {
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.45;
+        color: #647989;
+      }
+
+      .preview-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .preview-toolbar-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
       .preview-stack {
         display: flex;
         flex-direction: column;
@@ -1955,26 +1994,38 @@
             hidden
             style="flex-shrink: 0"
           >
-            <div class="panel-header">
-              <span class="panel-title">Workload Overview</span>
-              <div class="json-actions">
-                <div class="validation-result" id="validationResult"></div>
-                <div class="run-db-picker">
-                  <label for="benchmarkDatabaseSelect">DB</label>
-                  <select id="benchmarkDatabaseSelect" class="run-db-select">
-                    <option value="rocksdb">rocksdb</option>
-                  </select>
+            <div class="panel-header panel-header-preview">
+              <div class="preview-header-top">
+                <div class="preview-header-copy">
+                  <span class="panel-title">Workload Overview</span>
+                  <p class="preview-header-caption">
+                    Review the summary first, then open the spec JSON only when
+                    you need the raw details.
+                  </p>
                 </div>
-                <button class="btn btn-ghost" id="runWorkloadBtn">
-                  Run Workload
-                </button>
-                <button class="btn btn-ghost" id="toggleJsonPreviewBtn">
-                  Show Spec JSON
-                </button>
-                <button class="btn btn-ghost" id="downloadJsonBtn">
-                  Download Spec JSON
-                </button>
-                <button class="btn btn-ghost" id="copyBtn">Copy</button>
+                <div class="validation-result" id="validationResult"></div>
+              </div>
+              <div class="preview-toolbar">
+                <div class="preview-toolbar-group">
+                  <div class="run-db-picker">
+                    <label for="benchmarkDatabaseSelect">DB</label>
+                    <select id="benchmarkDatabaseSelect" class="run-db-select">
+                      <option value="rocksdb">rocksdb</option>
+                    </select>
+                  </div>
+                  <button class="btn btn-ghost" id="runWorkloadBtn">
+                    Run Workload
+                  </button>
+                </div>
+                <div class="preview-toolbar-group">
+                  <button class="btn btn-ghost" id="toggleJsonPreviewBtn">
+                    Show Spec JSON
+                  </button>
+                  <button class="btn btn-ghost" id="downloadJsonBtn">
+                    Download Spec JSON
+                  </button>
+                  <button class="btn btn-ghost" id="copyBtn">Copy</button>
+                </div>
               </div>
             </div>
             <div class="panel-body">

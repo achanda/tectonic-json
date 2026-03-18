@@ -3349,8 +3349,103 @@ function describeStringExpression(expr) {
   return "generated with a custom expression";
 }
 
-function describeSelectionSettings(spec) {
+function describeStringField(spec, fieldBase) {
   if (!spec || typeof spec !== "object") {
+    return "";
+  }
+  const expressionDescription = describeStringExpression(spec[fieldBase]);
+  if (expressionDescription) {
+    return expressionDescription;
+  }
+  const pattern = spec[fieldBase + "_pattern"];
+  const length = spec[fieldBase + "_len"];
+  if (typeof pattern === "string" && pattern && Number.isFinite(length)) {
+    if (pattern === "uniform") {
+      return "generated uniformly at length " + formatCount(length);
+    }
+    return pattern.replace(/_/g, " ") + " pattern at length " + formatCount(length);
+  }
+  if (typeof pattern === "string" && pattern) {
+    return "generated with a " + pattern.replace(/_/g, " ") + " pattern";
+  }
+  if (Number.isFinite(length)) {
+    return "generated at length " + formatCount(length);
+  }
+  return "";
+}
+
+function hasConfiguredStringField(spec, fieldBase) {
+  if (!spec || typeof spec !== "object") {
+    return false;
+  }
+  return !!(
+    spec[fieldBase] ||
+    (typeof spec[fieldBase + "_pattern"] === "string" &&
+      spec[fieldBase + "_pattern"]) ||
+    Number.isFinite(spec[fieldBase + "_len"])
+  );
+}
+
+function isPlaceholderUniformSelection(spec) {
+  return !!(
+    spec &&
+    typeof spec === "object" &&
+    !spec.selection &&
+    spec.selection_distribution === "uniform" &&
+    Number(spec.selection_min) === 0 &&
+    Number(spec.selection_max) === 1
+  );
+}
+
+function getRangeProfileLabel(spec) {
+  if (!spec || typeof spec !== "object") {
+    return "";
+  }
+  const selectivity = Number(spec.selectivity);
+  if (!Number.isFinite(selectivity)) {
+    return "";
+  }
+  if (Math.abs(selectivity - 0.001) < 1e-9) {
+    return "short";
+  }
+  if (Math.abs(selectivity - 0.01) < 1e-9) {
+    return "long";
+  }
+  return "";
+}
+
+function hasCustomRangeShape(spec) {
+  if (!spec || typeof spec !== "object") {
+    return false;
+  }
+  return !!(
+    (Number.isFinite(spec.k) && Number(spec.k) !== 0) ||
+    (Number.isFinite(spec.l) && Number(spec.l) !== 0)
+  );
+}
+
+function operationSummaryName(op, spec) {
+  if (op === "range_queries" || op === "range_deletes") {
+    const profile = getRangeProfileLabel(spec);
+    if (profile === "short") {
+      return op === "range_queries" ? "short range queries" : "short range deletes";
+    }
+    if (profile === "long") {
+      return op === "range_queries" ? "long range queries" : "long range deletes";
+    }
+  }
+  return operationDisplayName(op);
+}
+
+function describeSelectionSettings(spec, context) {
+  if (!spec || typeof spec !== "object") {
+    return "";
+  }
+  if (
+    context &&
+    context.targetsInsertedKeys &&
+    isPlaceholderUniformSelection(spec)
+  ) {
     return "";
   }
   if (spec.selection && typeof spec.selection === "object") {
@@ -3408,14 +3503,22 @@ function describeRangeSettings(spec) {
   if (!spec || typeof spec !== "object") {
     return "";
   }
+  if (
+    getRangeProfileLabel(spec) &&
+    typeof spec.range_format === "string" &&
+    spec.range_format === "StartCount" &&
+    !hasCustomRangeShape(spec)
+  ) {
+    return "";
+  }
   const details = [];
   if (typeof spec.range_format === "string" && spec.range_format) {
     details.push(spec.range_format + " format");
   }
-  if (Number.isFinite(spec.k)) {
+  if (Number.isFinite(spec.k) && Number(spec.k) !== 0) {
     details.push("k " + formatCount(spec.k));
   }
-  if (Number.isFinite(spec.l)) {
+  if (Number.isFinite(spec.l) && Number(spec.l) !== 0) {
     details.push("l " + formatCount(spec.l));
   }
   if (Number.isFinite(spec.selectivity)) {
@@ -3424,10 +3527,11 @@ function describeRangeSettings(spec) {
   return details.length > 0 ? "range " + details.join(", ") : "";
 }
 
-function describeOperationPhrase(op, spec, rootJson, section, group) {
+function describeOperationPhrase(op, spec, rootJson, section, group, context) {
   const prefix = Number.isFinite(spec && spec.op_count)
-    ? formatCount(spec.op_count) + " " + operationDisplayName(op)
-    : operationDisplayName(op);
+    ? formatCount(spec.op_count) + " " + operationSummaryName(op, spec)
+    : operationSummaryName(op, spec);
+  let phrase = prefix;
   const details = [];
   const effectiveCharacterSet = getEffectiveCharacterSet(
     rootJson,
@@ -3437,8 +3541,8 @@ function describeOperationPhrase(op, spec, rootJson, section, group) {
   );
 
   if (op === "inserts") {
-    const keyDescription = describeStringExpression(spec && spec.key);
-    const valueDescription = describeStringExpression(spec && spec.val);
+    const keyDescription = describeStringField(spec, "key");
+    const valueDescription = describeStringField(spec, "val");
     if (effectiveCharacterSet) {
       details.push("character set " + effectiveCharacterSet);
     }
@@ -3449,7 +3553,15 @@ function describeOperationPhrase(op, spec, rootJson, section, group) {
       details.push("values " + valueDescription);
     }
   } else {
-    const selectionDescription = describeSelectionSettings(spec);
+    const targetsInsertedKeys =
+      !!(context && context.targetsInsertedKeys) &&
+      (isPlaceholderUniformSelection(spec) || !hasExplicitSelectionSettings(spec));
+    if (targetsInsertedKeys) {
+      phrase += " against inserted keys";
+    }
+    const selectionDescription = describeSelectionSettings(spec, {
+      targetsInsertedKeys: targetsInsertedKeys,
+    });
     const rangeDescription =
       op === "range_queries" || op === "range_deletes"
         ? describeRangeSettings(spec)
@@ -3462,7 +3574,7 @@ function describeOperationPhrase(op, spec, rootJson, section, group) {
     }
   }
 
-  return details.length > 0 ? prefix + " (" + details.join("; ") + ")" : prefix;
+  return details.length > 0 ? phrase + " (" + details.join("; ") + ")" : phrase;
 }
 
 function operationProducesKeys(op) {
@@ -3527,6 +3639,8 @@ function buildWorkloadSummaryModel(json) {
   let implicitRangeUsed = false;
   let implicitInsertGenerators = false;
   let sectionLevelSkipEnabled = false;
+  let defaultShortRangeProfileUsed = false;
+  let insertedKeyspaceNarrationUsed = false;
 
   sections.forEach((section, sectionIndex) => {
     const groups = Array.isArray(section.groups)
@@ -3543,7 +3657,10 @@ function buildWorkloadSummaryModel(json) {
       );
 
       const phrases = configuredOperations.map((entry) =>
-        describeOperationPhrase(entry.name, entry.spec, json, section, group),
+        describeOperationPhrase(entry.name, entry.spec, json, section, group, {
+          targetsInsertedKeys:
+            operationNeedsExistingKeys(entry.name) && (writesSeen || groupCreatesKeys),
+        }),
       );
       const label =
         sections.length === 1
@@ -3584,8 +3701,23 @@ function buildWorkloadSummaryModel(json) {
           implicitRangeUsed = true;
         }
         if (
+          (op === "range_queries" || op === "range_deletes") &&
+          getRangeProfileLabel(spec) === "short" &&
+          !hasCustomRangeShape(spec)
+        ) {
+          defaultShortRangeProfileUsed = true;
+        }
+        if (
+          operationNeedsExistingKeys(op) &&
+          (writesSeen || groupCreatesKeys) &&
+          (isPlaceholderUniformSelection(spec) || !hasExplicitSelectionSettings(spec))
+        ) {
+          insertedKeyspaceNarrationUsed = true;
+        }
+        if (
           op === "inserts" &&
-          (!spec || !spec.key || !spec.val)
+          (!hasConfiguredStringField(spec, "key") ||
+            !hasConfiguredStringField(spec, "val"))
         ) {
           implicitInsertGenerators = true;
         }
@@ -3650,6 +3782,11 @@ function buildWorkloadSummaryModel(json) {
       "Read, update, merge, and delete operations are assumed to target keys created by earlier write phases or by inserts interleaved in the same group.",
     );
   }
+  if (insertedKeyspaceNarrationUsed) {
+    assumptions.push(
+      "Where selection bounds are left at placeholder defaults, the summary describes those operations as targeting the inserted keyspace instead of literal 0-1 bounds.",
+    );
+  }
   if (implicitSelectionUsed) {
     assumptions.push(
       "Operations without explicit selection settings keep Tectonic's default key-selection behavior.",
@@ -3663,6 +3800,11 @@ function buildWorkloadSummaryModel(json) {
   if (implicitInsertGenerators) {
     assumptions.push(
       "Insert operations without explicit key/value generators keep Tectonic's default generator settings.",
+    );
+  }
+  if (defaultShortRangeProfileUsed) {
+    assumptions.push(
+      "Short range queries use the app's default short-range profile unless a custom range shape is specified.",
     );
   }
   if (sectionLevelSkipEnabled && json.skip_key_contains_check !== true) {
