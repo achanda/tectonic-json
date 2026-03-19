@@ -7,6 +7,9 @@ const formSkipKeyContainsCheck = document.getElementById(
 );
 const addSectionBtn = document.getElementById("addSectionBtn");
 const structureTree = document.getElementById("structureTree");
+const structurePanel = document.querySelector(".structure-panel");
+const builderHint = document.querySelector(".builder-hint");
+const builderHud = document.querySelector(".hud");
 const structureSelectionLabel = document.getElementById(
   "structureSelectionLabel",
 );
@@ -600,7 +603,7 @@ async function initApp() {
     reportUiIssue("Failed to build operation controls", e);
   }
   try {
-    resetFormInterface();
+    resetFormInterface({ stayInBuilder: false });
   } catch (e) {
     reportUiIssue("Failed to reset form interface", e);
   }
@@ -1147,8 +1150,41 @@ function countConfiguredGroupOperations(group) {
   ).length;
 }
 
+function hasConfiguredWorkloadStructure() {
+  return Array.isArray(workloadStructureState)
+    ? workloadStructureState.some((section) =>
+        Array.isArray(section && section.groups)
+          ? section.groups.some(
+              (group) =>
+                group &&
+                typeof group === "object" &&
+                countConfiguredGroupOperations(group) > 0,
+            )
+          : false,
+      )
+    : false;
+}
+
+function updateStructurePanelVisibility() {
+  const showBuilderEditor =
+    customWorkloadMode && hasConfiguredWorkloadStructure();
+  if (builderHint) {
+    builderHint.hidden = !showBuilderEditor;
+  }
+  if (structurePanel) {
+    structurePanel.hidden = !showBuilderEditor;
+  }
+  if (builderHud) {
+    builderHud.hidden = !showBuilderEditor;
+  }
+  if (workloadForm) {
+    workloadForm.hidden = !showBuilderEditor;
+  }
+}
+
 function renderStructureTree() {
   ensureWorkloadStructureState();
+  updateStructurePanelVisibility();
   const renderer = getStructurePanelRenderer();
   if (!renderer) {
     return;
@@ -4103,6 +4139,7 @@ function updateInteractiveStats(json) {
 function updateJsonFromForm() {
   const generated = buildJsonFromForm();
   renderGeneratedJson(generated);
+  updateStructurePanelVisibility();
   if (pendingJsonFocusTarget) {
     scrollJsonOutputToGroupFocus(pendingJsonFocusTarget);
     pendingJsonFocusTarget = null;
@@ -4870,9 +4907,13 @@ async function handleAssistantApply() {
   await controller.handleApply();
 }
 
-function resetFormInterface() {
+function resetFormInterface(options) {
+  const stayInBuilder =
+    !options || typeof options !== "object"
+      ? true
+      : options.stayInBuilder !== false;
   workloadForm.reset();
-  customWorkloadMode = false;
+  customWorkloadMode = stayInBuilder;
   clearLoadedPresetState();
   resetWorkloadStructureState();
   clearFieldLocks();
@@ -4887,6 +4928,7 @@ function resetFormInterface() {
   setRunButtonBusy(false);
   const initial = JSON.parse(INITIAL_JSON_TEXT);
   renderGeneratedJson(initial);
+  updateStructurePanelVisibility();
   updateInteractiveStats(initial);
   void validateGeneratedJson(initial);
   syncLandingUi();
