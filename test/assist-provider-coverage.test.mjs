@@ -24,6 +24,8 @@ test(
     const state = applyPatchToState(createFormState({}), body.patch);
     assert.equal(typeof body.summary, "string");
     assert.ok(body.summary.trim().length > 0);
+    assert.equal(typeof body.ai_output, "string");
+    assert.match(body.ai_output, /"program"\s*:/);
     assert.equal(state.operations.point_queries.enabled, true);
     assert.equal(state.operations.point_queries.op_count, 50000);
   },

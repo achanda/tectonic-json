@@ -1,8 +1,9 @@
 PRETTIER ?= npx --yes prettier@3
 NPM ?= npm
+TLC ?= tlc
 FORMAT_PATHS := package.json public/*.js public/*.html src/*.js src/*.mjs test/*.mjs
 
-.PHONY: format dev test test-demo test-demo-ollama check-ai-env check-demo-ai-env
+.PHONY: format dev test test-demo test-demo-ollama test-formal test-formal-js test-formal-tla check-ai-env check-demo-ai-env
 
 format:
 	$(PRETTIER) -- --write $(FORMAT_PATHS)
@@ -30,7 +31,15 @@ test:
 	$(NPM) test
 
 test-demo:
-	AI_PROVIDER=ollama OLLAMA_MODEL=llama3 node --test test/assist-chat-session.test.mjs test/assist-natural-language-demo.test.mjs test/assist-natural-language-extended.test.mjs test/assist-provider-coverage.test.mjs
+	AI_PROVIDER=ollama OLLAMA_MODEL=llama3 node --test test/assist-interpreter-invariants.test.mjs test/assist-chat-session.test.mjs test/assist-structural-paraphrases.test.mjs test/assist-natural-language-demo.test.mjs test/assist-natural-language-extended.test.mjs test/assist-provider-coverage.test.mjs
 
 test-demo-ollama:
-	AI_PROVIDER=ollama node --test test/assist-chat-session.test.mjs test/assist-natural-language-demo.test.mjs test/assist-natural-language-extended.test.mjs test/assist-provider-coverage.test.mjs
+	AI_PROVIDER=ollama node --test test/assist-interpreter-invariants.test.mjs test/assist-chat-session.test.mjs test/assist-structural-paraphrases.test.mjs test/assist-natural-language-demo.test.mjs test/assist-natural-language-extended.test.mjs test/assist-provider-coverage.test.mjs
+
+test-formal: test-formal-js test-formal-tla
+
+test-formal-js:
+	node --test test/assist-interpreter-invariants.test.mjs
+
+test-formal-tla:
+	$(TLC) formal/assist_interpreter.tla -config formal/assist_interpreter.cfg

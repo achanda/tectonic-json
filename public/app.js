@@ -3917,6 +3917,11 @@ function buildWorkloadSummaryModel(json) {
           ? "Group " + (groupIndex + 1)
           : "Section " + (sectionIndex + 1) + ", group " + (groupIndex + 1);
       const verb = configuredOperations.length > 1 ? "interleaves " : "runs ";
+      if (configuredOperations.length === 0) {
+        groupDescriptions.push(label + " is empty.");
+        return;
+      }
+
       groupDescriptions.push(label + " " + verb + joinPhrases(phrases) + ".");
 
       configuredOperations.forEach((entry) => {

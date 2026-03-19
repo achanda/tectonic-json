@@ -164,3 +164,222 @@ test(
     assert.equal(finalJson.sections[0].groups.length, 2);
   },
 );
+
+test(
+  "continuous chat session: append another group after an interleaved group",
+  { skip: !LIVE_PROVIDER.binding, timeout: 240000 },
+  async () => {
+    let state = createFormState({});
+    let conversation = [];
+
+    const first = await applyAssistTurn({
+      prompt: "Generate a insert only workload with 1 million entries",
+      state,
+      conversation,
+    });
+    state = first.nextState;
+    conversation = first.nextConversation;
+
+    const second = await applyAssistTurn({
+      prompt: "Add 5k point queries",
+      state,
+      conversation,
+    });
+    state = second.nextState;
+    conversation = second.nextConversation;
+
+    const third = await requestLiveAssist({
+      prompt: "Add another group with all deletes",
+      formState: state,
+      currentJson: buildCurrentJson(state),
+      conversation,
+      answers: {
+        clarify_delete_ops: [
+          "point_deletes",
+          "range_deletes",
+          "empty_point_deletes",
+        ],
+      },
+      provider: LIVE_PROVIDER,
+    });
+    state = applyPatchToState(state, third.patch);
+
+    assert.equal(state.sections_count, 1);
+    assert.equal(state.groups_per_section, 2);
+    assert.deepEqual(
+      configuredOperations(state.sections[0].groups[0]),
+      ["inserts", "point_queries"],
+    );
+    assert.deepEqual(
+      configuredOperations(state.sections[0].groups[1]),
+      ["empty_point_deletes", "point_deletes", "range_deletes"],
+    );
+    assert.equal(state.sections[0].groups[0].inserts.op_count, 1000000);
+    assert.equal(state.sections[0].groups[0].point_queries.op_count, 5000);
+  },
+);
+
+test(
+  "continuous chat session: append a second group after an interleaved group",
+  { skip: !LIVE_PROVIDER.binding, timeout: 240000 },
+  async () => {
+    let state = createFormState({});
+    let conversation = [];
+
+    const first = await applyAssistTurn({
+      prompt: "Generate a insert only workload with 1 million entries",
+      state,
+      conversation,
+    });
+    state = first.nextState;
+    conversation = first.nextConversation;
+
+    const second = await applyAssistTurn({
+      prompt: "Add 5k point queries",
+      state,
+      conversation,
+    });
+    state = second.nextState;
+    conversation = second.nextConversation;
+
+    const third = await requestLiveAssist({
+      prompt: "Add a second group with all deletes",
+      formState: state,
+      currentJson: buildCurrentJson(state),
+      conversation,
+      answers: {
+        clarify_delete_ops: [
+          "point_deletes",
+          "range_deletes",
+          "empty_point_deletes",
+        ],
+      },
+      provider: LIVE_PROVIDER,
+    });
+    state = applyPatchToState(state, third.patch);
+
+    assert.equal(state.sections_count, 1);
+    assert.equal(state.groups_per_section, 2);
+    assert.deepEqual(
+      configuredOperations(state.sections[0].groups[1]),
+      ["empty_point_deletes", "point_deletes", "range_deletes"],
+    );
+  },
+);
+
+test(
+  "continuous chat session: append a third group after a second phase exists",
+  { skip: !LIVE_PROVIDER.binding, timeout: 240000 },
+  async () => {
+    let state = createFormState({});
+    let conversation = [];
+
+    const first = await applyAssistTurn({
+      prompt: "Generate an insert-only workload with 250k inserts",
+      state,
+      conversation,
+    });
+    state = first.nextState;
+    conversation = first.nextConversation;
+
+    const second = await applyAssistTurn({
+      prompt: "then add a second phase with 5k point queries",
+      state,
+      conversation,
+    });
+    state = second.nextState;
+    conversation = second.nextConversation;
+
+    const third = await requestLiveAssist({
+      prompt: "Add a third group with all deletes",
+      formState: state,
+      currentJson: buildCurrentJson(state),
+      conversation,
+      answers: {
+        clarify_delete_ops: [
+          "point_deletes",
+          "range_deletes",
+          "empty_point_deletes",
+        ],
+      },
+      provider: LIVE_PROVIDER,
+    });
+    state = applyPatchToState(state, third.patch);
+
+    assert.equal(state.sections_count, 1);
+    assert.equal(state.groups_per_section, 3);
+    assert.deepEqual(
+      configuredOperations(state.sections[0].groups[0]),
+      ["inserts"],
+    );
+    assert.deepEqual(
+      configuredOperations(state.sections[0].groups[1]),
+      ["point_queries"],
+    );
+    assert.deepEqual(
+      configuredOperations(state.sections[0].groups[2]),
+      ["empty_point_deletes", "point_deletes", "range_deletes"],
+    );
+  },
+);
+
+test(
+  "continuous chat session: change one operation into another inside group 2",
+  { skip: !LIVE_PROVIDER.binding, timeout: 240000 },
+  async () => {
+    let state = createFormState({});
+    let conversation = [];
+
+    const first = await applyAssistTurn({
+      prompt: "Generate an insert-only workload with 250k inserts",
+      state,
+      conversation,
+    });
+    state = first.nextState;
+    conversation = first.nextConversation;
+
+    const second = await applyAssistTurn({
+      prompt:
+        "then add a second phase with 5k updates and 5k range deletes",
+      state,
+      conversation,
+    });
+    state = second.nextState;
+    conversation = second.nextConversation;
+
+    const third = await applyAssistTurn({
+      prompt: "Change updates in group 2 to merges",
+      state,
+      conversation,
+    });
+    state = third.nextState;
+
+    assert.equal(state.sections_count, 1);
+    assert.equal(state.groups_per_section, 2);
+    assert.deepEqual(
+      configuredOperations(state.sections[0].groups[0]),
+      ["inserts"],
+    );
+    assert.deepEqual(
+      configuredOperations(state.sections[0].groups[1]),
+      ["merges", "range_deletes"],
+    );
+    assert.equal(
+      state.sections[0].groups[1].merges.op_count,
+      5000,
+    );
+    assert.equal(
+      state.sections[0].groups[1].range_deletes.op_count,
+      5000,
+    );
+    assert.equal(state.sections[0].groups[1].updates, undefined);
+    assert.ok(
+      third.result.assumptions.every(
+        (entry) =>
+          !String(entry && entry.text ? entry.text : "")
+            .toLowerCase()
+            .includes("group 1"),
+      ),
+    );
+  },
+);

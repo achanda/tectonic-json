@@ -149,6 +149,25 @@ test(
 );
 
 test(
+  "single-turn regression: insert-only with spelled-out million entries",
+  { skip: !LIVE_PROVIDER.binding, timeout: 120000 },
+  async () => {
+    const result = await requestAssist(
+      "Generate a insert only workload with 1 million entries",
+      createFormState({}),
+    );
+
+    const enabledOps = Object.entries(result.patch.operations || {})
+      .filter(([, operationPatch]) => operationPatch && operationPatch.enabled)
+      .map(([operationName]) => operationName)
+      .sort();
+    assert.deepEqual(enabledOps, ["inserts"]);
+    assert.equal(result.patch.operations.inserts.enabled, true);
+    assert.equal(result.patch.operations.inserts.op_count, 1000000);
+  },
+);
+
+test(
   "multi-turn regression: insert-only then add point reads then change distribution",
   { skip: !LIVE_PROVIDER.binding, timeout: 180000 },
   async () => {
@@ -310,5 +329,57 @@ test(
     );
     assert.deepEqual(Object.keys(fourth.patch.operations).sort(), ["range_deletes"]);
     assert.equal(fourth.patch.operations.range_deletes.enabled, false);
+  },
+);
+
+test(
+  "group-targeted regression: change inserts in group 2 to updates",
+  { skip: !LIVE_PROVIDER.binding, timeout: 120000 },
+  async () => {
+    let state = applyPatchToState(createFormState({}), {
+      sections: [
+        {
+          character_set: "alphanumeric",
+          skip_key_contains_check: true,
+          groups: [
+            {
+              inserts: {
+                enabled: true,
+                op_count: 1000,
+              },
+            },
+            {
+              inserts: {
+                enabled: true,
+                op_count: 2000,
+              },
+            },
+          ],
+        },
+      ],
+      sections_count: 1,
+      groups_per_section: 2,
+      clear_operations: false,
+      operations: {},
+    });
+
+    const result = await requestAssist(
+      "Change inserts in group 2 to updates",
+      state,
+    );
+    state = applyPatchToState(state, result.patch);
+
+    assert.equal(state.sections_count, 1);
+    assert.equal(state.groups_per_section, 2);
+    assert.deepEqual(
+      configuredOperations(state.sections[0].groups[0]),
+      ["inserts"],
+    );
+    assert.deepEqual(
+      configuredOperations(state.sections[0].groups[1]),
+      ["updates"],
+    );
+    assert.equal(state.sections[0].groups[0].inserts.op_count, 1000);
+    assert.equal(state.sections[0].groups[1].updates.op_count, 2000);
   },
 );

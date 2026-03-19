@@ -355,14 +355,26 @@ function buildWorkerEnv(envLike, aiBinding, aiConfigError, resolvedAiProvider) {
   const out = {
     AI_PROVIDER: effectiveProvider,
     ...providerEnv,
-    AI_TEMPERATURE: readString(env.AI_TEMPERATURE) || "0",
-    AI_RETRY_ATTEMPTS: readString(env.AI_RETRY_ATTEMPTS) || "2",
-    AI_MAX_TOKENS: readString(env.AI_MAX_TOKENS) || "700",
-    AI_TIMEOUT_MS: readString(env.AI_TIMEOUT_MS) || "15000",
     ASSETS: {
       fetch: async () => new Response("Not found", { status: 404 }),
     },
   };
+  const temperature = readString(env.AI_TEMPERATURE);
+  if (temperature) {
+    out.AI_TEMPERATURE = temperature;
+  }
+  const retryAttempts = readString(env.AI_RETRY_ATTEMPTS);
+  if (retryAttempts) {
+    out.AI_RETRY_ATTEMPTS = retryAttempts;
+  }
+  const maxTokens = readString(env.AI_MAX_TOKENS);
+  if (maxTokens) {
+    out.AI_MAX_TOKENS = maxTokens;
+  }
+  const timeoutMs = readString(env.AI_TIMEOUT_MS);
+  if (timeoutMs) {
+    out.AI_TIMEOUT_MS = timeoutMs;
+  }
   if (aiBinding) {
     out.AI = aiBinding;
   } else if (typeof aiConfigError === "string" && aiConfigError.trim()) {
