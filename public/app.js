@@ -82,6 +82,7 @@ let workloadRunsPanelController = null;
 let jsonPreviewVisible = false;
 
 const INITIAL_JSON_TEXT = "{}";
+const CUSTOM_BUILDER_STORAGE_KEY = "tectonic.customBuilderState.v1";
 const PRESET_INDEX_PATH = "/presets/index.json";
 const PROMPT_OPERATION_MATCHER_SOURCES = {
   inserts: "insert(?:s|ion)?",
@@ -612,6 +613,11 @@ async function initApp() {
   } catch (e) {
     reportUiIssue("Failed to load preset catalog", e);
   }
+  try {
+    restorePersistedCustomBuilderState();
+  } catch (e) {
+    reportUiIssue("Failed to restore custom builder state", e);
+  }
   syncLandingUi();
 
   const runsController = getWorkloadRunsPanelController();
@@ -1011,6 +1017,33 @@ function cloneJsonValue(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function readCustomBuilderStorage() {
+  try {
+    return window.localStorage.getItem(CUSTOM_BUILDER_STORAGE_KEY);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function writeCustomBuilderStorage(snapshot) {
+  try {
+    window.localStorage.setItem(
+      CUSTOM_BUILDER_STORAGE_KEY,
+      JSON.stringify(snapshot),
+    );
+  } catch (_error) {
+    // Ignore unavailable storage.
+  }
+}
+
+function clearPersistedCustomBuilderState() {
+  try {
+    window.localStorage.removeItem(CUSTOM_BUILDER_STORAGE_KEY);
+  } catch (_error) {
+    // Ignore unavailable storage.
+  }
+}
+
 function createEmptyGroupSpec() {
   return {};
 }
@@ -1312,6 +1345,7 @@ function getPresetFlowController() {
     },
     presetIndexPath: PRESET_INDEX_PATH,
     cloneJsonValue,
+    clearPersistedCustomBuilderState,
     ensureWorkloadStructureState,
     loadActiveStructureIntoForm,
     loadPresetIntoBuilder,
@@ -1451,6 +1485,89 @@ function loadPresetIntoBuilder(presetJson) {
   syncLandingUi();
 }
 
+function persistCustomBuilderState() {
+  if (!customWorkloadMode) {
+    return;
+  }
+  ensureWorkloadStructureState();
+  persistActiveStructureFromForm();
+  writeCustomBuilderStorage({
+    character_set:
+      formCharacterSet && typeof formCharacterSet.value === "string"
+        ? formCharacterSet.value.trim()
+        : "",
+    sections: cloneJsonValue(workloadStructureState),
+    activeSectionIndex,
+    activeGroupIndex,
+  });
+}
+
+function restorePersistedCustomBuilderState() {
+  const rawSnapshot = readCustomBuilderStorage();
+  if (!rawSnapshot) {
+    return false;
+  }
+
+  let snapshot = null;
+  try {
+    snapshot = JSON.parse(rawSnapshot);
+  } catch (_error) {
+    clearPersistedCustomBuilderState();
+    return false;
+  }
+
+  if (!snapshot || typeof snapshot !== "object") {
+    clearPersistedCustomBuilderState();
+    return false;
+  }
+
+  activePresetJson = null;
+  customWorkloadMode = true;
+  clearFieldLocks();
+  clearOperationFormState();
+  clearAssistantThread();
+  setAssistantStatus("Ready", "default");
+  setRunButtonBusy(false);
+
+  const restoredCharacterSet =
+    typeof snapshot.character_set === "string" ? snapshot.character_set.trim() : "";
+  if (formCharacterSet) {
+    const options = Array.from(formCharacterSet.options || []).map(
+      (option) => option.value,
+    );
+    formCharacterSet.value = options.includes(restoredCharacterSet)
+      ? restoredCharacterSet
+      : "";
+  }
+
+  workloadStructureState =
+    Array.isArray(snapshot.sections) && snapshot.sections.length > 0
+      ? normalizePatchedStructureSections(snapshot.sections)
+      : [createEmptySectionState()];
+  activeSectionIndex = Math.max(
+    0,
+    Math.min(
+      Number(snapshot.activeSectionIndex) || 0,
+      workloadStructureState.length - 1,
+    ),
+  );
+  const activeSection = workloadStructureState[activeSectionIndex];
+  activeGroupIndex = Math.max(
+    0,
+    Math.min(
+      Number(snapshot.activeGroupIndex) || 0,
+      Array.isArray(activeSection && activeSection.groups)
+        ? activeSection.groups.length - 1
+        : 0,
+    ),
+  );
+
+  loadActiveStructureIntoForm();
+  updateJsonFromForm();
+  syncLandingUi();
+  return true;
+}
+
 function applyOperationSpecToForm(op, spec) {
   applyDefaultsToOperation(op);
 
@@ -1502,6 +1619,43 @@ function applyOperationSpecToForm(op, spec) {
     }
     if (Object.prototype.hasOwnProperty.call(spec, "selection")) {
       setAdvancedFieldValue(op, "selection", spec.selection);
+    }
+    [
+      "key_len",
+      "val_len",
+      "key_hot_len",
+      "key_hot_amount",
+      "key_hot_probability",
+      "val_hot_len",
+      "val_hot_amount",
+      "val_hot_probability",
+      "selection_min",
+      "selection_max",
+      "selection_mean",
+      "selection_std_dev",
+      "selection_alpha",
+      "selection_beta",
+      "selection_n",
+      "selection_s",
+      "selection_lambda",
+      "selection_scale",
+      "selection_shape",
+    ].forEach((field) => {
+      if (
+        Object.prototype.hasOwnProperty.call(spec, field) &&
+        Number.isFinite(spec[field])
+      ) {
+        setOperationInputValue(op, field, spec[field]);
+      }
+    });
+    if (typeof spec.selection_distribution === "string") {
+      setOperationInputValue(op, "selection_distribution", spec.selection_distribution);
+    }
+    if (typeof spec.key_pattern === "string") {
+      setOperationInputValue(op, "key_pattern", spec.key_pattern);
+    }
+    if (typeof spec.val_pattern === "string") {
+      setOperationInputValue(op, "val_pattern", spec.val_pattern);
     }
     if (typeof spec.range_format === "string") {
       setOperationInputValue(op, "range_format", spec.range_format);
@@ -4146,6 +4300,7 @@ function updateJsonFromForm() {
   }
   updateInteractiveStats(generated);
   void validateGeneratedJson(generated);
+  persistCustomBuilderState();
 }
 
 function getCurrentWorkloadJson() {
@@ -4932,6 +5087,9 @@ function resetFormInterface(options) {
   updateInteractiveStats(initial);
   void validateGeneratedJson(initial);
   syncLandingUi();
+  if (stayInBuilder) {
+    persistCustomBuilderState();
+  }
 }
 
 function downloadGeneratedJson() {

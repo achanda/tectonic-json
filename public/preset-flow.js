@@ -32,6 +32,10 @@
         : function cloneJsonValueFallback(value) {
             return value;
           };
+    const clearPersistedCustomBuilderState =
+      typeof config.clearPersistedCustomBuilderState === "function"
+        ? config.clearPersistedCustomBuilderState
+        : function clearPersistedCustomBuilderStateFallback() {};
     const ensureWorkloadStructureState =
       typeof config.ensureWorkloadStructureState === "function"
         ? config.ensureWorkloadStructureState
@@ -185,6 +189,7 @@
 
     function enablePresetBrowserMode() {
       setCustomWorkloadMode(false);
+      clearPersistedCustomBuilderState();
       clearLoadedPresetState();
       syncLandingUi();
     }

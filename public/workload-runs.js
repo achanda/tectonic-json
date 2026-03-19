@@ -8,8 +8,41 @@
   ]);
   const START_ENDPOINT = "/api/workloads/runs";
   const POLL_INTERVAL_MS = 2500;
+  const WORKLOAD_RUNS_STORAGE_KEY = "tectonic.workloadRuns.v1";
 
   function defaultNoop() {}
+
+  function readPersistedRuns() {
+    try {
+      const raw = window.localStorage.getItem(WORKLOAD_RUNS_STORAGE_KEY);
+      if (!raw) {
+        return [];
+      }
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  function writePersistedRuns(runs) {
+    try {
+      window.localStorage.setItem(
+        WORKLOAD_RUNS_STORAGE_KEY,
+        JSON.stringify(Array.isArray(runs) ? runs : []),
+      );
+    } catch (_error) {
+      // Ignore unavailable storage.
+    }
+  }
+
+  function clearPersistedRuns() {
+    try {
+      window.localStorage.removeItem(WORKLOAD_RUNS_STORAGE_KEY);
+    } catch (_error) {
+      // Ignore unavailable storage.
+    }
+  }
 
   function normalizeErrorMessage(errorLike) {
     if (
@@ -453,9 +486,15 @@
       typeof opts.onError === "function" ? opts.onError : defaultNoop;
     const onBusyChange =
       typeof opts.onBusyChange === "function" ? opts.onBusyChange : defaultNoop;
-    const runs = [];
+    const runs = readPersistedRuns().map((entry) =>
+      normalizeRunEntry(entry, createRunId()),
+    );
     let pollTimer = null;
     let requestInFlight = false;
+
+    function persistRuns() {
+      writePersistedRuns(runs);
+    }
 
     function findRun(runId) {
       return runs.find((entry) => entry.run_id === runId) || null;
@@ -466,9 +505,11 @@
       const existing = findRun(normalized.run_id);
       if (!existing) {
         runs.unshift(normalized);
+        persistRuns();
         return normalized;
       }
       Object.assign(existing, normalized);
+      persistRuns();
       return existing;
     }
 
@@ -522,6 +563,7 @@
                 message: normalizeErrorMessage(error),
               };
               entry.progress_text = "Failed to poll run status.";
+              persistRuns();
             }
           }),
         );
@@ -617,6 +659,7 @@
     function clear() {
       runs.length = 0;
       stopPolling();
+      clearPersistedRuns();
       render();
     }
 
@@ -625,6 +668,10 @@
     }
 
     render();
+    ensurePolling();
+    if (hasActiveRuns()) {
+      void pollRuns();
+    }
     return {
       startRun,
       clear,
