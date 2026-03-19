@@ -1757,6 +1757,148 @@
           min-height: 44px;
         }
       }
+      .panel-header-preview {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        align-items: stretch;
+        gap: 14px;
+        padding: 18px 20px;
+      }
+
+      .preview-header-top {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .preview-header-copy {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+      }
+
+      .preview-header-copy .panel-title {
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0;
+      }
+
+      .preview-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        flex-wrap: wrap;
+        gap: 12px;
+        width: 100%;
+      }
+
+      .preview-toolbar-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 4px;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        background: var(--surface-soft);
+        box-shadow: none;
+      }
+
+      .preview-toolbar-group .btn {
+        min-height: 40px;
+        padding: 0 16px;
+        border-radius: 12px;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+
+      .preview-toolbar-group:last-child .btn {
+        background: transparent;
+        border: 1px solid transparent;
+        color: var(--text-dim);
+      }
+
+      .preview-toolbar-group:last-child .btn:hover {
+        background: #fff;
+        border-color: var(--border);
+        color: var(--text);
+      }
+
+      #runWorkloadBtn {
+        background: #edf8f5;
+        color: var(--accent);
+        border: 1px solid #cfe1dc;
+        box-shadow: none;
+      }
+
+      #runWorkloadBtn:hover {
+        background: #e3f4ef;
+        border-color: #bdd8d1;
+        color: var(--accent-hover);
+        transform: none;
+      }
+
+      .run-db-picker {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 40px;
+        padding: 0 8px 0 12px;
+        border-radius: 12px;
+        background: transparent;
+      }
+
+      .run-db-picker label {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0;
+        text-transform: none;
+        color: var(--text-dim);
+      }
+
+      .run-db-select {
+        min-width: 124px;
+        border: none;
+        background: transparent;
+        color: var(--text);
+        font-size: 14px;
+        font-weight: 600;
+        padding: 0 28px 0 0;
+        box-shadow: none;
+      }
+
+      .run-db-select:focus {
+        outline: none;
+      }
+
+      @media (max-width: 1080px) {
+        .preview-toolbar {
+          justify-content: flex-start;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .preview-header-top {
+          flex-wrap: wrap;
+        }
+
+        .preview-toolbar {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .preview-toolbar-group {
+          width: 100%;
+          justify-content: flex-start;
+          flex-wrap: wrap;
+        }
+
+        .run-db-picker {
+          width: 100%;
+          justify-content: space-between;
+        }
+      }
     </style>
   </head>
   <body>
@@ -1976,10 +2118,6 @@
               <div class="preview-header-top">
                 <div class="preview-header-copy">
                   <span class="panel-title">Workload Overview</span>
-                  <p class="preview-header-caption">
-                    Review the summary first, then open the spec JSON only when
-                    you need the raw details.
-                  </p>
                 </div>
                 <div class="validation-result" id="validationResult"></div>
               </div>

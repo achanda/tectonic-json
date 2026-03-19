@@ -3,6 +3,9 @@
 
   function createController(config) {
     const refs = (config && config.refs) || {};
+    const FIRST_PROMPT_PLACEHOLDER =
+      "Example: Generate an insert-only workload with 1 KB key value size. The number of inserts is 100K.";
+    const ASSISTANT_USED_STORAGE_KEY = "tectonic.assistantUsed.v1";
     const operationOrder = Array.isArray(config.operationOrder)
       ? config.operationOrder
       : [];
@@ -90,6 +93,33 @@
     const clarificationIndex = new Map();
     const answerStore = {};
     let gateMessage = "";
+    let hasUsedAssistant = false;
+
+    function readAssistantUsageFlag() {
+      try {
+        return window.sessionStorage.getItem(ASSISTANT_USED_STORAGE_KEY) === "1";
+      } catch (_error) {
+        return false;
+      }
+    }
+
+    function writeAssistantUsageFlag() {
+      hasUsedAssistant = true;
+      try {
+        window.sessionStorage.setItem(ASSISTANT_USED_STORAGE_KEY, "1");
+      } catch (_error) {
+        // Ignore unavailable storage.
+      }
+    }
+
+    function syncAssistantPlaceholder() {
+      if (!refs.assistantInput) {
+        return;
+      }
+      refs.assistantInput.placeholder = hasUsedAssistant
+        ? ""
+        : FIRST_PROMPT_PLACEHOLDER;
+    }
 
     function setStatus(text, tone) {
       if (!refs.assistantStatus) {
@@ -137,6 +167,7 @@
         refs.assistantTimeline.innerHTML = "";
       }
       setComposerHint("");
+      syncAssistantPlaceholder();
     }
 
     function createTurnId() {
@@ -1043,6 +1074,8 @@
           minute: "2-digit",
         }),
       });
+      writeAssistantUsageFlag();
+      syncAssistantPlaceholder();
 
       if (refs.assistantInput) {
         refs.assistantInput.value = "";
@@ -1120,6 +1153,8 @@
     }
 
     function bindEvents() {
+      hasUsedAssistant = readAssistantUsageFlag();
+      syncAssistantPlaceholder();
       if (refs.assistantApplyBtn) {
         refs.assistantApplyBtn.addEventListener("click", handleApply);
       }
