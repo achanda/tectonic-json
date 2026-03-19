@@ -4296,6 +4296,9 @@ function updateInteractiveStats(json) {
 
 function updateJsonFromForm() {
   const generated = buildJsonFromForm();
+  if (customWorkloadMode) {
+    renderStructureSelectors();
+  }
   renderGeneratedJson(generated);
   updateStructurePanelVisibility();
   if (pendingJsonFocusTarget) {

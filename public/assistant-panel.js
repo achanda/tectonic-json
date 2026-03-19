@@ -733,12 +733,8 @@
       return inputEl;
     }
 
-    function shouldHideClarificationInput(clarification) {
-      return !!(
-        clarification &&
-        clarification.binding &&
-        clarification.binding.type === "operations_set"
-      );
+    function shouldHideClarificationInput(_clarification) {
+      return false;
     }
 
     function buildClarificationHintText(clarification, resolved) {
@@ -748,10 +744,10 @@
       if (clarification.binding.type === "operations_set") {
         if (clarification.required) {
           return resolved
-            ? "Operations are set below."
-            : "Use the Operations section below. At least one operation is required.";
+            ? "Operations are selected. You can keep refining them."
+            : "Select one or more operations here to continue.";
         }
-        return "Use the Operations section below to change operation selection.";
+        return "Select one or more operations here.";
       }
       if (clarification.required) {
         return resolved ? "Required answer provided." : "Required for next prompt.";

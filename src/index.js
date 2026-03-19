@@ -1823,6 +1823,24 @@ function buildAmbiguousOperationClarification(prompt) {
   if (!lowerPrompt) {
     return null;
   }
+  const mentionsAnyOperation =
+    /\binsert(?:s|ion)?\b|\bupdate(?:s)?\b|\bmerge(?:s)?\b|\bread[- ]?modify[- ]?write\b|\brmw\b|\bpoint\s+quer(?:y|ie|ies)\b|\bpoint\s+read(?:s)?\b|\brange\s+quer(?:y|ie|ies)\b|\bpoint\s+delete(?:s)?\b|\brange\s+delete(?:s)?\b|\bempty\s+point\s+(?:quer(?:y|ie|ies)|read(?:s)?|delete(?:s)?)\b|\bsorted\b/.test(
+      lowerPrompt,
+    );
+  if (
+    /\b(?:generate|create|make)\b[\s\S]{0,24}\bworkload\b/.test(lowerPrompt) &&
+    !mentionsAnyOperation
+  ) {
+    return {
+      id: "clarify.operations.workload",
+      text: "Which operations should this workload include?",
+      required: true,
+      binding: { type: "operations_set" },
+      input: "multi_enum",
+      options: null,
+      default_behavior: "wait_for_user",
+    };
+  }
   const mentionsSpecificQueryOperation =
     /\bpoint\s+quer(?:y|ie|ies)\b|\brange\s+quer(?:y|ie|ies)\b|\bempty\s+point\s+quer(?:y|ie|ies)\b|\bpoint\s+reads?\b/.test(
       lowerPrompt,

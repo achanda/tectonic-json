@@ -1,4 +1,23 @@
 (() => {
+  function humanizeOperationName(name) {
+    return String(name || "")
+      .replace(/_/g, " ")
+      .trim();
+  }
+
+  function describeGroupOperations(group) {
+    if (!group || typeof group !== "object") {
+      return "empty";
+    }
+    const operationNames = Object.keys(group)
+      .map(humanizeOperationName)
+      .filter(Boolean);
+    if (operationNames.length === 0) {
+      return "empty";
+    }
+    return operationNames.join(", ");
+  }
+
   function createRenderer({
     container,
     selectionLabel,
@@ -94,10 +113,13 @@
             groupBtn.classList.add("active");
           }
           const opCount = countConfiguredGroupOperations(group);
+          const opDescription =
+            opCount > 0 ? describeGroupOperations(group) : "empty";
           groupBtn.textContent =
             "Group " +
             (groupIndex + 1) +
-            (opCount > 0 ? " • " + opCount + " op(s)" : " • empty");
+            " • " +
+            opDescription;
           groupBtn.addEventListener("click", () => {
             onSelectGroup(sectionIndex, groupIndex);
           });

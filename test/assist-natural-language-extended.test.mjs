@@ -39,6 +39,11 @@ test(
   async (t) => {
     const cases = [
       {
+        name: "generic workload",
+        prompt: "Generate a workload",
+        expectedBindingType: "operations_set",
+      },
+      {
         name: "queries",
         prompt: "Add queries",
         expectedBindingType: "operations_set",

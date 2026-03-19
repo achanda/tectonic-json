@@ -167,10 +167,115 @@
     return normalized;
   }
 
+  const fallbackOperationNames = new Set([
+    "empty_point_deletes",
+    "empty_point_queries",
+    "inserts",
+    "merges",
+    "point_deletes",
+    "point_queries",
+    "range_deletes",
+    "range_queries",
+    "sorted",
+    "updates",
+  ]);
+
+  function getKnownOperationNames(config) {
+    const configuredOperationNames =
+      config && Array.isArray(config.operationOrder)
+        ? config.operationOrder.filter(
+            (name) => typeof name === "string" && name.trim(),
+          )
+        : [];
+    return configuredOperationNames.length > 0
+      ? new Set(configuredOperationNames)
+      : fallbackOperationNames;
+  }
+
+  function readPatchedFieldValue(fieldSpec) {
+    if (!fieldSpec || typeof fieldSpec !== "object") {
+      return null;
+    }
+    if (
+      fieldSpec.boolean_value !== null &&
+      fieldSpec.boolean_value !== undefined
+    ) {
+      return fieldSpec.boolean_value;
+    }
+    if (
+      fieldSpec.number_value !== null &&
+      fieldSpec.number_value !== undefined
+    ) {
+      return fieldSpec.number_value;
+    }
+    if (
+      fieldSpec.string_value !== null &&
+      fieldSpec.string_value !== undefined
+    ) {
+      return fieldSpec.string_value;
+    }
+    if (fieldSpec.json_value !== null && fieldSpec.json_value !== undefined) {
+      if (typeof fieldSpec.json_value === "string") {
+        try {
+          return JSON.parse(fieldSpec.json_value);
+        } catch (_error) {
+          return fieldSpec.json_value;
+        }
+      }
+      return fieldSpec.json_value;
+    }
+    return null;
+  }
+
+  function flattenPatchedGroup(group, knownOperationNames) {
+    const flattenedGroup = {};
+    if (!group || typeof group !== "object" || Array.isArray(group)) {
+      return flattenedGroup;
+    }
+    Object.entries(group).forEach(([name, spec]) => {
+      if (knownOperationNames.has(name)) {
+        flattenedGroup[name] = spec;
+      }
+    });
+    if (Array.isArray(group.operations)) {
+      group.operations.forEach((operation) => {
+        const opName =
+          operation && typeof operation.name === "string"
+            ? operation.name
+            : null;
+        if (!opName || !knownOperationNames.has(opName)) {
+          return;
+        }
+        const flattenedSpec = {};
+        if (Array.isArray(operation.fields)) {
+          operation.fields.forEach((fieldSpec) => {
+            const fieldName =
+              fieldSpec && typeof fieldSpec.field === "string"
+                ? fieldSpec.field
+                : null;
+            if (!fieldName) {
+              return;
+            }
+            flattenedSpec[fieldName] = readPatchedFieldValue(fieldSpec);
+          });
+        }
+        if (
+          flattenedSpec.enabled === null ||
+          flattenedSpec.enabled === undefined
+        ) {
+          flattenedSpec.enabled = true;
+        }
+        flattenedGroup[opName] = flattenedSpec;
+      });
+    }
+    return flattenedGroup;
+  }
+
   function normalizePatchedStructureSections(rawSections, config) {
     if (!Array.isArray(rawSections) || rawSections.length === 0) {
       return [createEmptySectionState()];
     }
+    const knownOperationNames = getKnownOperationNames(config);
     const defaultCharacterSet =
       config && typeof config.defaultCharacterSet === "string"
         ? config.defaultCharacterSet
@@ -191,11 +296,18 @@
           ? section.groups.map((group) => {
               const normalizedGroup = {};
               if (group && typeof group === "object" && !Array.isArray(group)) {
-                Object.entries(group).forEach(([op, spec]) => {
+                const groupCharacterSet =
+                  typeof group.character_set === "string" &&
+                  group.character_set.trim()
+                    ? group.character_set.trim()
+                    : sectionCharacterSet;
+                Object.entries(
+                  flattenPatchedGroup(group, knownOperationNames),
+                ).forEach(([op, spec]) => {
                   normalizedGroup[op] = normalizePatchedOperationSpec(
                     op,
                     spec,
-                    sectionCharacterSet,
+                    groupCharacterSet,
                     config,
                   );
                 });
