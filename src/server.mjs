@@ -168,7 +168,7 @@ async function routeRequest(req, res) {
     return;
   }
 
-  await serveStaticAsset(res, pathname, method);
+  await serveStaticAsset(req, res, pathname, method);
 }
 
 async function handleAssistRequest(req, res, url) {
@@ -215,7 +215,38 @@ async function sendFetchResponse(res, response) {
   Readable.fromWeb(response.body).pipe(res);
 }
 
-async function serveStaticAsset(res, pathname, method) {
+function shouldForceFreshInit(req) {
+  const cacheControl = readString(req && req.headers && req.headers["cache-control"]).toLowerCase();
+  const pragma = readString(req && req.headers && req.headers.pragma).toLowerCase();
+  if (pragma.includes("no-cache")) {
+    return true;
+  }
+  return cacheControl.includes("no-cache") && !cacheControl.includes("max-age=0");
+}
+
+async function serveIndexHtml(req, res, resolvedPath, method) {
+  const html = await fs.readFile(resolvedPath, "utf8");
+  const initFlagScript =
+    "<script>window.__TECTONIC_FORCE_INIT__=" +
+    (shouldForceFreshInit(req) ? "true" : "false") +
+    ";</script>";
+  const responseHtml = html.includes("</head>")
+    ? html.replace("</head>", initFlagScript + "</head>")
+    : initFlagScript + html;
+  const body = Buffer.from(responseHtml);
+
+  res.statusCode = 200;
+  res.setHeader("content-type", "text/html; charset=utf-8");
+  res.setHeader("content-length", String(body.byteLength));
+  res.setHeader("cache-control", "no-store");
+  if (method === "HEAD") {
+    res.end();
+    return;
+  }
+  res.end(body);
+}
+
+async function serveStaticAsset(req, res, pathname, method) {
   if (method !== "GET" && method !== "HEAD") {
     sendJson(res, 405, { error: "Method not allowed" });
     return;
@@ -243,6 +274,11 @@ async function serveStaticAsset(res, pathname, method) {
       error: "Not found.",
       code: "not_found",
     });
+    return;
+  }
+
+  if (path.basename(resolvedPath) === "index.html") {
+    await serveIndexHtml(req, res, resolvedPath, method);
     return;
   }
 

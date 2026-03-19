@@ -609,7 +609,11 @@ async function initApp() {
     reportUiIssue("Failed to load preset catalog", e);
   }
   try {
-    restorePersistedCustomBuilderState();
+    if (window.__TECTONIC_FORCE_INIT__ === true) {
+      clearPersistedCustomBuilderState();
+    } else {
+      restorePersistedCustomBuilderState();
+    }
   } catch (e) {
     reportUiIssue("Failed to restore custom builder state", e);
   }
