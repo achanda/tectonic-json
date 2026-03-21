@@ -131,6 +131,80 @@
     return text ? text.replace(/_/g, " ") : "running";
   }
 
+  function clampNumber(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+  }
+
+  function normalizeRunProgress(rawProgress, progressText, status) {
+    const input =
+      rawProgress && typeof rawProgress === "object" ? rawProgress : {};
+    const label =
+      typeof input.label === "string" && input.label.trim()
+        ? input.label.trim()
+        : typeof progressText === "string" && progressText.trim()
+          ? progressText.trim()
+          : ACTIVE_STATUSES.has(status)
+            ? "Running benchmark..."
+            : "Benchmark status updated.";
+    const percent = Number.isFinite(input.percent)
+      ? clampNumber(Math.round(input.percent), 0, 100)
+      : TERMINAL_STATUSES.has(status) && status === "succeeded"
+        ? 100
+        : null;
+    const current = Number.isFinite(input.current)
+      ? Math.max(0, Math.round(input.current))
+      : null;
+    const total = Number.isFinite(input.total)
+      ? Math.max(0, Math.round(input.total))
+      : null;
+    return {
+      label,
+      current,
+      total,
+      percent,
+      indeterminate:
+        typeof input.indeterminate === "boolean"
+          ? input.indeterminate
+          : !Number.isFinite(percent),
+    };
+  }
+
+  function buildProgressBar(progress, compact) {
+    const normalized = normalizeRunProgress(progress, "", "");
+    const shell = document.createElement("div");
+    shell.className = compact ? "run-progress compact" : "run-progress";
+
+    const meta = document.createElement("div");
+    meta.className = "run-progress-meta";
+
+    const label = document.createElement("span");
+    label.className = "run-progress-label";
+    label.textContent = normalized.label;
+    meta.appendChild(label);
+
+    if (Number.isFinite(normalized.percent) && !normalized.indeterminate) {
+      const value = document.createElement("span");
+      value.className = "run-progress-value";
+      value.textContent = String(normalized.percent) + "%";
+      meta.appendChild(value);
+    }
+
+    const track = document.createElement("div");
+    track.className =
+      "run-progress-track" +
+      (normalized.indeterminate ? " indeterminate" : "");
+    if (!normalized.indeterminate && Number.isFinite(normalized.percent)) {
+      const fill = document.createElement("div");
+      fill.className = "run-progress-fill";
+      fill.style.width = String(normalized.percent) + "%";
+      track.appendChild(fill);
+    }
+
+    shell.appendChild(meta);
+    shell.appendChild(track);
+    return shell;
+  }
+
   function normalizeMetricsList(value) {
     return Array.isArray(value)
       ? value.filter((entry) => {
@@ -502,7 +576,12 @@
 
       const outputCell = document.createElement("td");
       outputCell.className = "runs-table-output";
-      outputCell.textContent = "Show all stats";
+      if (ACTIVE_STATUSES.has(run.status)) {
+        outputCell.classList.add("active");
+        outputCell.appendChild(buildProgressBar(run.progress, true));
+      } else {
+        outputCell.textContent = "Show all stats";
+      }
       summaryRow.appendChild(outputCell);
 
       const detailRow = document.createElement("tr");
@@ -516,10 +595,29 @@
       const detail = document.createElement("div");
       detail.className = "runs-table-detail";
 
-      const progress = document.createElement("p");
-      progress.className = "runs-table-detail-copy";
-      progress.textContent = run.progress_text || "No status message.";
-      detail.appendChild(progress);
+      if (
+        run.progress &&
+        (ACTIVE_STATUSES.has(run.status) ||
+          Number.isFinite(run.progress.percent) ||
+          run.progress.indeterminate)
+      ) {
+        detail.appendChild(buildProgressBar(run.progress, false));
+      }
+
+      const progressText =
+        typeof run.progress_text === "string" ? run.progress_text.trim() : "";
+      const progressLabel =
+        run.progress &&
+        typeof run.progress.label === "string" &&
+        run.progress.label.trim()
+          ? run.progress.label.trim()
+          : "";
+      if (progressText && progressText !== progressLabel) {
+        const progress = document.createElement("p");
+        progress.className = "runs-table-detail-copy";
+        progress.textContent = progressText;
+        detail.appendChild(progress);
+      }
 
       if (
         run.output_paths &&
@@ -585,6 +683,12 @@
 
   function normalizeRunEntry(raw, fallbackRunId) {
     const input = raw && typeof raw === "object" ? raw : {};
+    const status =
+      typeof input.status === "string" && input.status.trim()
+        ? input.status.trim()
+        : "running";
+    const progressText =
+      typeof input.progress_text === "string" ? input.progress_text : "";
     return {
       run_id:
         typeof input.run_id === "string" && input.run_id.trim()
@@ -600,15 +704,13 @@
             ? input.run_options.database.trim()
             : "",
       status:
-        typeof input.status === "string" && input.status.trim()
-          ? input.status.trim()
-          : "running",
+        status,
       created_at:
         typeof input.created_at === "string"
           ? input.created_at
           : new Date().toISOString(),
-      progress_text:
-        typeof input.progress_text === "string" ? input.progress_text : "",
+      progress_text: progressText,
+      progress: normalizeRunProgress(input.progress, progressText, status),
       error:
         input.error && typeof input.error === "object" ? input.error : null,
       artifacts: Array.isArray(input.artifacts) ? input.artifacts : [],

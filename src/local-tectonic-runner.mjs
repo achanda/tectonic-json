@@ -303,6 +303,9 @@ async function handleStartRun(req, res) {
     created_at: createdAt,
     status: "starting",
     progress_text: "Queued local benchmark run.",
+    progress: createRunProgress("Queued local benchmark run.", {
+      indeterminate: true,
+    }),
     error: null,
     spec_path: specPath,
     workload_path: workloadPath,
@@ -313,6 +316,7 @@ async function handleStartRun(req, res) {
     timeout_seconds: timeoutSeconds,
     database,
     benchmark_stats: null,
+    progress_context: buildRunProgressContext(normalizedSpec),
     child: null,
     timeout_timer: null,
     started_at: null,
@@ -333,6 +337,8 @@ async function handleStartRun(req, res) {
     run_id: runId,
     status: "starting",
     created_at: createdAt,
+    progress_text: run.progress_text,
+    progress: run.progress,
     output_paths: buildOutputPaths(run),
     downloads: {
       spec_download_path:
@@ -360,6 +366,7 @@ async function handleRunStatus(res, runId) {
     run_id: run.run_id,
     status: run.status,
     progress_text: run.progress_text,
+    progress: run.progress,
     error: run.error,
     output_paths: buildOutputPaths(run),
     artifacts: [
@@ -405,7 +412,7 @@ async function handleCancelRun(res, runId) {
   }
 
   run.status = "cancelled";
-  run.progress_text = "Cancellation requested.";
+  setRunProgressText(run, "Cancellation requested.");
   run.error = null;
   clearRunTimeout(run);
 
@@ -493,7 +500,7 @@ function buildOutputPaths(run) {
 async function startTectonicRun(run) {
   run.started_at = Date.now();
   run.status = "running";
-  run.progress_text = "Running tectonic-cli benchmark...";
+  setRunProgressText(run, "Running tectonic-cli benchmark...");
   run.error = null;
   run.benchmark_stats = null;
 
@@ -512,7 +519,7 @@ async function startTectonicRun(run) {
     stdoutTail = appendTail(stdoutTail, chunk);
     stdoutText = appendOutputText(stdoutText, chunk);
     if (stdoutTail.trim()) {
-      run.progress_text = trimLine(stdoutTail);
+      setRunProgressText(run, trimLine(stdoutTail));
     }
   });
 
@@ -520,7 +527,7 @@ async function startTectonicRun(run) {
     stderrTail = appendTail(stderrTail, chunk);
     stderrText = appendOutputText(stderrText, chunk);
     if (stderrTail.trim()) {
-      run.progress_text = trimLine(stderrTail);
+      setRunProgressText(run, trimLine(stderrTail));
     }
   });
 
@@ -529,7 +536,7 @@ async function startTectonicRun(run) {
       return;
     }
     run.status = "timed_out";
-    run.progress_text = "Run timed out.";
+    setRunProgressText(run, "Run timed out.");
     run.error = {
       code: "run_timed_out",
       message: "Run exceeded timeout of " + run.timeout_seconds + " seconds.",
@@ -555,7 +562,7 @@ async function startTectonicRun(run) {
     exit.error.code === "ENOENT"
   ) {
     run.status = "failed";
-    run.progress_text = "tectonic-cli binary not found.";
+    setRunProgressText(run, "tectonic-cli binary not found.");
     run.error = {
       code: "tectonic_cli_not_found",
       message: buildMissingTectonicCliMessage(TECTONIC_BIN),
@@ -566,7 +573,7 @@ async function startTectonicRun(run) {
   if (exit.code !== 0) {
     const detail = trimLine(stderrTail || stdoutTail);
     run.status = "failed";
-    run.progress_text = "tectonic-cli benchmark failed.";
+    setRunProgressText(run, "tectonic-cli benchmark failed.");
     run.error = {
       code: exit.signal ? "tectonic_killed" : "tectonic_failed",
       message: detail
@@ -627,17 +634,22 @@ async function startTectonicRun(run) {
 
   run.benchmark_stats = parseBenchmarkStats(combinedOutput);
   run.status = "succeeded";
-  run.progress_text = buildBenchmarkCompletionText(run.benchmark_stats);
+  setRunProgressText(run, buildBenchmarkCompletionText(run.benchmark_stats));
   run.error = null;
 }
 
 function markRunFailed(run, code, message) {
   run.status = "failed";
-  run.progress_text = "Benchmark run failed.";
+  setRunProgressText(run, "Benchmark run failed.");
   run.error = {
     code,
     message,
   };
+}
+
+function setRunProgressText(run, text) {
+  run.progress_text = String(text || "").trim();
+  run.progress = buildRunProgress(run, run.progress_text);
 }
 
 async function waitForChild(child) {
@@ -804,6 +816,135 @@ function parseBenchmarkStats(outputText) {
   return {
     overall,
     operations,
+  };
+}
+
+function buildRunProgressContext(spec) {
+  const sections =
+    spec && Array.isArray(spec.sections) ? spec.sections : [];
+  let totalGroups = 0;
+  const sectionOffsets = [];
+
+  sections.forEach((section) => {
+    sectionOffsets.push(totalGroups);
+    const groups =
+      section && Array.isArray(section.groups) ? section.groups : [];
+    totalGroups += groups.length;
+  });
+
+  return {
+    total_groups: totalGroups,
+    section_offsets: sectionOffsets,
+  };
+}
+
+function buildRunProgress(run, label) {
+  const text = String(label || "").trim();
+  const parsed = parseGeneratingProgress(run && run.progress_context, text);
+  if (parsed) {
+    return parsed;
+  }
+
+  if (run && run.status === "succeeded") {
+    const totalGroups =
+      run &&
+      run.progress_context &&
+      Number.isFinite(run.progress_context.total_groups)
+        ? run.progress_context.total_groups
+        : null;
+    return createRunProgress(text || "Benchmark completed.", {
+      current: totalGroups,
+      total: totalGroups,
+      percent: 100,
+      indeterminate: false,
+    });
+  }
+
+  if (run && ACTIVE_STATUSES.has(run.status)) {
+    return createRunProgress(text || "Running tectonic-cli benchmark...", {
+      indeterminate: true,
+    });
+  }
+
+  return createRunProgress(text || "Benchmark status updated.", {
+    indeterminate: false,
+  });
+}
+
+function parseGeneratingProgress(progressContext, label) {
+  const match = String(label || "").match(
+    /^\[Generating\]\s*Section\s+(\d+)\s*\|\s*Group\s+(\d+)$/i,
+  );
+  if (!match) {
+    return null;
+  }
+
+  const sectionIndex = Number.parseInt(match[1], 10);
+  const groupIndex = Number.parseInt(match[2], 10);
+  const context =
+    progressContext && typeof progressContext === "object"
+      ? progressContext
+      : null;
+  const sectionOffsets =
+    context && Array.isArray(context.section_offsets)
+      ? context.section_offsets
+      : [];
+  const totalGroups =
+    context && Number.isFinite(context.total_groups)
+      ? context.total_groups
+      : 0;
+
+  if (
+    !Number.isFinite(sectionIndex) ||
+    !Number.isFinite(groupIndex) ||
+    sectionIndex < 0 ||
+    groupIndex < 0 ||
+    sectionIndex >= sectionOffsets.length
+  ) {
+    return createRunProgress("Generating workload groups...", {
+      indeterminate: true,
+    });
+  }
+
+  const currentGroup = sectionOffsets[sectionIndex] + groupIndex + 1;
+  const friendlyLabel =
+    "Generating group " +
+    String(currentGroup) +
+    " of " +
+    String(Math.max(totalGroups, currentGroup)) +
+    ".";
+
+  if (totalGroups > 1) {
+    const completedGroups = Math.max(0, currentGroup - 1);
+    return createRunProgress(friendlyLabel, {
+      current: currentGroup,
+      total: totalGroups,
+      percent: Math.round((completedGroups / totalGroups) * 100),
+      indeterminate: false,
+    });
+  }
+
+  return createRunProgress(friendlyLabel, {
+    current: currentGroup,
+    total: totalGroups || currentGroup,
+    indeterminate: true,
+  });
+}
+
+function createRunProgress(label, options) {
+  const opts = options && typeof options === "object" ? options : {};
+  const percent = Number.isFinite(opts.percent)
+    ? clamp(Math.round(opts.percent), 0, 100)
+    : null;
+  return {
+    label: String(label || "").trim(),
+    current: Number.isFinite(opts.current) ? Math.max(0, opts.current) : null,
+    total: Number.isFinite(opts.total) ? Math.max(0, opts.total) : null,
+    percent,
+    indeterminate:
+      typeof opts.indeterminate === "boolean"
+        ? opts.indeterminate
+        : !Number.isFinite(percent),
   };
 }
 

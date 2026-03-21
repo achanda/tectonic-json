@@ -1556,6 +1556,12 @@
         word-break: break-all;
       }
 
+      .runs-table-output.active {
+        font-family: inherit;
+        color: inherit;
+        word-break: normal;
+      }
+
       .runs-table-detail-row[hidden] {
         display: none;
       }
@@ -1576,6 +1582,93 @@
         font-size: 12px;
         color: #506679;
         line-height: 1.45;
+      }
+
+      .run-progress {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .run-progress.compact {
+        min-width: 180px;
+        gap: 5px;
+      }
+
+      .run-progress-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .run-progress-label {
+        font-size: 12px;
+        line-height: 1.35;
+        color: #385266;
+      }
+
+      .run-progress.compact .run-progress-label {
+        font-size: 11px;
+        color: #4f6679;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .run-progress-value {
+        flex: 0 0 auto;
+        font-size: 11px;
+        font-weight: 700;
+        color: #5b7285;
+      }
+
+      .run-progress-track {
+        position: relative;
+        height: 8px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #e5eef4;
+      }
+
+      .run-progress.compact .run-progress-track {
+        height: 6px;
+      }
+
+      .run-progress-fill {
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #1c8876 0%, #58b7a0 100%);
+        transition: width 220ms ease;
+      }
+
+      .run-progress-track.indeterminate::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: -32%;
+        width: 32%;
+        border-radius: inherit;
+        background: linear-gradient(
+          90deg,
+          transparent 0%,
+          rgba(28, 136, 118, 0.28) 18%,
+          rgba(28, 136, 118, 0.88) 52%,
+          rgba(28, 136, 118, 0.28) 84%,
+          transparent 100%
+        );
+        animation: run-progress-slide 1.1s linear infinite;
+      }
+
+      @keyframes run-progress-slide {
+        from {
+          transform: translateX(0);
+        }
+
+        to {
+          transform: translateX(420%);
+        }
       }
 
       .run-card {
