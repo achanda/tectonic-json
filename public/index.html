@@ -1004,6 +1004,40 @@
         margin-top: 3px;
       }
 
+      .section-checkbox-item {
+        margin-top: 0;
+        width: 100%;
+        min-height: 43px;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 8px;
+        padding: 10px 12px;
+        font-size: 13px;
+        line-height: 1.2;
+        border-radius: 8px;
+        border-color: var(--border);
+        background: #fff;
+      }
+
+      .section-checkbox-item:hover {
+        border-color: var(--border);
+        background: #fff;
+      }
+
+      .section-checkbox-item input[type="checkbox"] {
+        margin-top: 0;
+        width: 15px;
+        height: 15px;
+        flex: 0 0 auto;
+      }
+
+      .section-checkbox-item .checkbox-item-title {
+        font-size: inherit;
+        font-weight: 400;
+        line-height: 1.2;
+        color: var(--text);
+      }
+
       .checkbox-label-text {
         display: flex;
         flex-direction: column;
@@ -2388,9 +2422,11 @@
                       <span id="skipKeyContainsCheckLabel"
                         >Skip Key Contains Check</span
                       >
-                      <label class="checkbox-item">
+                      <label class="checkbox-item section-checkbox-item">
                         <input type="checkbox" id="formSkipKeyContainsCheck" />
-                        <span>Enable across sections</span>
+                        <span class="checkbox-item-title"
+                          >Enable across sections</span
+                        >
                       </label>
                       <small
                         class="field-description"
