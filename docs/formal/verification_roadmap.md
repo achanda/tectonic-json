@@ -37,7 +37,7 @@ This is the part worth proving and model-checking.
 Relevant code:
 
 - [/Users/Abhishek/src/tectonic-json/src/index.js](/Users/Abhishek/src/tectonic-json/src/index.js)
-- [/Users/Abhishek/src/tectonic-json/formal/assist_interpreter.tla](/Users/Abhishek/src/tectonic-json/formal/assist_interpreter.tla)
+- [/Users/Abhishek/src/tectonic-json/docs/formal/assist_interpreter.tla](/Users/Abhishek/src/tectonic-json/docs/formal/assist_interpreter.tla)
 
 ### 3. State to UI must be derived, never invented
 
@@ -69,7 +69,7 @@ Relevant code:
 
 The DSL definition should be finalized in:
 
-- [/Users/Abhishek/src/tectonic-json/formal/assist_program_dsl.md](/Users/Abhishek/src/tectonic-json/formal/assist_program_dsl.md)
+- [/Users/Abhishek/src/tectonic-json/docs/formal/assist_program_dsl.md](/Users/Abhishek/src/tectonic-json/docs/formal/assist_program_dsl.md)
 
 It should explicitly define the semantics of:
 
@@ -93,7 +93,7 @@ Success criterion:
 
 Extend the model in:
 
-- [/Users/Abhishek/src/tectonic-json/formal/assist_interpreter.tla](/Users/Abhishek/src/tectonic-json/formal/assist_interpreter.tla)
+- [/Users/Abhishek/src/tectonic-json/docs/formal/assist_interpreter.tla](/Users/Abhishek/src/tectonic-json/docs/formal/assist_interpreter.tla)
 
 Add modeling for:
 

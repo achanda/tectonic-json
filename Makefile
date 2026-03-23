@@ -42,4 +42,4 @@ test-formal-js:
 	node --test test/assist-interpreter-invariants.test.mjs
 
 test-formal-tla:
-	$(TLC) formal/assist_interpreter.tla -config formal/assist_interpreter.cfg
+	$(TLC) docs/formal/assist_interpreter.tla -config docs/formal/assist_interpreter.cfg
