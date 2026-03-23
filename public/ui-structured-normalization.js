@@ -281,13 +281,15 @@
         ? config.defaultCharacterSet
         : "";
     return rawSections.map((section) => {
-      const sectionCharacterSet =
+      const explicitSectionCharacterSet =
         section &&
         typeof section === "object" &&
         typeof section.character_set === "string" &&
         section.character_set.trim()
           ? section.character_set.trim()
-          : defaultCharacterSet;
+          : "";
+      const sectionCharacterSet =
+        explicitSectionCharacterSet || defaultCharacterSet;
       const groups =
         section &&
         typeof section === "object" &&
@@ -296,11 +298,13 @@
           ? section.groups.map((group) => {
               const normalizedGroup = {};
               if (group && typeof group === "object" && !Array.isArray(group)) {
-                const groupCharacterSet =
+                const explicitGroupCharacterSet =
                   typeof group.character_set === "string" &&
                   group.character_set.trim()
                     ? group.character_set.trim()
-                    : sectionCharacterSet;
+                    : "";
+                const groupCharacterSet =
+                  explicitGroupCharacterSet || sectionCharacterSet;
                 Object.entries(
                   flattenPatchedGroup(group, knownOperationNames),
                 ).forEach(([op, spec]) => {
@@ -311,12 +315,15 @@
                     config,
                   );
                 });
+                if (explicitGroupCharacterSet) {
+                  normalizedGroup.character_set = explicitGroupCharacterSet;
+                }
                 return normalizedGroup;
               }
               return createEmptyGroupSpec();
             })
           : [createEmptyGroupSpec()];
-      return {
+      const normalizedSection = {
         skip_key_contains_check: !!(
           section &&
           typeof section === "object" &&
@@ -324,6 +331,10 @@
         ),
         groups,
       };
+      if (explicitSectionCharacterSet) {
+        normalizedSection.character_set = explicitSectionCharacterSet;
+      }
+      return normalizedSection;
     });
   }
 

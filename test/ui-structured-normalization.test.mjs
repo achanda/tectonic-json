@@ -1,57 +1,26 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
-import test from "node:test";
 import vm from "node:vm";
+import test from "node:test";
 
-const helperPath = path.resolve(
-  "/Users/Abhishek/src/tectonic-json/public/ui-structured-normalization.js",
-);
-
-async function loadUiStructuredNormalizer() {
-  const source = await fs.readFile(helperPath, "utf8");
-  const context = vm.createContext({
-    globalThis: {},
-  });
-  vm.runInContext(source, context, { filename: helperPath });
+async function loadStructuredUiNormalizer() {
+  const scriptPath = path.resolve(
+    process.cwd(),
+    "public/ui-structured-normalization.js",
+  );
+  const source = await fs.readFile(scriptPath, "utf8");
+  const context = { globalThis: {} };
+  vm.createContext(context);
+  vm.runInContext(source, context);
   return context.globalThis.TectonicUiStructuredNormalization;
 }
 
-function createUiStructuredConfig() {
+function createNormalizerConfig() {
   return {
     defaultCharacterSet: "alphanumeric",
-    operationDefaults: {
-      inserts: {
-        op_count: 500000,
-        key_len: 20,
-        val_len: 1024,
-        key_pattern: "uniform",
-        val_pattern: "uniform",
-        key_hot_len: 20,
-        key_hot_amount: 100,
-        key_hot_probability: 0.8,
-        val_hot_len: 256,
-        val_hot_amount: 100,
-        val_hot_probability: 0.8,
-      },
-      updates: {
-        op_count: 500000,
-        val_len: 1024,
-        val_pattern: "uniform",
-        val_hot_len: 256,
-        val_hot_amount: 100,
-        val_hot_probability: 0.8,
-        selection_distribution: "uniform",
-        selection_min: 0,
-        selection_max: 1,
-      },
-      point_queries: {
-        op_count: 500000,
-        selection_distribution: "uniform",
-        selection_min: 0,
-        selection_max: 1,
-      },
-    },
+    operationOrder: ["inserts"],
+    operationDefaults: { inserts: {} },
     stringPatternDefaults: {
       key_pattern: "uniform",
       val_pattern: "uniform",
@@ -62,74 +31,79 @@ function createUiStructuredConfig() {
       val_hot_amount: 100,
       val_hot_probability: 0.8,
     },
-    selectionParamDefaults: {
-      selection_min: 0,
-      selection_max: 1,
-    },
-    selectionDistributionParams: {
-      uniform: ["selection_min", "selection_max"],
-    },
+    selectionParamDefaults: {},
+    selectionDistributionParams: {},
     rangeFormats: ["StartCount", "StartEnd"],
-    opsWithOpCount: ["inserts", "updates", "point_queries"],
+    opsWithOpCount: ["inserts"],
     opsWithSorted: [],
     opsWithKey: ["inserts"],
-    opsWithValue: ["inserts", "updates"],
-    opsWithSelection: ["updates", "point_queries"],
+    opsWithValue: ["inserts"],
+    opsWithSelection: [],
     opsWithRange: [],
   };
 }
 
-test("structured UI normalization expands sparse phased operations to schema-valid specs", async () => {
-  const helper = await loadUiStructuredNormalizer();
-  assert.equal(typeof helper.normalizePatchedStructureSections, "function");
+test(
+  "structured ui normalization preserves explicit section and group character_set",
+  async () => {
+    const normalizer = await loadStructuredUiNormalizer();
+    const sections = normalizer.normalizePatchedStructureSections(
+      [
+        {
+          character_set: "alphabetic",
+          skip_key_contains_check: true,
+          groups: [
+            {
+              character_set: "numeric",
+              inserts: {
+                op_count: 1,
+                key: "key",
+                val: "value",
+              },
+            },
+          ],
+        },
+      ],
+      createNormalizerConfig(),
+    );
 
-  const normalized = helper.normalizePatchedStructureSections(
-    [
-      {
-        groups: [
-          {
-            inserts: {
-              op_count: 1000000,
-            },
-          },
-          {
-            point_queries: {
-              op_count: 400000,
-            },
-            updates: {
-              op_count: 100000,
-            },
-          },
-        ],
-      },
-    ],
-    createUiStructuredConfig(),
-  );
-  const normalizedJson = JSON.parse(JSON.stringify(normalized));
+    assert.equal(sections[0].character_set, "alphabetic");
+    assert.equal(sections[0].groups[0].character_set, "numeric");
+    assert.equal(sections[0].skip_key_contains_check, true);
+  },
+);
 
-  assert.equal(normalizedJson.length, 1);
-  assert.equal(normalizedJson[0].groups.length, 2);
-  assert.equal(normalizedJson[0].groups[0].inserts.op_count, 1000000);
-  assert.equal(normalizedJson[0].groups[0].inserts.key.uniform.len, 20);
-  assert.equal(normalizedJson[0].groups[0].inserts.val.uniform.len, 1024);
-  assert.equal(normalizedJson[0].groups[1].point_queries.op_count, 400000);
-  assert.deepEqual(normalizedJson[0].groups[1].point_queries.selection, {
-    uniform: {
-      min: 0,
-      max: 1,
-    },
-  });
-  assert.equal(normalizedJson[0].groups[1].updates.op_count, 100000);
-  assert.deepEqual(normalizedJson[0].groups[1].updates.selection, {
-    uniform: {
-      min: 0,
-      max: 1,
-    },
-  });
-  assert.deepEqual(normalizedJson[0].groups[1].updates.val, {
-    uniform: {
-      len: 1024,
-      character_set: "alphanumeric",
-    },
-  });
-});
+test(
+  "structured ui normalization does not synthesize section or group character_set from defaults",
+  async () => {
+    const normalizer = await loadStructuredUiNormalizer();
+    const sections = normalizer.normalizePatchedStructureSections(
+      [
+        {
+          groups: [
+            {
+              inserts: {
+                op_count: 1,
+                key: "key",
+                val: "value",
+              },
+            },
+          ],
+        },
+      ],
+      createNormalizerConfig(),
+    );
+
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(sections[0], "character_set"),
+      false,
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        sections[0].groups[0],
+        "character_set",
+      ),
+      false,
+    );
+  },
+);

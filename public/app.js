@@ -1082,6 +1082,7 @@ function normalizePatchedStructureSections(rawSections) {
       formCharacterSet && formCharacterSet.value
         ? formCharacterSet.value.trim()
         : "",
+    operationOrder,
     operationDefaults: OPERATION_DEFAULTS,
     stringPatternDefaults: STRING_PATTERN_DEFAULTS,
     selectionParamDefaults: SELECTION_PARAM_DEFAULTS,
@@ -1724,9 +1725,18 @@ function loadActiveStructureIntoForm() {
   });
 }
 
-function buildActiveGroupSpecFromForm(characterSet) {
+function buildActiveGroupSpecFromForm(characterSet, existingGroup = null) {
   const selectedOps = getSelectedOperations();
   const group = {};
+  const preservedCharacterSet =
+    existingGroup &&
+    typeof existingGroup.character_set === "string" &&
+    existingGroup.character_set.trim()
+      ? existingGroup.character_set.trim()
+      : "";
+  if (preservedCharacterSet) {
+    group.character_set = preservedCharacterSet;
+  }
   selectedOps.forEach((op) => {
     group[op] = buildOperationSpec(op, characterSet);
   });
@@ -1742,8 +1752,10 @@ function persistActiveStructureFromForm() {
   activeSection.skip_key_contains_check = !!(
     formSkipKeyContainsCheck && formSkipKeyContainsCheck.checked
   );
+  const existingGroup = activeSection.groups[activeGroupIndex];
   activeSection.groups[activeGroupIndex] = buildActiveGroupSpecFromForm(
     formCharacterSet ? formCharacterSet.value.trim() : "",
+    existingGroup,
   );
 }
 
@@ -2681,7 +2693,7 @@ function createAdvancedSummaryContainer(op) {
 
   const title = document.createElement("div");
   title.className = "advanced-summary-title";
-  title.textContent = "Assistant-applied advanced config";
+  title.textContent = "Advanced expression editors";
   container.appendChild(title);
 
   const list = document.createElement("div");
@@ -3119,6 +3131,7 @@ function getAdvancedExpressionRenderer() {
       nonNegativeIntOrDefault,
       probabilityOrDefault,
       getEffectiveOperationCharacterSet,
+      createInitialAdvancedFieldValue,
       setAdvancedFieldValue,
       clearAdvancedFieldValue,
       updateJsonFromForm,
@@ -3141,7 +3154,68 @@ function refreshAdvancedExpressionSummary(op) {
     container,
     op,
     operationAdvancedState.get(op) || {},
-    ADVANCED_OPERATION_FIELDS,
+    getAdvancedEditableFieldsForOperation(op),
+  );
+}
+
+function getAdvancedEditableFieldsForOperation(op) {
+  const fields = [];
+  if (formOpsWithOpCountFields.has(op)) {
+    fields.push("op_count");
+  }
+  if (formOpsWithSortedFields.has(op)) {
+    fields.push("k", "l");
+  }
+  if (formOpsWithKeyFields.has(op)) {
+    fields.push("key");
+  }
+  if (formOpsWithValueFields.has(op)) {
+    fields.push("val");
+  }
+  if (formOpsWithSelectionFields.has(op)) {
+    fields.push("selection");
+  }
+  if (formOpsWithRangeFields.has(op)) {
+    fields.push("selectivity");
+  }
+  return fields;
+}
+
+function getOperationFieldFallbackDefault(op, field, defaults) {
+  if (field === "op_count") {
+    return defaults.op_count || 500000;
+  }
+  if (field === "k") {
+    return defaults.k === undefined ? 100 : defaults.k;
+  }
+  if (field === "l") {
+    return defaults.l === undefined ? 1 : defaults.l;
+  }
+  if (field === "selectivity") {
+    return defaults.selectivity === undefined || defaults.selectivity === null
+      ? 0.01
+      : defaults.selectivity;
+  }
+  return null;
+}
+
+function createInitialAdvancedFieldValue(op, field) {
+  const defaults = OPERATION_DEFAULTS[op] || {};
+  if (field === "selection") {
+    return buildSelectionDistributionSpec(op, defaults);
+  }
+  if (field === "key" || field === "val") {
+    return buildStringExprFromForm(
+      op,
+      field,
+      getEffectiveOperationCharacterSet(op),
+      defaults,
+    );
+  }
+  return buildNumberExprFromForm(
+    op,
+    field,
+    getOperationFieldFallbackDefault(op, field, defaults),
   );
 }
 
@@ -3380,8 +3454,12 @@ function buildJsonFromForm() {
         ? sectionState.groups.map((group) => cloneJsonValue(group))
         : [],
     };
-    if (characterSet) {
-      section.character_set = characterSet;
+    if (
+      sectionState &&
+      typeof sectionState.character_set === "string" &&
+      sectionState.character_set.trim()
+    ) {
+      section.character_set = sectionState.character_set.trim();
     }
     if (sectionState.skip_key_contains_check === true) {
       section.skip_key_contains_check = true;
