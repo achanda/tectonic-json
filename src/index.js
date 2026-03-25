@@ -169,6 +169,7 @@ const RANGE_QUERY_SELECTIVITY_PROFILES = {
   short: 0.001,
   long: 0.1,
 };
+const DEFAULT_PERCENT_MIX_TOTAL_OPERATIONS = 1000000;
 const WRITE_HEAVY_DEFAULT_SPLIT = {
   write: 80,
   read: 20,
@@ -5098,6 +5099,15 @@ function buildDeterministicAssistPayload(prompt, formState, schemaHints) {
     return null;
   }
 
+  const percentMixPayload = buildDeterministicPercentMixWorkloadPayload(
+    prompt,
+    formState,
+    schemaHints,
+  );
+  if (percentMixPayload) {
+    return percentMixPayload;
+  }
+
   if (promptRequestsAllOperationCountScaling(lowerPrompt)) {
     const factor = extractPromptOperationCountScaleFactor(lowerPrompt);
     if (factor !== null) {
@@ -5146,6 +5156,61 @@ function buildDeterministicAssistPayload(prompt, formState, schemaHints) {
   }
 
   return null;
+}
+
+function buildDeterministicPercentMixWorkloadPayload(
+  prompt,
+  formState,
+  schemaHints,
+) {
+  const lowerPrompt = String(prompt || "").toLowerCase();
+  if (!lowerPrompt) {
+    return null;
+  }
+  if (
+    getEnabledOperationNames(formState || { operations: {} }, schemaHints)
+      .length > 0
+  ) {
+    return null;
+  }
+  if (!/\b(?:generate|create|make|build)\b/.test(lowerPrompt)) {
+    return null;
+  }
+  if (extractPromptCountHint(prompt) !== null) {
+    return null;
+  }
+  const group = deriveStructuredGroupFromClause(prompt, schemaHints, {
+    defaultPercentTotalCount: DEFAULT_PERCENT_MIX_TOTAL_OPERATIONS,
+  });
+  if (!group || typeof group !== "object") {
+    return null;
+  }
+  const operationNames = Object.keys(group);
+  if (operationNames.length === 0) {
+    return null;
+  }
+  const amountHints = extractOperationAmountHints(prompt, operationNames);
+  const hasPercentMix = Object.values(amountHints).some(
+    (entry) => entry && entry.type === "percent",
+  );
+  if (!hasPercentMix) {
+    return null;
+  }
+  return {
+    summary: "Created a mixed workload using the requested percentage split.",
+    program: [
+      {
+        kind: "replace_sections",
+        sections: [{ groups: [group] }],
+      },
+    ],
+    clarifications: [],
+    assumptions: [
+      "Assumed 1000000 total operations because the prompt specified percentages without an explicit total operation count.",
+    ],
+    questions: [],
+    assumption_texts: [],
+  };
 }
 
 function deriveStructuredSectionsFromPrompt(prompt, schemaHints) {
@@ -5410,7 +5475,7 @@ function detectRangeQueryProfile(lowerPrompt) {
   return null;
 }
 
-function deriveStructuredGroupFromClause(clause, schemaHints) {
+function deriveStructuredGroupFromClause(clause, schemaHints, options = {}) {
   const text = String(clause || "").trim();
   if (!text) {
     return null;
@@ -5457,6 +5522,17 @@ function deriveStructuredGroupFromClause(clause, schemaHints) {
 
   const totalCount = extractPromptCountHint(text);
   const amountHints = extractOperationAmountHints(text, operations);
+  const defaultPercentTotalCount = positiveIntegerOrNull(
+    options.defaultPercentTotalCount,
+  );
+  const effectiveTotalCount =
+    totalCount !== null
+      ? totalCount
+      : Object.values(amountHints).some((entry) => entry && entry.type === "percent")
+        ? defaultPercentTotalCount
+        : defaultPercents && operations.length > 0
+          ? defaultPercentTotalCount
+          : null;
   const group = {};
 
   operations.forEach((operationName) => {
@@ -5467,17 +5543,19 @@ function deriveStructuredGroupFromClause(clause, schemaHints) {
     } else if (
       amountHint &&
       amountHint.type === "percent" &&
-      totalCount !== null
+      effectiveTotalCount !== null
     ) {
-      opCount = Math.round((totalCount * amountHint.value) / 100);
+      opCount = Math.round((effectiveTotalCount * amountHint.value) / 100);
     } else if (
       defaultPercents &&
       Object.prototype.hasOwnProperty.call(defaultPercents, operationName) &&
-      totalCount !== null
+      effectiveTotalCount !== null
     ) {
-      opCount = Math.round((totalCount * defaultPercents[operationName]) / 100);
-    } else if (operations.length === 1 && totalCount !== null) {
-      opCount = totalCount;
+      opCount = Math.round(
+        (effectiveTotalCount * defaultPercents[operationName]) / 100,
+      );
+    } else if (operations.length === 1 && effectiveTotalCount !== null) {
+      opCount = effectiveTotalCount;
     }
 
     const spec = {};
