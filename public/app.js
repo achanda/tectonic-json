@@ -20,6 +20,7 @@ const skipKeyContainsCheckLabel = document.getElementById(
 const operationsTitle = document.getElementById("operationsTitle");
 const presetFamilySelect = document.getElementById("presetFamilySelect");
 const presetFileSelect = document.getElementById("presetFileSelect");
+const presetScaleInput = document.getElementById("presetScaleInput");
 const presetSelectionNote = document.getElementById("presetSelectionNote");
 const operationToggles = document.getElementById("operationToggles");
 const operationConfigContainer = document.getElementById(
@@ -607,7 +608,7 @@ async function initApp() {
   try {
     await loadPresetCatalog();
   } catch (e) {
-    reportUiIssue("Failed to load preset catalog", e);
+    reportUiIssue("Failed to load workload catalog", e);
   }
   try {
     const shouldRestorePersistedUiState =
@@ -1336,6 +1337,7 @@ function getPresetFlowController() {
       presetBrowserBtn,
       presetFamilySelect,
       presetFileSelect,
+      presetScaleInput,
       presetSelectionNote,
       previewPanel,
       runWorkloadBtn,
@@ -1486,7 +1488,6 @@ function loadPresetIntoBuilder(presetJson) {
   workloadForm.reset();
   clearFieldLocks();
   clearOperationFormState();
-  activePresetJson = null;
 
   const presetCharacterSet =
     normalizedJson && typeof normalizedJson.character_set === "string"
@@ -4330,6 +4331,12 @@ function renderJsonSummary(json) {
     return;
   }
   const model = buildWorkloadSummaryModel(json);
+  const workloadScale =
+    activePresetJson &&
+    presetScaleInput &&
+    /^[1-9]\d*$/.test(String(presetScaleInput.value || "").trim())
+      ? Number.parseInt(String(presetScaleInput.value).trim(), 10)
+      : null;
   jsonSummary.replaceChildren();
 
   const header = document.createElement("div");
@@ -4345,6 +4352,26 @@ function renderJsonSummary(json) {
   overview.className = "json-summary-overview";
   overview.textContent = model.overview;
   jsonSummary.appendChild(overview);
+
+  if (Number.isSafeInteger(workloadScale) && workloadScale > 0) {
+    const scaleSection = document.createElement("section");
+    scaleSection.className = "json-summary-section";
+
+    const scaleTitle = document.createElement("div");
+    scaleTitle.className = "json-summary-section-title";
+    scaleTitle.textContent = "Workload scale";
+    scaleSection.appendChild(scaleTitle);
+
+    const scaleValue = document.createElement("div");
+    scaleValue.className = "json-summary-overview";
+    scaleValue.textContent =
+      "Operations loaded from the selected workload are scaled by x" +
+      String(workloadScale) +
+      ".";
+    scaleSection.appendChild(scaleValue);
+
+    jsonSummary.appendChild(scaleSection);
+  }
 
   if (Array.isArray(model.groups) && model.groups.length > 0) {
     const groupsSection = document.createElement("section");

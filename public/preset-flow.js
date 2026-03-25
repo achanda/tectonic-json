@@ -69,6 +69,62 @@
         : "/presets/index.json";
 
     let presetCatalog = [];
+    const SCALE_ERROR_MESSAGE = "Scale must be a positive integer.";
+
+    function parsePositiveInteger(rawValue) {
+      const text =
+        typeof rawValue === "string" || typeof rawValue === "number"
+          ? String(rawValue).trim()
+          : "";
+      if (!/^[1-9]\d*$/.test(text)) {
+        return null;
+      }
+      const parsed = Number.parseInt(text, 10);
+      return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+    }
+
+    function getPresetScaleValue() {
+      if (!refs.presetScaleInput) {
+        return 1;
+      }
+      return parsePositiveInteger(refs.presetScaleInput.value);
+    }
+
+    function normalizePresetScaleInput() {
+      if (!refs.presetScaleInput) {
+        return 1;
+      }
+      const scale = getPresetScaleValue();
+      refs.presetScaleInput.setCustomValidity(
+        scale === null ? SCALE_ERROR_MESSAGE : "",
+      );
+      if (scale === null) {
+        return null;
+      }
+      refs.presetScaleInput.value = String(scale);
+      return scale;
+    }
+
+    function scalePresetOperationCounts(value, scale) {
+      if (!value || typeof value !== "object" || scale === 1) {
+        return value;
+      }
+      if (Array.isArray(value)) {
+        value.forEach(function scaleArrayEntry(entry) {
+          scalePresetOperationCounts(entry, scale);
+        });
+        return value;
+      }
+      Object.keys(value).forEach(function scaleObjectEntry(key) {
+        const entry = value[key];
+        if (key === "op_count" && typeof entry === "number" && Number.isFinite(entry)) {
+          value[key] = Math.trunc(entry * scale);
+          return;
+        }
+        scalePresetOperationCounts(entry, scale);
+      });
+      return value;
+    }
 
     function clearPresetSelectionNote() {
       if (!refs.presetSelectionNote) {
@@ -104,6 +160,14 @@
           : "No description available.";
       refs.presetSelectionNote.appendChild(description);
 
+      const scale = getPresetScaleValue();
+      if (scale && scale > 1) {
+        const scaleNote = document.createElement("div");
+        scaleNote.className = "preset-note-description";
+        scaleNote.textContent = "Workload scale applied: x" + String(scale);
+        refs.presetSelectionNote.appendChild(scaleNote);
+      }
+
       refs.presetSelectionNote.hidden = false;
     }
 
@@ -119,6 +183,39 @@
         refs.presetFileSelect.disabled = true;
       }
       clearPresetSelectionNote();
+    }
+
+    function reapplyLoadedPresetWithScale() {
+      const activePresetJson = getActivePresetJson();
+      const presetId =
+        refs.presetFileSelect && typeof refs.presetFileSelect.value === "string"
+          ? refs.presetFileSelect.value
+          : "";
+      if (!activePresetJson || !presetId) {
+        return;
+      }
+      const scale = normalizePresetScaleInput();
+      if (scale === null) {
+        if (
+          refs.presetScaleInput &&
+          typeof refs.presetScaleInput.reportValidity === "function"
+        ) {
+          refs.presetScaleInput.reportValidity();
+        }
+        setValidationStatus(SCALE_ERROR_MESSAGE, "invalid");
+        return;
+      }
+      const preset = presetCatalog.find(function findPresetById(entry) {
+        return entry && entry.id === presetId;
+      });
+      loadPresetIntoBuilder(
+        scalePresetOperationCounts(cloneJsonValue(activePresetJson), scale),
+      );
+      clearWorkloadRuns();
+      if (preset) {
+        renderPresetSelectionNote(preset.family, preset.id);
+      }
+      syncLandingUi();
     }
 
     function syncLandingUi() {
@@ -265,6 +362,24 @@
       syncLandingUi();
     }
 
+    function handlePresetScaleChange() {
+      reapplyLoadedPresetWithScale();
+    }
+
+    function handlePresetScaleInput() {
+      if (!refs.presetScaleInput) {
+        return;
+      }
+      const scale = getPresetScaleValue();
+      refs.presetScaleInput.setCustomValidity(
+        scale === null ? SCALE_ERROR_MESSAGE : "",
+      );
+      if (scale === null) {
+        return;
+      }
+      reapplyLoadedPresetWithScale();
+    }
+
     async function handlePresetFileChange(event) {
       const presetId =
         event && event.target && typeof event.target.value === "string"
@@ -291,11 +406,23 @@
       }
 
       try {
+        const scale = normalizePresetScaleInput();
+        if (scale === null) {
+          if (refs.presetScaleInput && typeof refs.presetScaleInput.reportValidity === "function") {
+            refs.presetScaleInput.reportValidity();
+          }
+          setActivePresetJson(null);
+          clearPresetSelectionNote();
+          setValidationStatus(SCALE_ERROR_MESSAGE, "invalid");
+          syncLandingUi();
+          return;
+        }
         const response = await fetch(preset.path, { cache: "no-store" });
         if (!response.ok) {
-          throw new Error("Failed to load preset JSON.");
+          throw new Error("Failed to load workload JSON.");
         }
         const loadedJson = await response.json();
+        const scaledJson = scalePresetOperationCounts(cloneJsonValue(loadedJson), scale);
         if (refs.presetFamilySelect) {
           refs.presetFamilySelect.value = preset.family;
         }
@@ -305,8 +432,8 @@
           refs.presetFileSelect.disabled = false;
         }
         setCustomWorkloadMode(true);
-        setActivePresetJson(null);
-        loadPresetIntoBuilder(cloneJsonValue(loadedJson));
+        setActivePresetJson(cloneJsonValue(loadedJson));
+        loadPresetIntoBuilder(scaledJson);
         clearWorkloadRuns();
         renderPresetSelectionNote(preset.family, preset.id);
         syncLandingUi();
@@ -314,7 +441,7 @@
         setActivePresetJson(null);
         clearPresetSelectionNote();
         setValidationStatus(
-          error && error.message ? error.message : "Failed to load preset JSON.",
+          error && error.message ? error.message : "Failed to load workload JSON.",
           "invalid",
         );
         syncLandingUi();
@@ -333,6 +460,10 @@
           "change",
           handlePresetFileChange,
         );
+      }
+      if (refs.presetScaleInput) {
+        refs.presetScaleInput.addEventListener("input", handlePresetScaleInput);
+        refs.presetScaleInput.addEventListener("change", handlePresetScaleChange);
       }
       if (refs.presetBrowserBtn) {
         refs.presetBrowserBtn.addEventListener(

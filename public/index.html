@@ -2574,7 +2574,7 @@
       <header id="appHeader" hidden>
         <div class="header-actions">
           <button class="btn btn-ghost" id="presetBrowserBtn" hidden>
-            Browse Presets
+            Browse Workloads
           </button>
           <button class="btn btn-ghost" id="newWorkloadBtn" hidden>
             Clear Form
@@ -2590,7 +2590,7 @@
             benchmark specifications.
           </p>
           <p>
-            You can start from a preset or describe the workload you want, then
+            You can start from a workload or describe the workload you want, then
             refine sections, phases, operations, and advanced fields directly in
             the builder.
           </p>
@@ -2611,9 +2611,9 @@
               <div class="builder-entry-card">
                 <div class="builder-entry-panel" id="builderPresetPanel">
                   <div class="builder-entry-copy">
-                    <span class="builder-entry-title">Start from a preset</span>
+                    <span class="builder-entry-title">Start from a workload</span>
                     <p class="builder-entry-help">
-                      Pick a workload family and file. The selected preset loads
+                      Pick a workload family and file. The selected workload loads
                       directly into the same editable builder below.
                     </p>
                   </div>
@@ -2629,6 +2629,16 @@
                       <select id="presetFileSelect" disabled>
                         <option value="">Choose a file...</option>
                       </select>
+                    </label>
+                    <label class="field">
+                      <span>Scale</span>
+                      <input
+                        id="presetScaleInput"
+                        type="text"
+                        inputmode="numeric"
+                        pattern="[1-9][0-9]*"
+                        value="1"
+                      />
                     </label>
                   </div>
                   <div class="preset-note" id="presetSelectionNote" hidden></div>
