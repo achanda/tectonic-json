@@ -1056,6 +1056,49 @@ test("worker assist endpoint defaults total count for fresh percentage-only work
   );
 });
 
+test("worker assist endpoint maps GET to point queries in fresh percentage-only workload mixes", async () => {
+  const request = new Request("https://example.com/api/assist", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      prompt:
+        "Generate a balanced workload: 50% GET, 25% UPDATE, and 25% INSERT.",
+      form_state: createFormState({}),
+      schema_hints: SCHEMA_HINTS,
+      current_json: null,
+      conversation: [],
+      answers: {},
+    }),
+  });
+
+  const response = await workerEntrypoint.fetch(request, {
+    ASSETS: {
+      fetch: async () => new Response("not found", { status: 404 }),
+    },
+  });
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.source, "deterministic");
+  assert.equal(body.patch.sections_count, 1);
+  assert.equal(body.patch.groups_per_section, 1);
+  assert.deepEqual(
+    sortedKeys(body.patch.sections[0].groups[0]),
+    ["inserts", "point_queries", "updates"],
+  );
+  assert.equal(body.patch.sections[0].groups[0].point_queries.op_count, 500000);
+  assert.equal(body.patch.sections[0].groups[0].updates.op_count, 250000);
+  assert.equal(body.patch.sections[0].groups[0].inserts.op_count, 250000);
+  assert.equal(
+    body.assumption_texts.includes(
+      "Assumed 1000000 total operations because the prompt specified percentages without an explicit total operation count.",
+    ),
+    true,
+  );
+});
+
 test("worker assist endpoint falls back to deterministic phased parsing when AI output is truncated", async () => {
   const request = new Request("https://example.com/api/assist", {
     method: "POST",

@@ -62,7 +62,7 @@ const OPERATION_PROMPT_PATTERN_SOURCES = {
   inserts: "insert(?:s|ion)?",
   updates: "update(?:s)?",
   merges: "merge(?:s)?|read[- ]?modify[- ]?write|rmw",
-  point_queries: "point\\s+quer(?:y|ie|ies)|point\\s+read(?:s)?",
+  point_queries: "point\\s+quer(?:y|ie|ies)|point\\s+read(?:s)?|get(?:s)?",
   range_queries: "range\\s+quer(?:y|ie|ies)",
   point_deletes: "point\\s+delete(?:s)?",
   range_deletes: "range\\s+delete(?:s)?",

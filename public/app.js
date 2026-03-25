@@ -81,7 +81,7 @@ const PROMPT_OPERATION_MATCHER_SOURCES = {
   inserts: "insert(?:s|ion)?",
   updates: "update(?:s)?",
   merges: "merge(?:s)?|read[- ]?modify[- ]?write|rmw",
-  point_queries: "point\\s+(?:query|querie|queries|read|reads)",
+  point_queries: "point\\s+(?:query|querie|queries|read|reads)|get(?:s)?",
   range_queries: "range\\s+(?:query|querie|queries)",
   point_deletes: "point\\s+delete(?:s)?",
   range_deletes: "range\\s+delete(?:s)?",
