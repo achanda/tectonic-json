@@ -4817,6 +4817,16 @@ function extractPromptRangeSelectivityHint(prompt) {
   if (!text) {
     return null;
   }
+  const leadingPercentMatch = text.match(
+    /\b([0-9][0-9,]*(?:\.\d+)?)\s*%\s+selectivity\b/i,
+  );
+  if (leadingPercentMatch) {
+    const parsed = numberOrNull(leadingPercentMatch[1].replace(/,/g, ""));
+    if (parsed !== null) {
+      const fraction = parsed / 100;
+      return fraction >= 0 ? fraction : null;
+    }
+  }
   const percentMatch = text.match(
     /\bselectivity\b[\s\S]{0,16}?\b([0-9][0-9,]*(?:\.\d+)?)\s*%/i,
   );
@@ -5344,7 +5354,28 @@ function buildDeterministicPercentMixWorkloadPayload(
 }
 
 function buildStructuredGroupsFromPromptText(text, schemaHints) {
-  const clauses = splitPromptIntoPhaseClauses(text);
+  const rawClauses = splitPromptIntoPhaseClauses(text);
+  const clauses = [];
+  rawClauses.forEach((clause) => {
+    const lowerClause = String(clause || "").toLowerCase();
+    const previousClause =
+      clauses.length > 0 ? String(clauses[clauses.length - 1] || "") : "";
+    const lowerPrevious = previousClause.toLowerCase();
+    const startsInterleave = /^\s*interleave(?:d)?\b/.test(lowerClause);
+    const previousIsStandaloneWriteStep =
+      /\binsert(?:s|ion)?\b|\bupdate(?:s)?\b|\bmerge(?:s)?\b/.test(
+        lowerPrevious,
+      ) &&
+      !/\bpreload\b|\bseed\b|\bprime\b|\bload\s+the\s+(?:db|database)\b|\bphase\b/.test(
+        lowerPrevious,
+      ) &&
+      !/\binterleave(?:d)?\b/.test(lowerPrevious);
+    if (startsInterleave && previousIsStandaloneWriteStep) {
+      clauses[clauses.length - 1] = `${previousClause}, ${clause}`;
+      return;
+    }
+    clauses.push(clause);
+  });
   const groups = clauses
     .map((clause) => deriveStructuredGroupFromClause(clause, schemaHints))
     .filter(
@@ -5624,6 +5655,10 @@ function extractOperationAmountHints(text, operations) {
       ),
       new RegExp(
         `\\b${amountPatternSource}\\b\\s+(?:at|with)\\s+(\\d[\\d,]*(?:\\.\\d+)?\\s*[kmb]?|\\d+(?:\\.\\d+)?)\\s*(%)?\\b`,
+        "i",
+      ),
+      new RegExp(
+        `\\b${amountPatternSource}\\b\\s+(?:of\\s+)?(\\d[\\d,]*(?:\\.\\d+)?\\s*[kmb]?|\\d+(?:\\.\\d+)?)\\s*(%)?\\s+(?:new\\s+)?(?:keys?|records?|entries?|operations?|ops?)\\b`,
         "i",
       ),
     ];
