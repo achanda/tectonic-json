@@ -4017,6 +4017,9 @@ function applyPromptTargetedGroupEditFallback(
   const nextGroup = nextSections[target.sectionIndex].groups[target.groupIndex];
   const replacement = extractPromptOperationReplacement(prompt, schemaHints);
   const mentionedOperations = getMentionedOperationsFromPrompt(prompt, schemaHints);
+  const derivedGroup =
+    deriveStructuredGroupFromClause(prompt, schemaHints) || {};
+  const promptSelectivity = extractPromptRangeSelectivityHint(prompt);
   const allowedOperations = new Set(
     replacement &&
     replacement.sourceOperation &&
@@ -4052,17 +4055,95 @@ function applyPromptTargetedGroupEditFallback(
     appliedOperationPatch = true;
   });
 
+  if (!replacement && allowedOperations.size > 0) {
+    allowedOperations.forEach((operationName) => {
+      if (!schemaHints.operation_order.includes(operationName)) {
+        return;
+      }
+      if (promptExplicitlyDisablesOperation(prompt, operationName, schemaHints)) {
+        applyOperationPatchToStructuredGroup(
+          nextGroup,
+          operationName,
+          { enabled: false },
+          schemaHints,
+        );
+      }
+    });
+  }
+
   if (!replacement && allowedOperations.size > 0 && !appliedOperationPatch) {
     allowedOperations.forEach((operationName) => {
       if (!schemaHints.operation_order.includes(operationName)) {
         return;
       }
+      if (promptExplicitlyDisablesOperation(prompt, operationName, schemaHints)) {
+        return;
+      }
       applyOperationPatchToStructuredGroup(
         nextGroup,
         operationName,
-        { enabled: true },
+        derivedGroup[operationName] &&
+          typeof derivedGroup[operationName] === "object"
+          ? { ...cloneJsonValue(derivedGroup[operationName]), enabled: true }
+          : { enabled: true },
         schemaHints,
       );
+    });
+  }
+
+  if (!replacement && allowedOperations.size > 0) {
+    allowedOperations.forEach((operationName) => {
+      if (!schemaHints.operation_order.includes(operationName)) {
+        return;
+      }
+      if (promptExplicitlyDisablesOperation(prompt, operationName, schemaHints)) {
+        return;
+      }
+      if (!nextGroup[operationName] || typeof nextGroup[operationName] !== "object") {
+        return;
+      }
+      const derivedSpec =
+        derivedGroup[operationName] && typeof derivedGroup[operationName] === "object"
+          ? derivedGroup[operationName]
+          : null;
+      if (derivedSpec) {
+        if (
+          (nextGroup[operationName].op_count === null ||
+            nextGroup[operationName].op_count === undefined) &&
+          derivedSpec.op_count !== null &&
+          derivedSpec.op_count !== undefined
+        ) {
+          nextGroup[operationName].op_count = cloneJsonValue(derivedSpec.op_count);
+        }
+        if (
+          (nextGroup[operationName].selectivity === null ||
+            nextGroup[operationName].selectivity === undefined) &&
+          derivedSpec.selectivity !== null &&
+          derivedSpec.selectivity !== undefined
+        ) {
+          nextGroup[operationName].selectivity = cloneJsonValue(
+            derivedSpec.selectivity,
+          );
+        }
+        if (
+          (nextGroup[operationName].range_format === null ||
+            nextGroup[operationName].range_format === undefined) &&
+          derivedSpec.range_format
+        ) {
+          nextGroup[operationName].range_format = cloneJsonValue(
+            derivedSpec.range_format,
+          );
+        }
+      }
+      if (
+        promptSelectivity !== null &&
+        (operationName === "range_queries" || operationName === "range_deletes")
+      ) {
+        nextGroup[operationName].selectivity = promptSelectivity;
+        if (!nextGroup[operationName].range_format) {
+          nextGroup[operationName].range_format = "StartCount";
+        }
+      }
     });
   }
 
@@ -4627,6 +4708,19 @@ function applyPromptOperationFieldFallback(
     changed = true;
   }
 
+  const selectivityHint = extractPromptRangeSelectivityHint(prompt);
+  if (
+    capabilities.has_range &&
+    selectivityHint !== null &&
+    opPatch.enabled !== false
+  ) {
+    opPatch.selectivity = selectivityHint;
+    if (!opPatch.range_format) {
+      opPatch.range_format = "StartCount";
+    }
+    changed = true;
+  }
+
   if (changed) {
     patch.operations[operationName] = opPatch;
   }
@@ -4724,6 +4818,34 @@ function extractPromptRangeScanLengthHint(prompt) {
     }
     const parsed = parseHumanCountToken(match[1]);
     if (normalizedFinitePositiveNumber(parsed) !== null) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function extractPromptRangeSelectivityHint(prompt) {
+  const text = String(prompt || "");
+  if (!text) {
+    return null;
+  }
+  const percentMatch = text.match(
+    /\bselectivity\b[\s\S]{0,16}?\b([0-9][0-9,]*(?:\.\d+)?)\s*%/i,
+  );
+  if (percentMatch) {
+    const parsed = numberOrNull(percentMatch[1].replace(/,/g, ""));
+    if (parsed !== null) {
+      const fraction = parsed / 100;
+      return fraction >= 0 ? fraction : null;
+    }
+  }
+
+  const numericMatch = text.match(
+    /\bselectivity\b[\s\S]{0,16}?\b([0-9](?:[0-9,]*)(?:\.\d+)?)\b/i,
+  );
+  if (numericMatch) {
+    const parsed = numberOrNull(numericMatch[1].replace(/,/g, ""));
+    if (parsed !== null && parsed >= 0 && parsed <= 1) {
       return parsed;
     }
   }
@@ -5366,8 +5488,12 @@ function deriveStructuredGroupFromClause(clause, schemaHints) {
       operationName === "range_queries" ||
       operationName === "range_deletes"
     ) {
+      const explicitSelectivity = extractPromptRangeSelectivityHint(text);
       const rangeProfile = detectRangeQueryProfile(lowerClause);
-      if (rangeProfile) {
+      if (explicitSelectivity !== null) {
+        spec.selectivity = explicitSelectivity;
+        spec.range_format = "StartCount";
+      } else if (rangeProfile) {
         spec.selectivity = RANGE_QUERY_SELECTIVITY_PROFILES[rangeProfile];
         spec.range_format = "StartCount";
       } else {
@@ -5388,7 +5514,7 @@ function extractPromptCountHint(prompt) {
   }
   const contextualMatches = [
     ...text.matchAll(
-      /(\d[\d,]*(?:\.\d+)?(?:\s*(?:k|m|b|thousand|million|billion))?)(?!\s*%)(?=\s+(?:operations?|ops?|entries?|inserts?|updates?|merges?|deletes?|queries?|reads?))/gi,
+      /(\d[\d,]*(?:\.\d+)?(?:\s*(?:k|m|b|thousand|million|billion))?)(?!\s*%)(?=\s+(?:operations?|ops?|entries?|inserts?|updates?|merges?|deletes?|queries?|reads?|scans?))/gi,
     ),
   ];
   if (contextualMatches.length > 0) {
@@ -5401,8 +5527,25 @@ function extractPromptCountHint(prompt) {
       /\b(\d[\d,]*(?:\.\d+)?(?:\s*(?:k|m|b|thousand|million|billion))?)\b(?!\s*%)/gi,
     ),
   ];
-  if (genericMatches.length > 0) {
-    return parseHumanCountToken(genericMatches[genericMatches.length - 1][1]);
+  for (let index = genericMatches.length - 1; index >= 0; index -= 1) {
+    const match = genericMatches[index];
+    const token = match && match[1] ? match[1] : null;
+    const matchIndex = Number.isInteger(match && match.index) ? match.index : -1;
+    if (!token || matchIndex < 0) {
+      continue;
+    }
+    const prefix = text
+      .slice(Math.max(0, matchIndex - 24), matchIndex)
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trimEnd();
+    if (
+      /\b(?:group|section|phase)\s*$/.test(prefix) ||
+      /\b(?:group|section|phase)\s+(?:the\s+)?$/.test(prefix)
+    ) {
+      continue;
+    }
+    return parseHumanCountToken(token);
   }
   return null;
 }
@@ -6197,29 +6340,30 @@ function promptExplicitlyRestrictsToOperation(prompt, operationName) {
 }
 
 function promptMentionsOperation(lowerPrompt, operationName) {
+  const text = String(lowerPrompt || "").toLowerCase();
   const escapedOperationName = escapeRegExp(operationName.toLowerCase());
-  if (new RegExp(`\\b${escapedOperationName}\\b`).test(lowerPrompt)) {
+  if (new RegExp(`\\b${escapedOperationName}\\b`).test(text)) {
     return true;
   }
   const patternSource = getOperationPromptPatternSource(operationName);
   if (
     patternSource &&
     operationPatternMatchesWithPrefixGuards(
-      lowerPrompt,
+      text,
       new RegExp(`\\b(?:${patternSource})\\b`, "g"),
       getOperationPromptBlockedPrefixes(operationName),
     )
   ) {
     return true;
   }
-  if (operationName === "range_queries" && promptMentionsScanIntent(lowerPrompt)) {
+  if (operationName === "range_queries" && promptMentionsScanIntent(text)) {
     return true;
   }
   return false;
 }
 
 function promptMentionsScanIntent(lowerPrompt) {
-  const text = String(lowerPrompt || "");
+  const text = String(lowerPrompt || "").toLowerCase();
   if (!text) {
     return false;
   }
@@ -6510,7 +6654,7 @@ function keyValueDistributionIntent(lowerPrompt) {
 }
 
 function getMentionedOperationsFromPrompt(lowerPrompt, schemaHints) {
-  const text = String(lowerPrompt || "");
+  const text = String(lowerPrompt || "").toLowerCase();
   if (!text) {
     return [];
   }

@@ -64,6 +64,92 @@ function createWorkloadEStyleState() {
   });
 }
 
+function createWorkloadCStyleState() {
+  return applyPatchToState(createFormState({}), {
+    sections: [
+      {
+        groups: [
+          {
+            inserts: {
+              enabled: true,
+              op_count: 1000000,
+            },
+          },
+          {
+            point_queries: {
+              enabled: true,
+              op_count: 1000000,
+              selection: {
+                beta: {
+                  alpha: 0.1,
+                  beta: 5,
+                },
+              },
+              selection_distribution: "beta",
+              selection_alpha: 0.1,
+              selection_beta: 5,
+            },
+          },
+        ],
+      },
+    ],
+    sections_count: 1,
+    groups_per_section: 2,
+    clear_operations: false,
+    operations: {},
+  });
+}
+
+function createWorkloadAStyleState() {
+  return applyPatchToState(createFormState({}), {
+    sections: [
+      {
+        groups: [
+          {
+            inserts: {
+              enabled: true,
+              op_count: 1000000,
+            },
+          },
+          {
+            point_queries: {
+              enabled: true,
+              op_count: 500000,
+              selection: {
+                beta: {
+                  alpha: 0.1,
+                  beta: 5,
+                },
+              },
+              selection_distribution: "beta",
+              selection_alpha: 0.1,
+              selection_beta: 5,
+            },
+            updates: {
+              enabled: true,
+              op_count: 500000,
+              selection: {
+                beta: {
+                  alpha: 0.1,
+                  beta: 5,
+                },
+              },
+              selection_distribution: "beta",
+              selection_alpha: 0.1,
+              selection_beta: 5,
+              val: { uniform: { len: 128 } },
+            },
+          },
+        ],
+      },
+    ],
+    sections_count: 1,
+    groups_per_section: 2,
+    clear_operations: false,
+    operations: {},
+  });
+}
+
 async function requestAssist(prompt, formState = createFormState({})) {
   return requestLiveAssist({ prompt, formState, provider: LIVE_PROVIDER });
 }
@@ -299,6 +385,93 @@ test(
         s: 1.5,
       },
     });
+  },
+);
+
+test(
+  "group-targeted regression: add 10K scans to group 1 uses the scan count, not the group index",
+  { skip: !LIVE_PROVIDER.binding, timeout: 180000 },
+  async () => {
+    const state = createWorkloadCStyleState();
+    assert.equal(state.sections[0].groups[0].inserts.op_count, 1000000);
+    assert.deepEqual(
+      state.sections[0].groups[1].point_queries.selection,
+      {
+        beta: {
+          alpha: 0.1,
+          beta: 5,
+        },
+      },
+    );
+    const result = await requestAssist("Add 10K scans to group 1.", state);
+    const nextState = applyPatchToState(state, result.patch);
+
+    assert.equal(nextState.sections_count, 1);
+    assert.equal(nextState.groups_per_section, 2);
+    assert.deepEqual(
+      configuredOperations(nextState.sections[0].groups[0]),
+      ["inserts", "range_queries"],
+    );
+    assert.deepEqual(
+      configuredOperations(nextState.sections[0].groups[1]),
+      ["point_queries"],
+    );
+    assert.equal(nextState.sections[0].groups[0].inserts.op_count, 1000000);
+    assert.equal(nextState.sections[0].groups[0].range_queries.op_count, 10000);
+    assert.equal(
+      nextState.sections[0].groups[0].range_queries.range_format,
+      "StartCount",
+    );
+    assert.equal(nextState.sections[0].groups[0].range_queries.selectivity, 0.01);
+    assert.equal(nextState.sections[0].groups[1].point_queries.op_count, 1000000);
+    assert.deepEqual(
+      nextState.sections[0].groups[1].point_queries.selection,
+      {
+        beta: {
+          alpha: 0.1,
+          beta: 5,
+        },
+      },
+    );
+  },
+);
+
+test(
+  "group-targeted regression: remove updates from group 2 and add 10K range queries with selectivity 10%",
+  { skip: !LIVE_PROVIDER.binding, timeout: 180000 },
+  async () => {
+    const state = createWorkloadAStyleState();
+    const result = await requestAssist(
+      "remove updates from group 2 and add 10K range queries with selectivity 10%",
+      state,
+    );
+    const nextState = applyPatchToState(state, result.patch);
+
+    assert.equal(nextState.sections_count, 1);
+    assert.equal(nextState.groups_per_section, 2);
+    assert.deepEqual(
+      configuredOperations(nextState.sections[0].groups[0]),
+      ["inserts"],
+    );
+    assert.deepEqual(
+      configuredOperations(nextState.sections[0].groups[1]),
+      ["point_queries", "range_queries"],
+    );
+    assert.equal(nextState.sections[0].groups[0].inserts.op_count, 1000000);
+    assert.equal(nextState.sections[0].groups[1].point_queries.op_count, 500000);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        nextState.sections[0].groups[1],
+        "updates",
+      ),
+      false,
+    );
+    assert.equal(nextState.sections[0].groups[1].range_queries.op_count, 10000);
+    assert.equal(nextState.sections[0].groups[1].range_queries.selectivity, 0.1);
+    assert.equal(
+      nextState.sections[0].groups[1].range_queries.range_format,
+      "StartCount",
+    );
   },
 );
 

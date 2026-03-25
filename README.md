@@ -165,7 +165,7 @@ Local Ollama:
 
 ```bash
 export AI_PROVIDER=ollama
-export OLLAMA_MODEL=llama3.2:3b
+export OLLAMA_MODEL=llama3
 # Optional overrides:
 # export OLLAMA_BASE_URL=http://127.0.0.1:11434
 # export OLLAMA_API_ENDPOINT=/api/generate
@@ -193,7 +193,7 @@ ollama serve
 3. Pull a local model.
 
 ```bash
-ollama pull llama3.2:3b
+ollama pull llama3
 ```
 
 4. Verify the local API is reachable.
@@ -205,7 +205,7 @@ curl http://127.0.0.1:11434/api/tags
 5. Start this app against Ollama.
 
 ```bash
-AI_PROVIDER=ollama OLLAMA_MODEL=llama3.2:3b make dev
+AI_PROVIDER=ollama OLLAMA_MODEL=llama3 make dev
 ```
 
 6. Run the Ollama-backed demo tests.
