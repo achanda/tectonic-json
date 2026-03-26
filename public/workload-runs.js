@@ -261,7 +261,17 @@
         "Workload Execution latency",
       "Aggregate Operation Time": "Aggregate Op Time",
     };
-    return replacements[normalized] || normalized;
+    if (replacements[normalized]) {
+      return replacements[normalized];
+    }
+    const prefixedMatch = normalized.match(/^(.+?)\s+(Count|Successful Operations Count|Total Latency|Average Latency|Minimum Latency|Maximum Latency|95th Percentile Latency|99th Percentile Latency|Total Operations|Throughput \(using start and end time\)|Throughput \(using aggregate operation times\)|Total Time Spent \(using start and end time\)|Aggregate Operation Time)$/);
+    if (!prefixedMatch) {
+      return normalized;
+    }
+    const prefix = String(prefixedMatch[1] || "").trim();
+    const suffix = String(prefixedMatch[2] || "").trim();
+    const formattedSuffix = replacements[suffix] || suffix;
+    return prefix ? prefix + " " + formattedSuffix : formattedSuffix;
   }
 
   function formatNumericString(value, fractionDigits) {
@@ -300,12 +310,21 @@
       return formatNumericString(parsed * 1000, 2) + " µs";
     }
 
-    if (label.indexOf("Throughput") !== -1 && rawValue.indexOf("ops/ms") === -1) {
+    if (label.indexOf("Throughput") !== -1) {
       const parsed = Number.parseFloat(rawValue);
       if (!Number.isFinite(parsed)) {
         return rawValue;
       }
-      return formatNumericString(parsed / 1000, 4) + " ops/µs";
+      if (/ops\/ms/i.test(rawValue)) {
+        return formatNumericString(parsed, 2) + " ops/ms";
+      }
+      if (/ops\/sec/i.test(rawValue)) {
+        return formatNumericString(parsed, 2) + " ops/sec";
+      }
+      if (/ops\/us|ops\/µs/i.test(rawValue)) {
+        return formatNumericString(parsed, 2) + " ops/µs";
+      }
+      return formatNumericString(parsed, 2);
     }
 
     if (/^-?\d+(?:\.\d+)?$/.test(rawValue)) {
@@ -351,8 +370,22 @@
     return parseNumericMetricValue(rawValue);
   }
 
-  function formatThroughputLabel(value) {
-    return formatChartDecimalValue(value) + " ops/ms";
+  function normalizeThroughputUnit(value) {
+    const text = String(value || "").trim().toLowerCase();
+    if (text.indexOf("ops/ms") !== -1) {
+      return "ops/ms";
+    }
+    if (text.indexOf("ops/us") !== -1 || text.indexOf("ops/µs") !== -1) {
+      return "ops/µs";
+    }
+    if (text.indexOf("ops/sec") !== -1) {
+      return "ops/sec";
+    }
+    return "ops/sec";
+  }
+
+  function formatThroughputLabel(value, unit) {
+    return formatChartDecimalValue(value) + " " + normalizeThroughputUnit(unit);
   }
 
   function formatChartDecimalValue(value, options = {}) {
@@ -398,20 +431,21 @@
     return { divisor: 1, unit: "µs" };
   }
 
-  function createMetricChartDescriptor(metricKey, maxValue) {
+  function createMetricChartDescriptor(metricKey, maxValue, throughputUnit) {
     const key = String(metricKey || "").trim().toLowerCase();
     if (
       key === "throughput_using_start_and_end_time_ops_ms" ||
       key === "throughput_using_start_and_end_time"
     ) {
+      const unit = normalizeThroughputUnit(throughputUnit);
       return {
         emphasis: "positive",
         trendLabel: "Higher is better",
         formatAxisValue(value) {
-          return formatChartDecimalValue(value) + " ops/ms";
+          return formatChartDecimalValue(value) + " " + unit;
         },
         formatValue(value) {
-          return formatThroughputLabel(value);
+          return formatThroughputLabel(value, unit);
         },
       };
     }
@@ -476,7 +510,9 @@
       count: 1,
       successful_operations_count: 2,
       throughput_using_start_and_end_time_ops_ms: 3,
+      throughput_using_start_and_end_time: 3,
       throughput_using_aggregate_operation_times_ops_ms: 4,
+      throughput_using_aggregate_operation_times: 4,
       average_latency: 5,
       total_latency: 6,
       total_time_spent_using_start_and_end_time: 7,
@@ -713,14 +749,13 @@
       ? run.artifacts.some(
           (entry) =>
             entry &&
-            (entry.kind === "output" || entry.kind === "workload") &&
+            entry.kind === "output" &&
             entry.ready === true,
         )
       : run.status === "succeeded";
     const outputDownloadPath =
-      run.links &&
-      (run.links.output_download_path || run.links.workload_download_path)
-        ? run.links.output_download_path || run.links.workload_download_path
+      run.links && run.links.output_download_path
+        ? run.links.output_download_path
         : "";
     if (outputDownloadPath && workloadReady) {
       workloadLink.href = outputDownloadPath;
@@ -763,7 +798,11 @@
       1,
       ...points.map((entry) => (Number.isFinite(entry.value) ? entry.value : 0)),
     );
-    const chartDescriptor = createMetricChartDescriptor(metricSeries.key, maxValue);
+    const chartDescriptor = createMetricChartDescriptor(
+      metricSeries.key,
+      maxValue,
+      metricSeries.throughputUnit,
+    );
     const ns = "http://www.w3.org/2000/svg";
     const palette = metricChartPalette(metricSeries.key);
     const assetId =
@@ -896,7 +935,11 @@
       return null;
     }
     const maxValue = Math.max(...points.map((entry) => entry.value));
-    const descriptor = createMetricChartDescriptor(metricSeries.key, maxValue);
+    const descriptor = createMetricChartDescriptor(
+      metricSeries.key,
+      maxValue,
+      metricSeries.throughputUnit,
+    );
     const bestValue = descriptor.emphasis === "caution"
       ? Math.min(...points.map((entry) => entry.value))
       : Math.max(...points.map((entry) => entry.value));
@@ -936,7 +979,11 @@
       return null;
     }
     const maxValue = Math.max(...points.map((entry) => entry.value));
-    const descriptor = createMetricChartDescriptor(metricSeries.key, maxValue);
+    const descriptor = createMetricChartDescriptor(
+      metricSeries.key,
+      maxValue,
+      metricSeries.throughputUnit,
+    );
     return points.reduce((selected, point) => {
       if (!selected) {
         return point;
@@ -951,6 +998,7 @@
   function buildMetricChartGrid(batch) {
     const excluded = new Set([
       "throughput_using_aggregate_operation_times_ops_ms",
+      "throughput_using_aggregate_operation_times",
       "aggregate_operation_time",
     ]);
     const successfulRuns = batch.runs.filter(
@@ -993,6 +1041,10 @@
             key,
             label: formatMetricLabel(metric.label),
             points: [],
+            throughputUnit:
+              key.indexOf("throughput") !== -1
+                ? normalizeThroughputUnit(metric.value)
+                : "",
           };
           seriesMap.set(key, series);
         }
@@ -1365,19 +1417,13 @@
 
       if (
         run.output_paths &&
-        ((typeof run.output_paths.latest_output_path === "string" &&
-          run.output_paths.latest_output_path.trim()) ||
-          (typeof run.output_paths.latest_workload_path === "string" &&
-            run.output_paths.latest_workload_path.trim()))
+        typeof run.output_paths.latest_output_path === "string" &&
+        run.output_paths.latest_output_path.trim()
       ) {
         const locationEl = document.createElement("p");
         locationEl.className = "run-location";
         locationEl.textContent =
-          "Known output: " +
-          (
-            run.output_paths.latest_output_path ||
-            run.output_paths.latest_workload_path
-          ).trim();
+          "Known output: " + run.output_paths.latest_output_path.trim();
         detail.appendChild(locationEl);
       }
 
@@ -1501,8 +1547,6 @@
               output_download_path:
                 input.downloads && input.downloads.output_download_path
                   ? input.downloads.output_download_path
-                  : input.downloads && input.downloads.workload_download_path
-                    ? input.downloads.workload_download_path
                   : "",
               cancel_path: "",
             },

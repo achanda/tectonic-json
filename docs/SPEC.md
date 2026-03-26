@@ -5,8 +5,8 @@
 - **Type**: Local macOS Node app (single process)
 - **Core functionality**:
 - Build workload spec JSON with assistant + editable form controls.
-- Execute `tectonic-cli` workload generation on the same host machine.
-- Download both generated `spec.json` and `workload.tar.gz`.
+- Execute `tectonic-cli` benchmarks on the same host machine.
+- Download `spec.json` and benchmark logs.
 - **Non-goals**:
 - No D1 metadata persistence.
 - No R2 artifact storage.
@@ -36,12 +36,12 @@
 ### Workload Execution
 - File: `src/local-tectonic-runner.mjs` (shared module logic)
 - Executes:
-- `tectonic-cli generate -w <spec_path> -o <output_path>`
+- `tectonic-cli benchmark -w <spec_path> --database <database> [...options]`
 - Creates downloadable artifacts:
 - per-run: `generated-workloads/runs/<run_id>/spec.json`
-- per-run: `generated-workloads/runs/<run_id>/workload.tar.gz`
+- per-run: `generated-workloads/runs/<run_id>/benchmark-output.txt`
 - latest: `generated-workloads/latest-spec.json`
-- latest: `generated-workloads/latest-workload.tar.gz`
+- latest: `generated-workloads/latest-benchmark-output.txt`
 - Run state is process-memory only.
 
 ## API Contracts
@@ -65,14 +65,13 @@ type StartRunResponse = {
     known_output_dir: string;
     run_dir: string;
     spec_path: string;
-    generated_output_path: string;
-    workload_path: string;
+    benchmark_output_path: string;
     latest_spec_path: string;
-    latest_workload_path: string;
+    latest_output_path: string;
   };
   downloads: {
     spec_download_path: string;
-    workload_download_path: string;
+    output_download_path: string;
   };
 };
 ```
@@ -86,14 +85,14 @@ type RunStatusResponse = {
   error: { code: string; message: string } | null;
   output_paths: StartRunResponse["output_paths"];
   artifacts: Array<{
-    kind: "spec" | "workload";
+    kind: "spec" | "output";
     filename: string;
     ready: boolean;
     bytes: number | null;
   }>;
   links: {
     spec_download_path: string;
-    workload_download_path: string;
+    output_download_path: string;
     cancel_path: string | null;
   };
   created_at: string;
@@ -106,9 +105,9 @@ type RunStatusResponse = {
 ### `GET /api/workloads/runs/:runId/download/spec`
 - Streams run `spec.json`.
 
-### `GET /api/workloads/runs/:runId/download/workload`
-- Streams `workload.tar.gz` when ready.
-- Returns `409 artifact_not_ready` when workload is not yet produced.
+### `GET /api/workloads/runs/:runId/download/output`
+- Streams the benchmark log when ready.
+- Returns `409 artifact_not_ready` when the benchmark log is not yet produced.
 
 ## UI Flow
 - JSON actions:
@@ -121,7 +120,7 @@ type RunStatusResponse = {
 - progress/error text
 - known output path
 - `Download Spec`
-- `Download Workload` (enabled when ready)
+- `Download Benchmark Log` (enabled when ready)
 - `Cancel` for active runs
 
 ## Operational Defaults
@@ -136,11 +135,11 @@ type RunStatusResponse = {
 - Missing AI credentials for `/api/assist`: `503` with explicit configuration code.
 - Missing `tectonic-cli` in PATH: run status `failed` with code `tectonic_cli_not_found` and local build instructions.
 - Other command failures: run status `failed`
-- Workload artifact not ready: `409 artifact_not_ready`
+- Benchmark output not ready: `409 artifact_not_ready`
 
 ## Acceptance Criteria
 1. One command (`npm run dev`) starts complete local app.
 2. `/api/assist` works in local mode with AI-only prompt handling.
 3. Starting valid run returns `202` and transitions to terminal status.
-4. Download endpoints return spec/workload artifacts as expected.
+4. Download endpoints return spec/output artifacts as expected.
 5. No Worker, D1, R2, or container dependency is required.

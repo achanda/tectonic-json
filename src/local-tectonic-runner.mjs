@@ -1,5 +1,4 @@
 import http from "node:http";
-import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -17,7 +16,7 @@ const KNOWN_OUTPUT_DIR = path.resolve(
 const RUNS_DIR =
   process.env.LOCAL_RUNNER_RUNS_DIR || path.join(KNOWN_OUTPUT_DIR, "runs");
 const LATEST_SPEC_PATH = path.join(KNOWN_OUTPUT_DIR, "latest-spec.json");
-const LATEST_WORKLOAD_PATH = path.join(
+const LATEST_OUTPUT_PATH = path.join(
   KNOWN_OUTPUT_DIR,
   "latest-benchmark-output.txt",
 );
@@ -33,7 +32,7 @@ const MAX_TIMEOUT_SECONDS = parseInteger(
 const MAX_PARALLEL_RUNS = parseInteger(process.env.RUN_MAX_PARALLEL_RUNS, 8);
 const DEFAULT_TIMEOUT_SECONDS = 7200;
 const MIN_TIMEOUT_SECONDS = 30;
-const WORKLOAD_FILENAME = "benchmark-output.txt";
+const OUTPUT_FILENAME = "benchmark-output.txt";
 const SPEC_FILENAME = "spec.json";
 const ACTIVE_STATUSES = new Set(["starting", "running"]);
 const TERMINAL_STATUSES = new Set([
@@ -56,6 +55,7 @@ export function getLocalRunnerConfig() {
     runs_dir: RUNS_DIR,
     tectonic_bin: TECTONIC_BIN,
     benchmark_database: DEFAULT_DATABASE,
+    latest_output_path: LATEST_OUTPUT_PATH,
   };
 }
 
@@ -173,7 +173,7 @@ async function routeRequest(req, res) {
   }
 
   const runMatch = pathname.match(
-    /^\/api\/workloads\/runs\/([^/]+)(?:\/(cancel|download\/spec|download\/output|download\/workload))?$/,
+    /^\/api\/workloads\/runs\/([^/]+)(?:\/(cancel|download\/spec|download\/output))?$/,
   );
   if (!runMatch) {
     sendJson(res, 404, {
@@ -220,7 +220,7 @@ async function routeRequest(req, res) {
     return;
   }
 
-  if (action === "download/output" || action === "download/workload") {
+  if (action === "download/output") {
     if (method !== "GET") {
       sendJson(res, 405, { error: "Method not allowed" });
       return;
@@ -284,13 +284,13 @@ async function handleStartRun(req, res) {
       body.value.run_options &&
       body.value.run_options.timeout_seconds,
   );
+  const runOptions =
+    body.value && body.value.run_options && typeof body.value.run_options === "object"
+      ? body.value.run_options
+      : {};
   const databases = normalizeDatabaseBatch(
-    body.value &&
-      body.value.run_options &&
-      body.value.run_options.databases,
-    body.value &&
-      body.value.run_options &&
-      body.value.run_options.database,
+    runOptions.databases,
+    runOptions.database,
   );
   const batchId = databases.length > 1 ? createBatchId() : null;
   const startedRuns = [];
@@ -300,6 +300,10 @@ async function handleStartRun(req, res) {
       specText,
       timeoutSeconds,
       database: databases[index],
+      benchmarkOptions: resolveDatabaseBenchmarkOptions(
+        databases[index],
+        runOptions,
+      ),
       batchId,
       batchIndex: index + 1,
       batchSize: databases.length,
@@ -331,7 +335,7 @@ async function handleRunStatus(res, runId) {
   }
 
   const specStat = await safeStat(run.spec_path);
-  const workloadStat = await safeStat(run.workload_path);
+  const outputStat = await safeStat(run.output_path);
 
   sendJson(res, 200, {
     run_id: run.run_id,
@@ -349,9 +353,9 @@ async function handleRunStatus(res, runId) {
       },
       {
         kind: "output",
-        filename: WORKLOAD_FILENAME,
-        ready: !!workloadStat,
-        bytes: workloadStat ? workloadStat.size : null,
+        filename: OUTPUT_FILENAME,
+        ready: !!outputStat,
+        bytes: outputStat ? outputStat.size : null,
       },
     ],
     links: buildRunLinks(run.run_id, run.status),
@@ -415,10 +419,12 @@ async function handleDownloadArtifact(res, runId, kind) {
     return;
   }
 
-  const filePath = kind === "spec" ? run.spec_path : run.workload_path;
-  const filename = kind === "spec" ? SPEC_FILENAME : WORKLOAD_FILENAME;
+  const filePath = kind === "spec" ? run.spec_path : run.output_path;
+  const filename = kind === "spec" ? SPEC_FILENAME : OUTPUT_FILENAME;
   const contentType =
-    kind === "spec" ? "application/json; charset=utf-8" : "text/plain; charset=utf-8";
+    kind === "spec"
+      ? "application/json; charset=utf-8"
+      : "text/plain; charset=utf-8";
   const stat = await safeStat(filePath);
 
   if (!stat) {
@@ -465,9 +471,8 @@ function buildOutputPaths(run) {
     run_dir: run.run_dir,
     spec_path: run.spec_path,
     benchmark_output_path: run.output_path,
-    workload_path: run.workload_path,
     latest_spec_path: run.latest_spec_path || LATEST_SPEC_PATH,
-    latest_output_path: run.latest_workload_path || LATEST_WORKLOAD_PATH,
+    latest_output_path: run.latest_output_path || LATEST_OUTPUT_PATH,
   };
 }
 
@@ -502,6 +507,7 @@ async function queueRun({
   specText,
   timeoutSeconds,
   database,
+  benchmarkOptions,
   batchId,
   batchIndex,
   batchSize,
@@ -510,8 +516,7 @@ async function queueRun({
   const runId = createRunId();
   const runDir = path.join(RUNS_DIR, runId);
   const specPath = path.join(runDir, SPEC_FILENAME);
-  const outputPath = path.join(runDir, WORKLOAD_FILENAME);
-  const workloadPath = outputPath;
+  const outputPath = path.join(runDir, OUTPUT_FILENAME);
 
   await fs.mkdir(runDir, { recursive: true });
   await fs.writeFile(specPath, specText, "utf8");
@@ -526,13 +531,20 @@ async function queueRun({
     }),
     error: null,
     spec_path: specPath,
-    workload_path: workloadPath,
     output_path: outputPath,
     run_dir: runDir,
     latest_spec_path: LATEST_SPEC_PATH,
-    latest_workload_path: LATEST_WORKLOAD_PATH,
+    latest_output_path: LATEST_OUTPUT_PATH,
     timeout_seconds: timeoutSeconds,
     database,
+    database_path:
+      benchmarkOptions && typeof benchmarkOptions.databasePath === "string"
+        ? benchmarkOptions.databasePath
+        : "",
+    config:
+      benchmarkOptions && typeof benchmarkOptions.config === "string"
+        ? benchmarkOptions.config
+        : "",
     batch_id: batchId || null,
     batch_index: Number.isFinite(batchIndex) ? batchIndex : null,
     batch_size: Number.isFinite(batchSize) ? batchSize : null,
@@ -560,37 +572,9 @@ async function queueRun({
 async function startTectonicRun(run) {
   run.started_at = Date.now();
   run.status = "running";
-  setRunProgressText(run, "Running tectonic-cli benchmark...");
+  setRunProgressText(run, "Running benchmark...");
   run.error = null;
   run.benchmark_stats = null;
-
-  let stderrTail = "";
-  let stdoutTail = "";
-  let stderrText = "";
-  let stdoutText = "";
-
-  const args = ["benchmark", "-w", run.spec_path, "-d", run.database];
-  const child = spawn(TECTONIC_BIN, args, {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  run.child = child;
-
-  child.stdout.on("data", (chunk) => {
-    stdoutTail = appendTail(stdoutTail, chunk);
-    stdoutText = appendOutputText(stdoutText, chunk);
-    if (stdoutTail.trim()) {
-      setRunProgressText(run, trimLine(stdoutTail));
-    }
-  });
-
-  child.stderr.on("data", (chunk) => {
-    stderrTail = appendTail(stderrTail, chunk);
-    stderrText = appendOutputText(stderrText, chunk);
-    if (stderrTail.trim()) {
-      setRunProgressText(run, trimLine(stderrTail));
-    }
-  });
-
   run.timeout_timer = setTimeout(() => {
     if (!ACTIVE_STATUSES.has(run.status)) {
       return;
@@ -602,105 +586,80 @@ async function startTectonicRun(run) {
       message: "Run exceeded timeout of " + run.timeout_seconds + " seconds.",
     };
     try {
-      child.kill("SIGTERM");
+      if (run.child) {
+        run.child.kill("SIGTERM");
+      }
     } catch {
       // Ignore kill failures during timeout.
     }
   }, run.timeout_seconds * 1000);
-
-  const exit = await waitForChild(child);
-  clearRunTimeout(run);
-  run.child = null;
-
-  if (run.status === "cancelled") {
-    setRunProgressText(run, "Run cancelled.");
-    return;
-  }
-
-  if (run.status === "timed_out") {
-    return;
-  }
-
-  if (
-    exit.error &&
-    typeof exit.error === "object" &&
-    exit.error.code === "ENOENT"
-  ) {
-    run.status = "failed";
-    setRunProgressText(run, "tectonic-cli binary not found.");
-    run.error = {
-      code: "tectonic_cli_not_found",
-      message: buildMissingTectonicCliMessage(TECTONIC_BIN),
-    };
-    return;
-  }
-
-  if (exit.code !== 0) {
-    const detail = trimLine(stderrTail || stdoutTail);
-    run.status = "failed";
-    setRunProgressText(run, "tectonic-cli benchmark failed.");
-    run.error = {
-      code: exit.signal ? "tectonic_killed" : "tectonic_failed",
-      message: detail
-        ? "tectonic-cli failed: " + detail
-        : "tectonic-cli exited with code " + String(exit.code) + ".",
-    };
-    return;
-  }
-
-  const combinedOutput = [stdoutText.trim(), stderrText.trim()]
-    .filter(Boolean)
-    .join("\n");
-  if (!combinedOutput.trim()) {
-    markRunFailed(
-      run,
-      "no_benchmark_output",
-      "tectonic-cli completed but produced no benchmark output.",
-    );
-    return;
-  }
-
   try {
-    await fs.writeFile(run.workload_path, combinedOutput, "utf8");
-  } catch (error) {
-    markRunFailed(
-      run,
-      "output_write_failed",
-      "Failed to write benchmark output file: " +
-        (error && error.message ? error.message : "unknown error"),
-    );
-    return;
-  }
+    const benchmarkArgs = buildTectonicBenchmarkArgs(run);
+    const benchmarkResult = await runTectonicCommand(run, benchmarkArgs, {
+      startText:
+        "Running benchmark against " + String(run.database || DEFAULT_DATABASE) + "...",
+      failureProgressText: "tectonic-cli benchmark failed.",
+    });
+    if (!benchmarkResult || !shouldContinueRun(run)) {
+      return;
+    }
 
-  const workloadStat = await safeStat(run.workload_path);
-  if (!workloadStat) {
-    markRunFailed(
-      run,
-      "artifact_missing",
-      "Failed to write benchmark output artifact.",
-    );
-    return;
-  }
+    const benchmarkOutput = benchmarkResult.combinedOutput.trim();
+    if (!benchmarkOutput) {
+      markRunFailed(
+        run,
+        "no_benchmark_output",
+        "tectonic-cli benchmark completed but produced no benchmark output.",
+      );
+      return;
+    }
 
-  try {
-    await fs.copyFile(
-      run.workload_path,
-      run.latest_workload_path || LATEST_WORKLOAD_PATH,
-    );
-  } catch (error) {
-    markRunFailed(
-      run,
-      "latest_artifact_write_failed",
-      "Benchmark completed but failed to write latest output file: " +
-        (error && error.message ? error.message : "unknown error"),
-    );
-    return;
-  }
+    const outputText = buildRunOutputLog(benchmarkArgs, benchmarkResult);
+    try {
+      await fs.writeFile(run.output_path, outputText, "utf8");
+    } catch (error) {
+      markRunFailed(
+        run,
+        "output_write_failed",
+        "Failed to write benchmark output file: " +
+          (error && error.message ? error.message : "unknown error"),
+      );
+      return;
+    }
 
-  run.benchmark_stats = parseBenchmarkStats(combinedOutput);
-  run.status = "succeeded";
-  setRunProgressText(run, buildBenchmarkCompletionText(run.benchmark_stats));
-  run.error = null;
+    const outputStat = await safeStat(run.output_path);
+    if (!outputStat) {
+      markRunFailed(
+        run,
+        "artifact_missing",
+        "Failed to write benchmark output artifact.",
+      );
+      return;
+    }
+
+    try {
+      await fs.copyFile(
+        run.output_path,
+        run.latest_output_path || LATEST_OUTPUT_PATH,
+      );
+    } catch (error) {
+      markRunFailed(
+        run,
+        "latest_output_write_failed",
+        "Benchmark completed but failed to write latest output file: " +
+          (error && error.message ? error.message : "unknown error"),
+      );
+      return;
+    }
+
+    run.benchmark_stats = parseBenchmarkStats(benchmarkOutput);
+    run.status = "succeeded";
+    setRunProgressText(run, buildBenchmarkCompletionText(run.benchmark_stats));
+    run.error = null;
+  } finally {
+    clearRunTimeout(run);
+    run.child = null;
+  }
 }
 
 function markRunFailed(run, code, message) {
@@ -729,6 +688,20 @@ async function waitForChild(child) {
       });
     });
   });
+}
+
+function shouldContinueRun(run) {
+  if (!run || typeof run !== "object") {
+    return false;
+  }
+  if (run.status === "cancelled") {
+    setRunProgressText(run, "Run cancelled.");
+    return false;
+  }
+  if (run.status === "timed_out") {
+    return false;
+  }
+  return true;
 }
 
 function clearRunTimeout(run) {
@@ -851,6 +824,113 @@ function buildMissingTectonicCliMessage(binaryName) {
   ].join(" ");
 }
 
+function buildTectonicBenchmarkArgs(run) {
+  const args = ["benchmark", "-w", run.spec_path, "--database", run.database];
+  if (typeof run.database_path === "string" && run.database_path.trim()) {
+    args.push("-p", run.database_path.trim());
+  }
+  if (typeof run.config === "string" && run.config.trim()) {
+    args.push("-c", run.config.trim());
+  }
+  return args;
+}
+
+async function runTectonicCommand(run, args, options = {}) {
+  const child = spawn(TECTONIC_BIN, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  run.child = child;
+  run.status = "running";
+  run.error = null;
+  setRunProgressText(
+    run,
+    typeof options.startText === "string" && options.startText.trim()
+      ? options.startText.trim()
+      : "Running tectonic-cli...",
+  );
+
+  let stderrTail = "";
+  let stdoutTail = "";
+  let stderrText = "";
+  let stdoutText = "";
+
+  child.stdout.on("data", (chunk) => {
+    stdoutTail = appendTail(stdoutTail, chunk);
+    stdoutText = appendOutputText(stdoutText, chunk);
+    if (stdoutTail.trim()) {
+      setRunProgressText(run, trimLine(stdoutTail));
+    }
+  });
+
+  child.stderr.on("data", (chunk) => {
+    stderrTail = appendTail(stderrTail, chunk);
+    stderrText = appendOutputText(stderrText, chunk);
+    if (stderrTail.trim()) {
+      setRunProgressText(run, trimLine(stderrTail));
+    }
+  });
+
+  const exit = await waitForChild(child);
+  run.child = null;
+
+  if (!shouldContinueRun(run)) {
+    return null;
+  }
+
+  if (
+    exit.error &&
+    typeof exit.error === "object" &&
+    exit.error.code === "ENOENT"
+  ) {
+    run.status = "failed";
+    setRunProgressText(run, "tectonic-cli binary not found.");
+    run.error = {
+      code: "tectonic_cli_not_found",
+      message: buildMissingTectonicCliMessage(TECTONIC_BIN),
+    };
+    return null;
+  }
+
+  if (exit.code !== 0) {
+    const detail = trimLine(stderrTail || stdoutTail);
+    run.status = "failed";
+    setRunProgressText(
+      run,
+      typeof options.failureProgressText === "string" &&
+        options.failureProgressText.trim()
+        ? options.failureProgressText.trim()
+        : "tectonic-cli failed.",
+    );
+    run.error = {
+      code: exit.signal ? "tectonic_killed" : "tectonic_failed",
+      message: detail
+        ? "tectonic-cli failed: " + detail
+        : "tectonic-cli exited with code " + String(exit.code) + ".",
+    };
+    return null;
+  }
+
+  return {
+    stdoutText,
+    stderrText,
+    combinedOutput: [stdoutText.trim(), stderrText.trim()]
+      .filter(Boolean)
+      .join("\n"),
+  };
+}
+
+function buildRunOutputLog(benchmarkArgs, benchmarkResult) {
+  const parts = [];
+  parts.push("$ " + [TECTONIC_BIN, ...benchmarkArgs].join(" "));
+  if (benchmarkResult && typeof benchmarkResult.combinedOutput === "string") {
+    const benchmarkOutput = benchmarkResult.combinedOutput.trim();
+    if (benchmarkOutput) {
+      parts.push(benchmarkOutput);
+    }
+  }
+  return parts.filter(Boolean).join("\n\n");
+}
+
 function parseBenchmarkStats(outputText) {
   const text = String(outputText || "");
   const lines = text
@@ -859,9 +939,18 @@ function parseBenchmarkStats(outputText) {
     .filter(Boolean);
   const overall = [];
   const operations = [];
+  const phases = [];
   const operationMap = new Map();
+  const phaseMap = new Map();
+  let currentStatsSection = null;
 
   lines.forEach((line) => {
+    const statsSection = parseStatsSectionHeader(line);
+    if (statsSection) {
+      currentStatsSection = statsSection;
+      return;
+    }
+
     const match = line.match(/^\[([^\]]+)\]\s+([^:]+):\s+(.+)$/);
     if (!match) {
       return;
@@ -874,29 +963,72 @@ function parseBenchmarkStats(outputText) {
       label: metricLabel,
       value: metricValue,
     };
+    const isOverallMetric = sectionLabel.toLowerCase() === "overall";
 
-    if (sectionLabel.toLowerCase() === "overall") {
-      overall.push(metric);
+    if (!currentStatsSection) {
+      if (isOverallMetric) {
+        overall.push(metric);
+        return;
+      }
+      const sectionKey = toMetricKey(sectionLabel);
+      let bucket = operationMap.get(sectionKey);
+      if (!bucket) {
+        bucket = {
+          key: sectionKey,
+          name: sectionLabel,
+          metrics: [],
+        };
+        operationMap.set(sectionKey, bucket);
+        operations.push(bucket);
+      }
+      bucket.metrics.push(metric);
       return;
     }
 
-    const sectionKey = toMetricKey(sectionLabel);
-    let bucket = operationMap.get(sectionKey);
-    if (!bucket) {
-      bucket = {
-        key: sectionKey,
-        name: sectionLabel,
+    if (currentStatsSection.type === "overall") {
+      if (isOverallMetric) {
+        overall.push(metric);
+        return;
+      }
+      const overallSectionKey = toMetricKey(sectionLabel);
+      let overallBucket = operationMap.get(overallSectionKey);
+      if (!overallBucket) {
+        overallBucket = {
+          key: overallSectionKey,
+          name: sectionLabel,
+          metrics: [],
+        };
+        operationMap.set(overallSectionKey, overallBucket);
+        operations.push(overallBucket);
+      }
+      overallBucket.metrics.push(metric);
+      return;
+    }
+
+    let phaseBucket = phaseMap.get(currentStatsSection.name);
+    if (!phaseBucket) {
+      phaseBucket = {
+        key: toMetricKey(currentStatsSection.name),
+        name: currentStatsSection.name,
         metrics: [],
       };
-      operationMap.set(sectionKey, bucket);
-      operations.push(bucket);
+      phaseMap.set(currentStatsSection.name, phaseBucket);
+      phases.push(phaseBucket);
     }
-    bucket.metrics.push(metric);
+    phaseBucket.metrics.push({
+      key: metric.key,
+      label:
+        sectionLabel.toLowerCase() === "overall"
+          ? "Overall " + metricLabel
+          : sectionLabel + " " + metricLabel,
+      value: metricValue,
+    });
   });
 
   return {
     overall,
     operations,
+    phases,
   };
 }
 
@@ -924,6 +1056,10 @@ function buildRunProgress(run, label) {
   const parsed = parseGeneratingProgress(run && run.progress_context, text);
   if (parsed) {
     return parsed;
+  }
+  const executeProgress = parseExecutingProgress(text);
+  if (executeProgress) {
+    return executeProgress;
   }
 
   if (run && run.status === "succeeded") {
@@ -1012,6 +1148,27 @@ function parseGeneratingProgress(progressContext, label) {
   });
 }
 
+function parseExecutingProgress(label) {
+  const text = String(label || "").trim();
+  if (!text) {
+    return null;
+  }
+  const match = text.match(/(\d{1,3})%\s*\(([^)]*)\)\s*$/);
+  if (!match) {
+    return null;
+  }
+  const percent = clamp(Number.parseInt(match[1], 10), 0, 100);
+  const eta = String(match[2] || "").trim();
+  const progressLabel =
+    "Running benchmark" +
+    (Number.isFinite(percent) ? " (" + String(percent) + "%)" : ".") +
+    (eta ? " • " + eta + " remaining" : "");
+  return createRunProgress(progressLabel, {
+    percent,
+    indeterminate: false,
+  });
+}
+
 function createRunProgress(label, options) {
   const opts = options && typeof options === "object" ? options : {};
   const percent = Number.isFinite(opts.percent)
@@ -1035,15 +1192,20 @@ function buildBenchmarkCompletionText(stats) {
     return (
       entry &&
       typeof entry.key === "string" &&
-      entry.key === "throughput_using_start_and_end_time_ops_ms"
+      (entry.key === "throughput_using_start_and_end_time_ops_ms" ||
+        entry.key === "throughput_using_start_and_end_time")
     );
   });
   if (throughput && typeof throughput.value === "string" && throughput.value) {
-    const parsedThroughputMs = Number.parseFloat(
+    const parsedThroughput = Number.parseFloat(
       String(throughput.value).replace(/,/g, "").trim(),
     );
-    if (Number.isFinite(parsedThroughputMs)) {
-      const throughputSec = parsedThroughputMs * 1000;
+    if (Number.isFinite(parsedThroughput)) {
+      const rawThroughput = String(throughput.value).trim().toLowerCase();
+      const throughputSec =
+        rawThroughput.indexOf("ops/ms") !== -1
+          ? parsedThroughput * 1000
+          : parsedThroughput;
       return (
         "Benchmark completed. Throughput: " +
         throughputSec.toLocaleString(undefined, {
@@ -1118,6 +1280,87 @@ function normalizeDatabaseName(rawValue) {
   return value || DEFAULT_DATABASE;
 }
 
+function normalizeOptionalString(rawValue) {
+  const value = String(rawValue || "").trim();
+  return value || "";
+}
+
+function databaseKeyForEnv(database) {
+  return String(database || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function readDatabaseOptionMap(mapValue, database) {
+  if (!mapValue || typeof mapValue !== "object" || Array.isArray(mapValue)) {
+    return "";
+  }
+  const normalizedDatabase = normalizeDatabaseName(database);
+  const key = databaseKeyForEnv(normalizedDatabase);
+  return normalizeOptionalString(
+    mapValue[normalizedDatabase] ??
+      mapValue[normalizedDatabase.toLowerCase()] ??
+      mapValue[key],
+  );
+}
+
+function resolveDatabaseBenchmarkOptions(database, runOptions = {}, env = process.env) {
+  const normalizedDatabase = normalizeDatabaseName(database);
+  const dbKey = databaseKeyForEnv(normalizedDatabase);
+  const safeRunOptions =
+    runOptions && typeof runOptions === "object" && !Array.isArray(runOptions)
+      ? runOptions
+      : {};
+  const safeEnv =
+    env && typeof env === "object" && !Array.isArray(env) ? env : {};
+
+  const requestedPath =
+    readDatabaseOptionMap(safeRunOptions.database_paths, normalizedDatabase) ||
+    normalizeOptionalString(safeRunOptions.database_path);
+  const requestedConfig =
+    readDatabaseOptionMap(safeRunOptions.database_configs, normalizedDatabase) ||
+    normalizeOptionalString(safeRunOptions.config);
+
+  const envPath =
+    normalizeOptionalString(safeEnv["RUN_DATABASE_PATH_" + dbKey]) ||
+    (normalizedDatabase.toLowerCase() === "cassandra"
+      ? normalizeOptionalString(safeEnv.CASSANDRA_DATABASE_PATH) || "127.0.0.1"
+      : "") ||
+    normalizeOptionalString(safeEnv.RUN_DATABASE_PATH);
+  const envConfig =
+    normalizeOptionalString(safeEnv["RUN_DATABASE_CONFIG_" + dbKey]) ||
+    normalizeOptionalString(safeEnv.RUN_DATABASE_CONFIG);
+
+  return {
+    databasePath: requestedPath || envPath,
+    config: requestedConfig || envConfig,
+  };
+}
+
+function parseStatsSectionHeader(line) {
+  const text = String(line || "").trim();
+  if (!text) {
+    return null;
+  }
+  const overallMatch = text.match(/^\[\[\*{3}Overall Stats\*{3}\]\]$/i);
+  if (overallMatch) {
+    return {
+      type: "overall",
+      name: "Overall Stats",
+    };
+  }
+  const phaseMatch = text.match(/^\[\[\*{3}Stats for (.+?)\*{3}\]\]$/i);
+  if (!phaseMatch) {
+    return null;
+  }
+  return {
+    type: "phase",
+    name: String(phaseMatch[1] || "").trim(),
+  };
+}
+
 function toMetricKey(label) {
   return String(label || "")
     .trim()
@@ -1125,3 +1368,10 @@ function toMetricKey(label) {
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
 }
+
+export const __test = {
+  buildTectonicBenchmarkArgs,
+  parseBenchmarkStats,
+  parseStatsSectionHeader,
+  resolveDatabaseBenchmarkOptions,
+};
