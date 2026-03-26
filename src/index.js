@@ -1288,7 +1288,7 @@ function buildAssistantMessages(
   if (isOllamaAssistProvider(aiConfig && aiConfig.provider)) {
     systemLines.push(
       "For local models, prefer the smallest valid JSON response.",
-      'A minimal valid response is: {"summary":"Updated the workload.","program":[],"clarifications":[],"assumptions":[],"questions":[],"assumption_texts":[]}.',
+      'A minimal valid response is: {"summary":"Generated the workload.","program":[],"clarifications":[],"assumptions":[],"questions":[],"assumption_texts":[]}.',
       "Do not invent placeholder field1/field2 names or sample datasets.",
       "If the prompt is clear, omit uncertain fields instead of guessing.",
     );
@@ -2920,7 +2920,7 @@ function normalizeAssistPayload(
   const summary =
     typeof payload.summary === "string" && payload.summary.trim()
       ? payload.summary.trim()
-      : "Applied the AI response to the form.";
+      : "Updated the form based on your request.";
 
   return {
     summary,

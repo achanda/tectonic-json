@@ -294,11 +294,89 @@
       };
     }
 
-    function normalizeResponse(result) {
+    function hasConfiguredWorkloadState(formState) {
+      if (!formState || typeof formState !== "object") {
+        return false;
+      }
+
+      const operations =
+        formState.operations && typeof formState.operations === "object"
+          ? formState.operations
+          : {};
+      const hasConfiguredOperations = Object.values(operations).some(function hasConfiguredOperation(entry) {
+        if (!entry || typeof entry !== "object") {
+          return false;
+        }
+        if (entry.enabled === true) {
+          return true;
+        }
+        return Object.entries(entry).some(function hasConfiguredField(fieldEntry) {
+          const fieldName = fieldEntry[0];
+          const value = fieldEntry[1];
+          return fieldName !== "enabled" && value !== null && value !== undefined;
+        });
+      });
+      if (hasConfiguredOperations) {
+        return true;
+      }
+
+      if (!Array.isArray(formState.sections)) {
+        return false;
+      }
+      return formState.sections.some(function hasConfiguredSection(section) {
+        if (!section || typeof section !== "object" || !Array.isArray(section.groups)) {
+          return false;
+        }
+        return section.groups.some(function hasConfiguredGroup(group) {
+          return (
+            group &&
+            typeof group === "object" &&
+            Object.keys(group).some(function hasConfiguredGroupField(key) {
+              return !!group[key];
+            })
+          );
+        });
+      });
+    }
+
+    function normalizeSummaryText(rawSummary, context) {
       const summary =
-        typeof result.summary === "string" && result.summary.trim()
-          ? result.summary.trim()
-          : "Applied your request to the form.";
+        typeof rawSummary === "string" && rawSummary.trim()
+          ? rawSummary.trim()
+          : "";
+      const isInitialGeneration =
+        !context || context.hadConfiguredWorkloadBeforeApply !== true;
+      if (!summary) {
+        return isInitialGeneration
+          ? "Generated the workload from your request."
+          : "Updated the form based on your request.";
+      }
+      if (!isInitialGeneration) {
+        return summary;
+      }
+
+      const rewriteRules = [
+        [/^updated the workload\b/i, "Generated the workload"],
+        [/^update the workload\b/i, "Generated the workload"],
+        [/^created the workload\b/i, "Generated the workload"],
+        [/^create the workload\b/i, "Generated the workload"],
+        [/^built the workload\b/i, "Generated the workload"],
+        [/^made the workload\b/i, "Generated the workload"],
+        [/^updated the form\b/i, "Generated the workload"],
+        [/^applied the ai response to the form\b/i, "Generated the workload from your request"],
+        [/^applied your request to the form\b/i, "Generated the workload from your request"],
+        [/^applied prompt\b/i, "Generated the workload from your request"],
+      ];
+      for (const rule of rewriteRules) {
+        if (rule[0].test(summary)) {
+          return summary.replace(rule[0], rule[1]);
+        }
+      }
+      return summary;
+    }
+
+    function normalizeResponse(result, context) {
+      const summary = normalizeSummaryText(result.summary, context);
       let clarifications = Array.isArray(result.clarifications)
         ? result.clarifications
             .map(function mapClarification(entry) {
@@ -349,6 +427,102 @@
         warnings: warnings,
         source: typeof result.source === "string" ? result.source : "unknown",
       };
+    }
+
+    function createTurnShell(role, timestamp) {
+      const turnEl = document.createElement("article");
+      turnEl.className = "assistant-turn " + role;
+
+      const header = document.createElement("div");
+      header.className = "assistant-turn-header";
+      const left = document.createElement("span");
+      left.textContent = role === "user" ? "You" : "Assistant";
+      const right = document.createElement("span");
+      right.textContent = timestamp || "";
+      header.appendChild(left);
+      header.appendChild(right);
+      turnEl.appendChild(header);
+
+      return turnEl;
+    }
+
+    function appendAssistantAssumptions(turnEl, assumptions) {
+      const assumptionItems = Array.isArray(assumptions) ? assumptions : [];
+      if (assumptionItems.length === 0) {
+        const noAssumptions = document.createElement("p");
+        noAssumptions.className = "assistant-inline-meta";
+        noAssumptions.textContent =
+          "No extra assistant-side assumptions were added.";
+        turnEl.appendChild(noAssumptions);
+        return;
+      }
+
+      const assumptionsWrap = document.createElement("div");
+      assumptionsWrap.className = "assistant-assumptions";
+
+      const title = document.createElement("p");
+      title.className = "assistant-inline-meta assistant-assumptions-title";
+      title.textContent = "Assumptions I used:";
+      assumptionsWrap.appendChild(title);
+
+      const list = document.createElement("ul");
+      list.className = "assistant-assumption-list";
+      assumptionItems.forEach(function appendAssumption(entry) {
+        if (!entry || typeof entry.text !== "string" || !entry.text.trim()) {
+          return;
+        }
+        const item = document.createElement("li");
+        item.textContent = entry.text.trim();
+        list.appendChild(item);
+      });
+
+      if (list.children.length === 0) {
+        const noAssumptions = document.createElement("p");
+        noAssumptions.className = "assistant-inline-meta";
+        noAssumptions.textContent =
+          "No extra assistant-side assumptions were added.";
+        assumptionsWrap.appendChild(noAssumptions);
+      } else {
+        assumptionsWrap.appendChild(list);
+      }
+      turnEl.appendChild(assumptionsWrap);
+    }
+
+    function appendAssistantWarnings(turnEl, warnings) {
+      const warningItems = Array.isArray(warnings) ? warnings : [];
+      if (warningItems.length === 0) {
+        return;
+      }
+
+      const warningText = document.createElement("p");
+      warningText.className = "assistant-inline-meta assistant-turn-note";
+      warningText.textContent = "Notes: " + warningItems.join(" ");
+      turnEl.appendChild(warningText);
+    }
+
+    function createAssistantTurn(turn) {
+      const turnEl = createTurnShell("assistant", turn.at);
+
+      const summary = document.createElement("p");
+      summary.className = "assistant-turn-message";
+      summary.textContent = turn.summary || "Updated the form based on your request.";
+      turnEl.appendChild(summary);
+
+      appendAssistantAssumptions(turnEl, turn.assumptions);
+      appendAssistantWarnings(turnEl, turn.warnings);
+
+      const clarificationCount = Array.isArray(turn.clarifications)
+        ? turn.clarifications.length
+        : 0;
+      const guidance = document.createElement("p");
+      guidance.className = "assistant-inline-meta assistant-turn-note";
+      guidance.textContent =
+        clarificationCount > 0
+          ? "You can fine-tune anything in the form, and I still need the details below to finish the remaining fields."
+          : "You can fine-tune anything in the form if you want to adjust the generated workload.";
+      turnEl.appendChild(guidance);
+
+      return turnEl;
     }
 
     function addTimelineTurn(turn) {
@@ -866,6 +1040,8 @@
 
       conversation.forEach(function renderTurn(turn) {
         if (turn.role !== "user") {
+          refs.assistantTimeline.appendChild(createAssistantTurn(turn));
+
           if (
             !Array.isArray(turn.clarifications) ||
             turn.clarifications.length === 0
@@ -966,18 +1142,7 @@
           return;
         }
 
-        const turnEl = document.createElement("article");
-        turnEl.className = "assistant-turn user";
-
-        const header = document.createElement("div");
-        header.className = "assistant-turn-header";
-        const left = document.createElement("span");
-        left.textContent = turn.role === "user" ? "You" : "Assistant";
-        const right = document.createElement("span");
-        right.textContent = turn.at || "";
-        header.appendChild(left);
-        header.appendChild(right);
-        turnEl.appendChild(header);
+        const turnEl = createTurnShell("user", turn.at);
 
         if (turn.role === "user") {
           const message = document.createElement("p");
@@ -1083,9 +1248,12 @@
 
       setBusy(true);
       setStatus("Interpreting...", "loading");
-      setComposerHint("Generating a patch and clarification metadata...");
+      setComposerHint("Updating the form and summarizing the assumptions...");
 
       try {
+        const hadConfiguredWorkloadBeforeApply = hasConfiguredWorkloadState(
+          getCurrentFormState(),
+        );
         const selectedOpsBeforeApply = getSelectedOperations();
         const result = await requestPatch(promptText);
         applyAssistantPatch(result.patch, {
@@ -1094,7 +1262,9 @@
         });
         updateJsonFromForm();
 
-        const normalizedResult = normalizeResponse(result);
+        const normalizedResult = normalizeResponse(result, {
+          hadConfiguredWorkloadBeforeApply,
+        });
         addTimelineTurn({
           id: createTurnId(),
           role: "assistant",
