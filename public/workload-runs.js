@@ -310,6 +310,20 @@
       return formatNumericString(parsed * 1000, 2) + " µs";
     }
 
+    if (/secs?$/i.test(rawValue)) {
+      const numberPart = rawValue.replace(/secs?$/i, "").trim();
+      return formatNumericString(numberPart, 2) + " s";
+    }
+
+    if (/s$/i.test(rawValue) && !/ops\/sec$/i.test(rawValue)) {
+      const numberPart = rawValue.slice(0, -1).trim();
+      const parsed = Number.parseFloat(numberPart);
+      if (!Number.isFinite(parsed)) {
+        return rawValue;
+      }
+      return formatNumericString(parsed, 2) + " s";
+    }
+
     if (label.indexOf("Throughput") !== -1) {
       const parsed = Number.parseFloat(rawValue);
       if (!Number.isFinite(parsed)) {
@@ -366,6 +380,16 @@
     if (/ms$/i.test(rawValue)) {
       const parsedMs = parseNumericMetricValue(rawValue.slice(0, -2));
       return parsedMs === null ? null : parsedMs * 1000;
+    }
+    if (/secs?$/i.test(rawValue)) {
+      const parsedSeconds = parseNumericMetricValue(
+        rawValue.replace(/secs?$/i, ""),
+      );
+      return parsedSeconds === null ? null : parsedSeconds * 1000000;
+    }
+    if (/s$/i.test(rawValue) && !/ops\/sec$/i.test(rawValue)) {
+      const parsedSeconds = parseNumericMetricValue(rawValue.slice(0, -1));
+      return parsedSeconds === null ? null : parsedSeconds * 1000000;
     }
     return parseNumericMetricValue(rawValue);
   }
@@ -451,7 +475,7 @@
     }
     if (
       key.indexOf("latency") !== -1 ||
-      key === "total_time_spent_using_start_and_end_time"
+      key.indexOf("time") !== -1
     ) {
       const latencyUnit = chooseLatencyChartUnit(maxValue);
       return {
@@ -515,6 +539,7 @@
       throughput_using_aggregate_operation_times: 4,
       average_latency: 5,
       total_latency: 6,
+      end_to_end_time: 7,
       total_time_spent_using_start_and_end_time: 7,
       aggregate_operation_time: 8,
       minimum_latency: 9,
@@ -995,72 +1020,45 @@
     }, null);
   }
 
-  function buildMetricChartGrid(batch) {
-    const excluded = new Set([
-      "throughput_using_aggregate_operation_times_ops_ms",
-      "throughput_using_aggregate_operation_times",
-      "aggregate_operation_time",
-    ]);
-    const successfulRuns = batch.runs.filter(
-      (run) => run.status === "succeeded" && run.benchmark_stats,
-    );
-    if (successfulRuns.length === 0) {
+  function getRunComparisonLabel(run) {
+    if (typeof run.database === "string" && run.database.trim()) {
+      return run.database.trim();
+    }
+    if (Number.isFinite(run.batch_index) && run.batch_index > 0) {
+      return "R" + String(run.batch_index);
+    }
+    return "Run";
+  }
+
+  function parseChartSeriesMetricValue(metric) {
+    const key =
+      metric && typeof metric.key === "string" ? metric.key.trim().toLowerCase() : "";
+    if (!key) {
       return null;
     }
+    if (
+      key === "throughput_using_start_and_end_time_ops_ms" ||
+      key === "throughput_using_start_and_end_time" ||
+      key === "throughput_using_aggregate_operation_times_ops_ms" ||
+      key === "throughput_using_aggregate_operation_times"
+    ) {
+      return parseThroughputMetricValue(metric);
+    }
+    if (key.indexOf("latency") !== -1 || key.indexOf("time") !== -1) {
+      return parseLatencyMetricValueMicros(metric);
+    }
+    return parseNumericMetricValue(metric.value);
+  }
 
-    const seriesMap = new Map();
-    successfulRuns.forEach((run) => {
-      const metrics = normalizeMetricsList(
-        run.benchmark_stats && run.benchmark_stats.overall,
-      );
-      metrics.forEach((metric) => {
-        const key = String(metric && metric.key ? metric.key : "").trim();
-        if (!key || excluded.has(key)) {
-          return;
-        }
-        let numericValue = null;
-        if (
-          key === "throughput_using_start_and_end_time_ops_ms" ||
-          key === "throughput_using_start_and_end_time"
-        ) {
-          numericValue = parseThroughputMetricValue(metric);
-        } else if (
-          key.indexOf("latency") !== -1 ||
-          key === "total_time_spent_using_start_and_end_time"
-        ) {
-          numericValue = parseLatencyMetricValueMicros(metric);
-        } else {
-          numericValue = parseNumericMetricValue(metric.value);
-        }
-        if (!Number.isFinite(numericValue)) {
-          return;
-        }
-        let series = seriesMap.get(key);
-        if (!series) {
-          series = {
-            key,
-            label: formatMetricLabel(metric.label),
-            points: [],
-            throughputUnit:
-              key.indexOf("throughput") !== -1
-                ? normalizeThroughputUnit(metric.value)
-                : "",
-          };
-          seriesMap.set(key, series);
-        }
-        series.points.push({
-          label:
-            typeof run.database === "string" && run.database.trim()
-              ? run.database.trim()
-              : Number.isFinite(run.batch_index) && run.batch_index > 0
-                ? "R" + String(run.batch_index)
-                : "Run",
-          value: numericValue,
-        });
-      });
-    });
+  function createMetricSeriesId(metric) {
+    const key =
+      metric && typeof metric.key === "string" ? metric.key.trim().toLowerCase() : "";
+    const label = slugifyMetricLabel(metric && metric.label ? metric.label : "");
+    return [key || "metric", label || "metric"].join("::");
+  }
 
-    const seriesList = Array.from(seriesMap.values())
+  function finalizeMetricSeriesList(seriesMap) {
+    return Array.from(seriesMap.values())
       .filter((series) => Array.isArray(series.points) && series.points.length > 0)
       .sort((left, right) => {
         const leftPriority = metricPriority({ key: left.key });
@@ -1070,64 +1068,472 @@
         }
         return left.label.localeCompare(right.label);
       });
+  }
 
+  function appendMetricSeriesPoint(seriesMap, metric, runLabel) {
+    const numericValue = parseChartSeriesMetricValue(metric);
+    if (!Number.isFinite(numericValue)) {
+      return;
+    }
+
+    const seriesId = createMetricSeriesId(metric);
+    const key =
+      metric && typeof metric.key === "string" ? metric.key.trim().toLowerCase() : "";
+    let series = seriesMap.get(seriesId);
+    if (!series) {
+      series = {
+        id: seriesId,
+        key,
+        rawLabel: String(metric && metric.label ? metric.label : "").trim(),
+        label: formatMetricLabel(metric && metric.label ? metric.label : ""),
+        points: [],
+        throughputUnit:
+          key.indexOf("throughput") !== -1
+            ? normalizeThroughputUnit(metric && metric.value ? metric.value : "")
+            : "",
+      };
+      seriesMap.set(seriesId, series);
+    }
+
+    series.points.push({
+      label: runLabel,
+      value: numericValue,
+    });
+  }
+
+  function appendBucketMetrics(bucketMap, buckets, runLabel) {
+    normalizeStatsBuckets(buckets).forEach((bucket) => {
+      const bucketKey = slugifyMetricLabel(bucket.name) || bucket.name;
+      let entry = bucketMap.get(bucketKey);
+      if (!entry) {
+        entry = {
+          key: bucketKey,
+          name: formatStatsBucketTitle(bucket.name),
+          seriesMap: new Map(),
+        };
+        bucketMap.set(bucketKey, entry);
+      }
+      normalizeMetricsList(bucket.metrics).forEach((metric) => {
+        appendMetricSeriesPoint(entry.seriesMap, metric, runLabel);
+      });
+    });
+  }
+
+  function buildMetricSeriesCatalog(batch) {
+    const successfulRuns = batch.runs.filter(
+      (run) => run.status === "succeeded" && run.benchmark_stats,
+    );
+    if (successfulRuns.length === 0) {
+      return null;
+    }
+
+    const overallMap = new Map();
+    const phaseMap = new Map();
+    const operationMap = new Map();
+
+    successfulRuns.forEach((run) => {
+      const runLabel = getRunComparisonLabel(run);
+      normalizeMetricsList(run.benchmark_stats && run.benchmark_stats.overall).forEach(
+        (metric) => {
+          appendMetricSeriesPoint(overallMap, metric, runLabel);
+        },
+      );
+      appendBucketMetrics(phaseMap, run.benchmark_stats && run.benchmark_stats.phases, runLabel);
+      appendBucketMetrics(
+        operationMap,
+        run.benchmark_stats && run.benchmark_stats.operations,
+        runLabel,
+      );
+    });
+
+    return {
+      successfulRuns,
+      overall: finalizeMetricSeriesList(overallMap),
+      phases: Array.from(phaseMap.values())
+        .map((entry) => ({
+          key: entry.key,
+          name: entry.name,
+          series: finalizeMetricSeriesList(entry.seriesMap),
+        }))
+        .filter((entry) => entry.series.length > 0)
+        .sort((left, right) => left.name.localeCompare(right.name)),
+      operations: Array.from(operationMap.values())
+        .map((entry) => ({
+          key: entry.key,
+          name: entry.name,
+          series: finalizeMetricSeriesList(entry.seriesMap),
+        }))
+        .filter((entry) => entry.series.length > 0)
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    };
+  }
+
+  function buildMetricSeriesCard(metricSeries, options = {}) {
+    if (
+      !metricSeries ||
+      !Array.isArray(metricSeries.points) ||
+      metricSeries.points.length === 0
+    ) {
+      return null;
+    }
+
+    const opts = options && typeof options === "object" ? options : {};
+    const card = document.createElement("section");
+    card.className =
+      "benchmark-metric-chart-card" + (opts.explorer ? " explorer" : "");
+
+    const head = document.createElement("div");
+    head.className = "benchmark-metric-chart-head";
+
+    const headCopy = document.createElement("div");
+    headCopy.className = "benchmark-metric-chart-copy";
+
+    if (typeof opts.kicker === "string" && opts.kicker.trim()) {
+      const kicker = document.createElement("div");
+      kicker.className = "benchmark-metric-chart-kicker";
+      kicker.textContent = opts.kicker.trim();
+      headCopy.appendChild(kicker);
+    }
+
+    const title = document.createElement("div");
+    title.className = "benchmark-metric-chart-title";
+    title.textContent =
+      typeof opts.title === "string" && opts.title.trim()
+        ? opts.title.trim()
+        : metricSeries.label;
+    headCopy.appendChild(title);
+    head.appendChild(headCopy);
+
+    const seriesMaxValue = Math.max(...metricSeries.points.map((entry) => entry.value));
+    const chartDescriptor = createMetricChartDescriptor(
+      metricSeries.key,
+      seriesMaxValue,
+      metricSeries.throughputUnit,
+    );
+    const bestPoint = selectBestMetricPoint(metricSeries);
+
+    const meta = document.createElement("div");
+    meta.className = "benchmark-metric-chart-meta";
+
+    const trend = document.createElement("span");
+    trend.className =
+      "benchmark-metric-chart-trend benchmark-metric-chart-trend-" +
+      chartDescriptor.emphasis;
+    trend.textContent = chartDescriptor.trendLabel;
+    meta.appendChild(trend);
+
+    if (bestPoint) {
+      const best = document.createElement("span");
+      best.className = "benchmark-metric-chart-best";
+      best.textContent =
+        "Best: " +
+        bestPoint.label +
+        " • " +
+        chartDescriptor.formatValue(bestPoint.value);
+      meta.appendChild(best);
+    }
+
+    head.appendChild(meta);
+    card.appendChild(head);
+
+    const chart = buildMetricBarChart(metricSeries);
+    if (chart) {
+      card.appendChild(chart);
+    }
+    const summary = buildMetricChartSummary(metricSeries);
+    if (summary) {
+      card.appendChild(summary);
+    }
+    return card;
+  }
+
+  function selectOverviewMetricSeries(seriesList) {
+    const allSeries = Array.isArray(seriesList) ? seriesList : [];
+    if (allSeries.length === 0) {
+      return [];
+    }
+
+    const preferredGroups = [
+      ["throughput_using_start_and_end_time_ops_ms", "throughput_using_start_and_end_time"],
+      ["average_latency"],
+      ["end_to_end_time", "total_time_spent_using_start_and_end_time"],
+    ];
+    const selected = [];
+    const seen = new Set();
+
+    preferredGroups.forEach((candidateKeys) => {
+      const match = allSeries.find((series) => {
+        if (!series || seen.has(series.id)) {
+          return false;
+        }
+        const key = String(series.key || "").trim().toLowerCase();
+        return candidateKeys.includes(key);
+      });
+      if (match) {
+        selected.push(match);
+        seen.add(match.id);
+      }
+    });
+
+    allSeries.forEach((series) => {
+      if (selected.length >= 3 || !series || seen.has(series.id)) {
+        return;
+      }
+      selected.push(series);
+      seen.add(series.id);
+    });
+
+    return selected.slice(0, 3);
+  }
+
+  function buildOverviewMetricGrid(catalog) {
+    const seriesList = selectOverviewMetricSeries(catalog && catalog.overall);
     if (seriesList.length === 0) {
       return null;
     }
 
+    const section = document.createElement("section");
+    section.className = "benchmark-chart-section";
+
+    const head = document.createElement("div");
+    head.className = "benchmark-chart-section-head";
+
+    const title = document.createElement("div");
+    title.className = "benchmark-chart-section-title";
+    title.textContent = "Overview";
+    head.appendChild(title);
+
+    const subtitle = document.createElement("div");
+    subtitle.className = "benchmark-chart-section-copy";
+    subtitle.textContent = "Pinned comparisons for the primary benchmark signals.";
+    head.appendChild(subtitle);
+    section.appendChild(head);
+
     const grid = document.createElement("div");
-    grid.className = "benchmark-metric-chart-grid";
+    grid.className = "benchmark-metric-chart-grid benchmark-metric-chart-grid-overview";
     seriesList.forEach((series) => {
-      const card = document.createElement("section");
-      card.className = "benchmark-metric-chart-card";
-
-      const head = document.createElement("div");
-      head.className = "benchmark-metric-chart-head";
-
-      const title = document.createElement("div");
-      title.className = "benchmark-metric-chart-title";
-      title.textContent = series.label;
-      head.appendChild(title);
-
-      const seriesMaxValue = Math.max(...series.points.map((entry) => entry.value));
-      const chartDescriptor = createMetricChartDescriptor(series.key, seriesMaxValue);
-      const bestPoint = selectBestMetricPoint(series);
-
-      const meta = document.createElement("div");
-      meta.className = "benchmark-metric-chart-meta";
-
-      const trend = document.createElement("span");
-      trend.className =
-        "benchmark-metric-chart-trend benchmark-metric-chart-trend-" +
-        chartDescriptor.emphasis;
-      trend.textContent = chartDescriptor.trendLabel;
-      meta.appendChild(trend);
-
-      if (bestPoint) {
-        const best = document.createElement("span");
-        best.className = "benchmark-metric-chart-best";
-        best.textContent =
-          "Best: " +
-          bestPoint.label +
-          " • " +
-          chartDescriptor.formatValue(bestPoint.value);
-        meta.appendChild(best);
+      const card = buildMetricSeriesCard(series, {
+        kicker: "Overall benchmark",
+      });
+      if (card) {
+        grid.appendChild(card);
       }
-
-      card.appendChild(head);
-      card.appendChild(meta);
-
-      const chart = buildMetricBarChart(series);
-      if (chart) {
-        card.appendChild(chart);
-      }
-      const summary = buildMetricChartSummary(series);
-      if (summary) {
-        card.appendChild(summary);
-      }
-      grid.appendChild(card);
     });
-    return grid;
+    section.appendChild(grid);
+    return section;
+  }
+
+  function buildMetricExplorer(catalog) {
+    if (!catalog) {
+      return null;
+    }
+
+    const scopeDefinitions = [
+      { key: "overall", label: "Overall", getBuckets: () => [{ key: "overall", name: "Overall benchmark", series: catalog.overall || [] }] },
+      { key: "phase", label: "Phase", getBuckets: () => catalog.phases || [] },
+      { key: "operation", label: "Operation", getBuckets: () => catalog.operations || [] },
+    ];
+    const availableScopes = scopeDefinitions.filter((entry) => {
+      const buckets = entry.getBuckets();
+      return Array.isArray(buckets) && buckets.some((bucket) => Array.isArray(bucket.series) && bucket.series.length > 0);
+    });
+    if (availableScopes.length === 0) {
+      return null;
+    }
+
+    const state = {
+      scope: availableScopes[0].key,
+      bucketKey: "",
+      metricId: "",
+    };
+
+    const section = document.createElement("section");
+    section.className = "benchmark-chart-explorer";
+
+    const head = document.createElement("div");
+    head.className = "benchmark-chart-section-head";
+
+    const title = document.createElement("div");
+    title.className = "benchmark-chart-section-title";
+    title.textContent = "Metric Explorer";
+    head.appendChild(title);
+
+    const subtitle = document.createElement("div");
+    subtitle.className = "benchmark-chart-section-copy";
+    subtitle.textContent = "Switch between overall, phase, and operation measurements without opening more charts.";
+    head.appendChild(subtitle);
+    section.appendChild(head);
+
+    const controls = document.createElement("div");
+    controls.className = "benchmark-chart-explorer-controls";
+
+    const scopeSwitch = document.createElement("div");
+    scopeSwitch.className = "benchmark-chart-scope-switch";
+    controls.appendChild(scopeSwitch);
+
+    const pickerRow = document.createElement("div");
+    pickerRow.className = "benchmark-chart-picker-row";
+    controls.appendChild(pickerRow);
+    section.appendChild(controls);
+
+    const explorerBody = document.createElement("div");
+    explorerBody.className = "benchmark-chart-explorer-body";
+    section.appendChild(explorerBody);
+
+    function getScopeDefinition(scope) {
+      return scopeDefinitions.find((entry) => entry.key === scope) || availableScopes[0];
+    }
+
+    function getBucketsForScope(scope) {
+      const definition = getScopeDefinition(scope);
+      const buckets = definition && typeof definition.getBuckets === "function"
+        ? definition.getBuckets()
+        : [];
+      return Array.isArray(buckets) ? buckets.filter((bucket) => Array.isArray(bucket.series) && bucket.series.length > 0) : [];
+    }
+
+    function syncExplorerState() {
+      const availableScopeKeys = new Set(availableScopes.map((entry) => entry.key));
+      if (!availableScopeKeys.has(state.scope)) {
+        state.scope = availableScopes[0].key;
+      }
+
+      const buckets = getBucketsForScope(state.scope);
+      if (buckets.length === 0) {
+        state.bucketKey = "";
+        state.metricId = "";
+        return { buckets, bucket: null, metric: null };
+      }
+
+      if (state.scope === "overall") {
+        state.bucketKey = buckets[0].key;
+      } else if (!buckets.some((bucket) => bucket.key === state.bucketKey)) {
+        state.bucketKey = buckets[0].key;
+      }
+
+      const selectedBucket =
+        buckets.find((bucket) => bucket.key === state.bucketKey) || buckets[0];
+      const metrics = selectedBucket && Array.isArray(selectedBucket.series)
+        ? selectedBucket.series
+        : [];
+      if (!metrics.some((series) => series.id === state.metricId)) {
+        state.metricId = metrics[0] ? metrics[0].id : "";
+      }
+
+      const selectedMetric =
+        metrics.find((series) => series.id === state.metricId) || metrics[0] || null;
+      return {
+        buckets,
+        bucket: selectedBucket || null,
+        metric: selectedMetric,
+      };
+    }
+
+    function buildPicker(labelText, selectEl) {
+      const field = document.createElement("label");
+      field.className = "benchmark-chart-picker";
+
+      const label = document.createElement("span");
+      label.className = "benchmark-chart-picker-label";
+      label.textContent = labelText;
+      field.appendChild(label);
+
+      field.appendChild(selectEl);
+      return field;
+    }
+
+    function renderExplorer() {
+      const selection = syncExplorerState();
+
+      scopeSwitch.innerHTML = "";
+      availableScopes.forEach((entry) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className =
+          "benchmark-chart-scope-btn" +
+          (entry.key === state.scope ? " is-active" : "");
+        button.textContent = entry.label;
+        button.addEventListener("click", () => {
+          state.scope = entry.key;
+          renderExplorer();
+        });
+        scopeSwitch.appendChild(button);
+      });
+
+      pickerRow.innerHTML = "";
+      if (state.scope !== "overall" && selection.buckets.length > 0) {
+        const bucketSelect = document.createElement("select");
+        bucketSelect.className = "benchmark-chart-select";
+        selection.buckets.forEach((bucket) => {
+          const option = document.createElement("option");
+          option.value = bucket.key;
+          option.textContent = bucket.name;
+          if (bucket.key === state.bucketKey) {
+            option.selected = true;
+          }
+          bucketSelect.appendChild(option);
+        });
+        bucketSelect.addEventListener("change", (event) => {
+          state.bucketKey = event.target.value;
+          state.metricId = "";
+          renderExplorer();
+        });
+        pickerRow.appendChild(
+          buildPicker(
+            state.scope === "phase" ? "Phase" : "Operation",
+            bucketSelect,
+          ),
+        );
+      }
+
+      const metricSelect = document.createElement("select");
+      metricSelect.className = "benchmark-chart-select";
+      const metricOptions =
+        selection.bucket && Array.isArray(selection.bucket.series)
+          ? selection.bucket.series
+          : [];
+      metricOptions.forEach((series) => {
+        const option = document.createElement("option");
+        option.value = series.id;
+        option.textContent = series.label;
+        if (series.id === state.metricId) {
+          option.selected = true;
+        }
+        metricSelect.appendChild(option);
+      });
+      metricSelect.addEventListener("change", (event) => {
+        state.metricId = event.target.value;
+        renderExplorer();
+      });
+      pickerRow.appendChild(buildPicker("Measurement", metricSelect));
+
+      explorerBody.innerHTML = "";
+      if (!selection.metric) {
+        const empty = document.createElement("p");
+        empty.className = "benchmark-chart-explorer-empty";
+        empty.textContent = "No chartable numeric measurements are available for this scope.";
+        explorerBody.appendChild(empty);
+        return;
+      }
+
+      const kicker =
+        state.scope === "overall"
+          ? "Overall benchmark"
+          : (state.scope === "phase" ? "Phase" : "Operation") +
+            " • " +
+            (selection.bucket ? selection.bucket.name : "");
+      const card = buildMetricSeriesCard(selection.metric, {
+        kicker,
+        title: selection.metric.label,
+        explorer: true,
+      });
+      if (card) {
+        explorerBody.appendChild(card);
+      }
+    }
+
+    renderExplorer();
+    return section;
   }
 
   function collectBatchGraphGroups(runs) {
@@ -1213,54 +1619,26 @@
     subtitle.textContent = statusBits.join(" • ") || "Queued";
     titleWrap.appendChild(subtitle);
     head.appendChild(titleWrap);
-    const points = batch.runs
-      .map((run) => {
-        if (run.status !== "succeeded") {
-          return null;
-        }
-        const throughputMetric = findOverallMetric(run.benchmark_stats, [
-          "throughput_using_start_and_end_time_ops_ms",
-          "throughput_using_start_and_end_time",
-        ]);
-        const latencyMetric = findOverallMetric(run.benchmark_stats, [
-          "average_latency",
-        ]);
-        const throughput = parseThroughputMetricValue(throughputMetric);
-        const avgLatencyMicros = parseLatencyMetricValueMicros(latencyMetric);
-        if (!Number.isFinite(throughput) && !Number.isFinite(avgLatencyMicros)) {
-          return null;
-        }
-        return {
-          label:
-            typeof run.database === "string" && run.database.trim()
-              ? run.database.trim()
-              : Number.isFinite(run.batch_index) && run.batch_index > 0
-                ? "R" + String(run.batch_index)
-                : "Run",
-          throughput,
-          avgLatencyMicros,
-        };
-      })
-      .filter(Boolean);
     shell.appendChild(head);
 
-    if (points.length === 0) {
+    const catalog = buildMetricSeriesCatalog(batch);
+    if (!catalog || !Array.isArray(catalog.successfulRuns) || catalog.successfulRuns.length === 0) {
       const empty = document.createElement("p");
       empty.className = "benchmark-batch-empty";
       empty.textContent =
-        "Waiting for completed runs before plotting throughput and latency.";
+        "Waiting for completed runs before plotting benchmark comparisons.";
       shell.appendChild(empty);
       return shell;
     }
-    const chartGrid = buildMetricChartGrid(batch);
-    if (chartGrid) {
-      shell.appendChild(chartGrid);
-    } else {
-      const empty = document.createElement("p");
-      empty.className = "benchmark-batch-empty";
-      empty.textContent =
-        "Waiting for completed runs before plotting comparable metrics.";
-      shell.appendChild(empty);
+
+    const overview = buildOverviewMetricGrid(catalog);
+    if (overview) {
+      shell.appendChild(overview);
+    }
+
+    const explorer = buildMetricExplorer(catalog);
+    if (explorer) {
+      shell.appendChild(explorer);
     }
     return shell;
   }

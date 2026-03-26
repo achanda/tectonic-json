@@ -1893,10 +1893,43 @@
         color: var(--text-dim);
       }
 
+      .benchmark-chart-section,
+      .benchmark-chart-explorer {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .benchmark-chart-section-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 8px 14px;
+      }
+
+      .benchmark-chart-section-title {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #5f7789;
+      }
+
+      .benchmark-chart-section-copy {
+        font-size: 12px;
+        line-height: 1.4;
+        color: #6b8191;
+      }
+
       .benchmark-metric-chart-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
         gap: 16px;
+      }
+
+      .benchmark-metric-chart-grid-overview {
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
       }
 
       .benchmark-metric-chart-card {
@@ -1912,6 +1945,10 @@
           0 14px 28px rgba(11, 30, 45, 0.045);
       }
 
+      .benchmark-metric-chart-card.explorer {
+        padding: 18px;
+      }
+
       .benchmark-metric-chart-head {
         display: flex;
         align-items: flex-start;
@@ -1919,11 +1956,142 @@
         gap: 12px;
       }
 
+      .benchmark-metric-chart-copy {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+      }
+
+      .benchmark-metric-chart-kicker {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #6c8393;
+      }
+
       .benchmark-metric-chart-title {
         font-size: 15px;
         font-weight: 700;
         letter-spacing: 0.01em;
         color: #30495d;
+      }
+
+      .benchmark-chart-explorer-controls {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .benchmark-chart-scope-switch {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .benchmark-chart-scope-btn {
+        border: 1px solid #d4e1ea;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.88);
+        color: #4c6477;
+        padding: 7px 12px;
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+        transition:
+          border-color 0.15s ease,
+          background 0.15s ease,
+          color 0.15s ease;
+      }
+
+      .benchmark-chart-scope-btn:hover {
+        border-color: #b9cfdd;
+        background: #f7fbfd;
+      }
+
+      .benchmark-chart-scope-btn.is-active {
+        border-color: rgba(15, 118, 110, 0.24);
+        background: rgba(15, 118, 110, 0.1);
+        color: #0f625b;
+      }
+
+      .benchmark-chart-picker-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+      }
+
+      .benchmark-chart-picker {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        min-width: 0;
+        position: relative;
+      }
+
+      .benchmark-chart-picker-label {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: #60788b;
+      }
+
+      .benchmark-chart-picker::after {
+        content: "▾";
+        position: absolute;
+        right: 14px;
+        bottom: 13px;
+        font-size: 14px;
+        color: #5f7688;
+        pointer-events: none;
+      }
+
+      .benchmark-chart-select {
+        width: 100%;
+        min-height: 52px;
+        padding: 12px 42px 12px 14px;
+        border: 1px solid #d4e1ea;
+        border-radius: 14px;
+        background: linear-gradient(180deg, #ffffff 0%, #f4f9fc 100%);
+        color: #173247;
+        font-family: inherit;
+        font-size: 15px;
+        line-height: 1.35;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.88),
+          0 10px 20px rgba(11, 30, 45, 0.04);
+        appearance: none;
+        -webkit-appearance: none;
+        outline: none;
+        cursor: pointer;
+        transition:
+          border-color 0.15s ease,
+          box-shadow 0.15s ease,
+          transform 0.15s ease;
+      }
+
+      .benchmark-chart-select:hover {
+        border-color: #bfd3df;
+      }
+
+      .benchmark-chart-select:focus {
+        border-color: var(--accent);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.9),
+          0 0 0 3px rgba(15, 118, 110, 0.12);
+      }
+
+      .benchmark-chart-explorer-body {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .benchmark-chart-explorer-empty {
+        font-size: 12px;
+        color: var(--text-dim);
       }
 
       .benchmark-metric-chart-meta {
