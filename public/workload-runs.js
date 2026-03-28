@@ -1210,8 +1210,6 @@
       seriesMaxValue,
       metricSeries.throughputUnit,
     );
-    const bestPoint = selectBestMetricPoint(metricSeries);
-
     const meta = document.createElement("div");
     meta.className = "benchmark-metric-chart-meta";
 
@@ -1221,17 +1219,6 @@
       chartDescriptor.emphasis;
     trend.textContent = chartDescriptor.trendLabel;
     meta.appendChild(trend);
-
-    if (bestPoint) {
-      const best = document.createElement("span");
-      best.className = "benchmark-metric-chart-best";
-      best.textContent =
-        "Best: " +
-        bestPoint.label +
-        " • " +
-        chartDescriptor.formatValue(bestPoint.value);
-      meta.appendChild(best);
-    }
 
     head.appendChild(meta);
     card.appendChild(head);
