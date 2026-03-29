@@ -422,12 +422,107 @@ bootstrap_existing_ollama_bin() {
   bootstrap_resolve_command ollama
 }
 
+bootstrap_existing_curl_bin() {
+  local curl_bin brew_prefix
+  curl_bin="$(bootstrap_resolve_command curl || true)"
+  if [ -n "$curl_bin" ]; then
+    printf '%s\n' "$curl_bin"
+    return 0
+  fi
+  brew_prefix="$(bootstrap_brew_prefix curl || true)"
+  if [ -n "$brew_prefix" ] && [ -x "$brew_prefix/bin/curl" ]; then
+    printf '%s\n' "$brew_prefix/bin/curl"
+    return 0
+  fi
+  return 1
+}
+
+bootstrap_existing_sudo_bin() {
+  bootstrap_resolve_command sudo
+}
+
+bootstrap_existing_linux_package_manager() {
+  local tool
+  for tool in apt-get dnf yum zypper apk; do
+    if bootstrap_resolve_command "$tool" >/dev/null 2>&1; then
+      printf '%s\n' "$tool"
+      return 0
+    fi
+  done
+  return 1
+}
+
+bootstrap_run_privileged() {
+  if [ "$(id -u)" = "0" ]; then
+    "$@"
+    return
+  fi
+  local sudo_bin
+  sudo_bin="$(bootstrap_existing_sudo_bin || true)"
+  if [ -n "$sudo_bin" ]; then
+    "$sudo_bin" "$@"
+    return
+  fi
+  bootstrap_fail "Administrative privileges are required to install missing system dependencies: $*"
+}
+
+bootstrap_install_curl_if_missing() {
+  local curl_bin package_manager brew_bin
+  curl_bin="$(bootstrap_existing_curl_bin || true)"
+  if [ -n "$curl_bin" ]; then
+    return 0
+  fi
+  case "$BOOTSTRAP_PLATFORM" in
+    darwin-*)
+      brew_bin="$(bootstrap_existing_brew_bin || true)"
+      if [ -z "$brew_bin" ]; then
+        bootstrap_fail "curl is missing and Homebrew is not available to install it on macOS."
+      fi
+      bootstrap_log "Installing curl with Homebrew"
+      "$brew_bin" install curl
+      ;;
+    linux-*)
+      package_manager="$(bootstrap_existing_linux_package_manager || true)"
+      if [ -z "$package_manager" ]; then
+        bootstrap_fail "curl is missing and no supported Linux package manager (apt-get, dnf, yum, zypper, apk) was found."
+      fi
+      bootstrap_log "Installing curl using $package_manager"
+      case "$package_manager" in
+        apt-get)
+          bootstrap_run_privileged apt-get update
+          bootstrap_run_privileged apt-get install -y curl ca-certificates
+          ;;
+        dnf)
+          bootstrap_run_privileged dnf install -y curl ca-certificates
+          ;;
+        yum)
+          bootstrap_run_privileged yum install -y curl ca-certificates
+          ;;
+        zypper)
+          bootstrap_run_privileged zypper --non-interactive install curl ca-certificates
+          ;;
+        apk)
+          bootstrap_run_privileged apk add --no-cache curl ca-certificates
+          ;;
+      esac
+      ;;
+    *)
+      bootstrap_fail "curl is missing and automatic installation is unsupported on $BOOTSTRAP_PLATFORM."
+      ;;
+  esac
+  curl_bin="$(bootstrap_existing_curl_bin || true)"
+  if [ -z "$curl_bin" ]; then
+    bootstrap_fail "curl install completed, but the curl command is still unavailable."
+  fi
+  bootstrap_log "curl is ready at $curl_bin"
+}
+
 bootstrap_download() {
   local url output
   url="$1"
   output="$2"
   mkdir -p "$(dirname "$output")"
-  bootstrap_require_commands curl
+  bootstrap_install_curl_if_missing
   curl --fail --show-error --location --progress-bar -o "$output" "$url"
 }
 
@@ -448,7 +543,7 @@ bootstrap_wait_for_http() {
   local url timeout_seconds
   url="$1"
   timeout_seconds="${2:-60}"
-  bootstrap_require_commands curl
+  bootstrap_install_curl_if_missing
   local deadline
   deadline=$((SECONDS + timeout_seconds))
   while [ "$SECONDS" -lt "$deadline" ]; do

@@ -32,6 +32,10 @@ BOOTSTRAP_OLLAMA_STARTED=0
 BOOTSTRAP_CASSANDRA_PID=""
 BOOTSTRAP_CASSANDRA_STARTED=0
 
+bootstrap_ensure_core_download_tooling() {
+  bootstrap_install_curl_if_missing
+}
+
 bootstrap_java_bin_dir() {
   if [ -n "$BOOTSTRAP_JAVA_BIN" ]; then
     dirname "$BOOTSTRAP_JAVA_BIN"
@@ -173,7 +177,8 @@ bootstrap_install_ollama_if_missing() {
   fi
   bootstrap_log "Installing Ollama v$BOOTSTRAP_OLLAMA_VERSION"
   bootstrap_log "Official install docs: $(bootstrap_ollama_install_hint)"
-  bootstrap_require_commands curl sh
+  bootstrap_install_curl_if_missing
+  bootstrap_require_commands sh
   OLLAMA_VERSION="$BOOTSTRAP_OLLAMA_VERSION" OLLAMA_NO_START=1 \
     sh -c "$(curl -fsSL https://ollama.com/install.sh)"
   BOOTSTRAP_OLLAMA_BIN="$(bootstrap_existing_ollama_bin || true)"
@@ -409,6 +414,7 @@ bootstrap_cleanup() {
 trap bootstrap_cleanup EXIT
 
 bootstrap_require_commands tar
+bootstrap_ensure_core_download_tooling
 bootstrap_select_node_runtime
 bootstrap_install_npm_dependencies
 bootstrap_select_tectonic_cli

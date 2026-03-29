@@ -15,7 +15,7 @@ function createExecutable(dir, name, body) {
 }
 
 function runProbe(key, env = {}) {
-  return spawnSync("bash", [scriptPath, key], {
+  return spawnSync("/bin/bash", [scriptPath, key], {
     cwd: repoRoot,
     encoding: "utf8",
     env: {
@@ -173,6 +173,50 @@ test("bootstrap probe prefers an existing ollama command when present", () => {
     });
     assert.equal(pathResult.status, 0, pathResult.stderr);
     assert.equal(pathResult.stdout.trim(), fakeOllama);
+  } finally {
+    rmSync(binDir, { recursive: true, force: true });
+  }
+});
+
+test("bootstrap probe prefers an existing curl command when present", () => {
+  const binDir = mkdtempSync(path.join(os.tmpdir(), "bootstrap-probe-curl-"));
+  try {
+    const fakeCurl = createExecutable(
+      binDir,
+      "curl",
+      "#!/usr/bin/env bash\necho curl\n",
+    );
+    const result = runProbe("curl-source", {
+      PATH: binDir + path.delimiter + process.env.PATH,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "existing");
+
+    const pathResult = runProbe("curl-path", {
+      PATH: binDir + path.delimiter + process.env.PATH,
+    });
+    assert.equal(pathResult.status, 0, pathResult.stderr);
+    assert.equal(pathResult.stdout.trim(), fakeCurl);
+  } finally {
+    rmSync(binDir, { recursive: true, force: true });
+  }
+});
+
+test("bootstrap probe marks curl for install when unavailable", () => {
+  const binDir = mkdtempSync(path.join(os.tmpdir(), "bootstrap-probe-no-curl-"));
+  try {
+    createExecutable(
+      binDir,
+      "dirname",
+      "#!/usr/bin/env bash\nexec /usr/bin/dirname \"$@\"\n",
+    );
+    const result = runProbe("curl-source", {
+      PATH: binDir,
+      BOOTSTRAP_UNAME_S: "Linux",
+      BOOTSTRAP_UNAME_M: "x86_64",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "install");
   } finally {
     rmSync(binDir, { recursive: true, force: true });
   }

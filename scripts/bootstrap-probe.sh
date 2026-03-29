@@ -13,6 +13,7 @@ tectonic_bin="$(bootstrap_existing_tectonic_bin || true)"
 cassandra_bin="$(bootstrap_existing_cassandra_bin || true)"
 cqlsh_bin="$(bootstrap_existing_cqlsh_bin || true)"
 ollama_bin="$(bootstrap_existing_ollama_bin || true)"
+curl_bin="$(bootstrap_existing_curl_bin || true)"
 
 case "$key" in
   node-source)
@@ -88,6 +89,16 @@ case "$key" in
   ollama-path)
     printf '%s\n' "$ollama_bin"
     ;;
+  curl-source)
+    if [ -n "$curl_bin" ]; then
+      printf 'existing\n'
+    else
+      printf 'install\n'
+    fi
+    ;;
+  curl-path)
+    printf '%s\n' "$curl_bin"
+    ;;
   *)
     cat >&2 <<'EOF'
 Usage: scripts/bootstrap-probe.sh <key>
@@ -104,6 +115,8 @@ Keys:
   cqlsh-path
   ollama-source
   ollama-path
+  curl-source
+  curl-path
 EOF
     exit 1
     ;;
