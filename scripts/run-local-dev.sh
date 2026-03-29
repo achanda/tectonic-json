@@ -134,6 +134,15 @@ bootstrap_install_npm_dependencies() {
   bootstrap_log "npm dependencies already look current, moving on"
 }
 
+bootstrap_package_current_platform_tectonic_cli() {
+  local package_force
+  package_force="${BOOTSTRAP_TECTONIC_PACKAGE_FORCE:-0}"
+  bootstrap_log "Prebuilt tectonic-cli asset is unavailable, falling back to a local $BOOTSTRAP_PLATFORM build"
+  PACKAGE_PLATFORMS="$BOOTSTRAP_PLATFORM" \
+    PACKAGE_FORCE="$package_force" \
+    bash "$SCRIPT_DIR/package-tectonic-cli.sh"
+}
+
 bootstrap_install_tectonic_cli() {
   if [ -x "$BOOTSTRAP_DOWNLOADED_TECTONIC_BIN" ]; then
     bootstrap_log "Repo-local tectonic-cli already installed at $BOOTSTRAP_DOWNLOADED_TECTONIC_BIN"
@@ -141,11 +150,19 @@ bootstrap_install_tectonic_cli() {
   fi
   bootstrap_log "Installing tectonic-cli v$BOOTSTRAP_TECTONIC_CLI_VERSION for $BOOTSTRAP_PLATFORM"
   mkdir -p "$BOOTSTRAP_CACHE_DIR" "$BOOTSTRAP_TOOLS_DIR/tectonic-cli/$BOOTSTRAP_PLATFORM"
-  local archive_name archive_path
+  local archive_name archive_path dist_asset_path
   archive_name="$(bootstrap_tectonic_asset_name)"
   archive_path="$BOOTSTRAP_CACHE_DIR/$archive_name"
+  dist_asset_path="$BOOTSTRAP_REPO_ROOT/dist/$archive_name"
   if [ ! -f "$archive_path" ]; then
-    bootstrap_download "$(bootstrap_tectonic_asset_url)" "$archive_path"
+    if ! bootstrap_download "$(bootstrap_tectonic_asset_url)" "$archive_path"; then
+      rm -f "$archive_path"
+      bootstrap_package_current_platform_tectonic_cli
+      if [ ! -f "$dist_asset_path" ]; then
+        bootstrap_fail "tectonic-cli fallback build did not produce $dist_asset_path."
+      fi
+      cp "$dist_asset_path" "$archive_path"
+    fi
   fi
   rm -rf "$(bootstrap_tectonic_home)"
   mkdir -p "$(bootstrap_tectonic_home)"
@@ -413,22 +430,28 @@ bootstrap_cleanup() {
 
 trap bootstrap_cleanup EXIT
 
-bootstrap_require_commands tar
-bootstrap_ensure_core_download_tooling
-bootstrap_select_node_runtime
-bootstrap_install_npm_dependencies
-bootstrap_select_tectonic_cli
-bootstrap_start_cassandra_for_session
-bootstrap_install_ollama_if_missing
-bootstrap_start_ollama_for_session
-bootstrap_ensure_ollama_model
+main() {
+  bootstrap_require_commands tar
+  bootstrap_ensure_core_download_tooling
+  bootstrap_select_node_runtime
+  bootstrap_install_npm_dependencies
+  bootstrap_select_tectonic_cli
+  bootstrap_start_cassandra_for_session
+  bootstrap_install_ollama_if_missing
+  bootstrap_start_ollama_for_session
+  bootstrap_ensure_ollama_model
 
-bootstrap_log "Starting app on http://127.0.0.1:8787"
-PATH="$(bootstrap_java_bin_dir):$(dirname "$BOOTSTRAP_NODE_BIN"):$PATH" \
-  JAVA_HOME="${BOOTSTRAP_JAVA_HOME:-}" \
-  AI_PROVIDER=ollama \
-  OLLAMA_MODEL="$BOOTSTRAP_OLLAMA_MODEL" \
-  OLLAMA_HOST="$BOOTSTRAP_OLLAMA_HOST" \
-  OLLAMA_BASE_URL="$BOOTSTRAP_OLLAMA_BASE_URL" \
-  TECTONIC_BIN="$BOOTSTRAP_TECTONIC_BIN" \
-  "$BOOTSTRAP_NODE_BIN" "$BOOTSTRAP_REPO_ROOT/src/server.mjs"
+  bootstrap_log "Starting app on http://127.0.0.1:8787"
+  PATH="$(bootstrap_java_bin_dir):$(dirname "$BOOTSTRAP_NODE_BIN"):$PATH" \
+    JAVA_HOME="${BOOTSTRAP_JAVA_HOME:-}" \
+    AI_PROVIDER=ollama \
+    OLLAMA_MODEL="$BOOTSTRAP_OLLAMA_MODEL" \
+    OLLAMA_HOST="$BOOTSTRAP_OLLAMA_HOST" \
+    OLLAMA_BASE_URL="$BOOTSTRAP_OLLAMA_BASE_URL" \
+    TECTONIC_BIN="$BOOTSTRAP_TECTONIC_BIN" \
+    "$BOOTSTRAP_NODE_BIN" "$BOOTSTRAP_REPO_ROOT/src/server.mjs"
+}
+
+if [ "${RUN_LOCAL_DEV_SOURCE_ONLY:-0}" != "1" ]; then
+  main "$@"
+fi
