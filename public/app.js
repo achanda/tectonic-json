@@ -4718,56 +4718,59 @@ function renderJsonSummary(json) {
   const header = document.createElement("div");
   header.className = "json-summary-header";
 
-  const title = document.createElement("div");
-  title.className = "json-summary-title";
-  title.textContent = "Workload Summary";
-  header.appendChild(title);
-  jsonSummary.appendChild(header);
-
-  const overview = document.createElement("div");
-  overview.className = "json-summary-overview";
-  overview.textContent = model.overview;
-  jsonSummary.appendChild(overview);
+  // const title = document.createElement("div");
+  // title.className = "json-summary-title";
+  // title.textContent = "Workload Summary";
+  // header.appendChild(title);
+  // jsonSummary.appendChild(header);
+  
+  let worklaodScaleText = "";
 
   if (Number.isSafeInteger(workloadScale) && workloadScale > 0) {
-    const scaleSection = document.createElement("section");
-    scaleSection.className = "json-summary-section";
+    // const scaleSection = document.createElement("section");
+    // scaleSection.className = "json-summary-section";
 
-    const scaleTitle = document.createElement("div");
-    scaleTitle.className = "json-summary-section-title";
-    scaleTitle.textContent = "Workload scale";
-    scaleSection.appendChild(scaleTitle);
+    // const scaleTitle = document.createElement("div");
+    // scaleTitle.className = "json-summary-section-title";
+    // scaleTitle.textContent = "Workload scale";
+    // scaleSection.appendChild(scaleTitle);
 
-    const scaleValue = document.createElement("div");
-    scaleValue.className = "json-summary-overview";
-    scaleValue.textContent =
+    // const scaleValue = document.createElement("div");
+    // scaleValue.className = "json-summary-overview";
+    // scaleValue.textContent =
+    worklaodScaleText =
       "Operations loaded from the selected workload are scaled by x" +
       String(workloadScale) +
       ".";
-    scaleSection.appendChild(scaleValue);
+    // scaleSection.appendChild(scaleValue);
 
-    jsonSummary.appendChild(scaleSection);
+    // jsonSummary.appendChild(scaleSection);
   }
 
-  if (Array.isArray(model.groups) && model.groups.length > 0) {
-    const groupsSection = document.createElement("section");
-    groupsSection.className = "json-summary-section";
+  const overview = document.createElement("div");
+  overview.className = "json-summary-overview";
+  overview.textContent = model.overview + " " + worklaodScaleText;
+  jsonSummary.appendChild(overview);
 
-    const groupsTitle = document.createElement("div");
-    groupsTitle.className = "json-summary-section-title";
-    groupsTitle.textContent = "Execution plan";
-    groupsSection.appendChild(groupsTitle);
+  // if (Array.isArray(model.groups) && model.groups.length > 0) {
+  //   const groupsSection = document.createElement("section");
+  //   groupsSection.className = "json-summary-section";
 
-    const groupsList = document.createElement("ul");
-    groupsList.className = "json-summary-list";
-    model.groups.forEach((text) => {
-      const item = document.createElement("li");
-      item.textContent = text;
-      groupsList.appendChild(item);
-    });
-    groupsSection.appendChild(groupsList);
-    jsonSummary.appendChild(groupsSection);
-  }
+  //   const groupsTitle = document.createElement("div");
+  //   groupsTitle.className = "json-summary-section-title";
+  //   groupsTitle.textContent = "Execution plan";
+  //   groupsSection.appendChild(groupsTitle);
+
+  //   const groupsList = document.createElement("ul");
+  //   groupsList.className = "json-summary-list";
+  //   model.groups.forEach((text) => {
+  //     const item = document.createElement("li");
+  //     item.textContent = text;
+  //     groupsList.appendChild(item);
+  //   });
+  //   groupsSection.appendChild(groupsList);
+  //   jsonSummary.appendChild(groupsSection);
+  // }
 
   if (Array.isArray(model.assumptions) && model.assumptions.length > 0) {
     const assumptionsSection = document.createElement("section");

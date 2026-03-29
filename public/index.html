@@ -1,3225 +1,278 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tectonic Workload Generator</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
-    <style>
-      *,
-      *::before,
-      *::after {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-      }
 
-      :root {
-        --bg: #d6e0e6;
-        --surface: #ffffff;
-        --surface-soft: #f1f6f9;
-        --surface-subtle: #eaf2f6;
-        --border: #dde7ef;
-        --border-strong: #ccd9e4;
-        --divider: #e5edf3;
-        --accent: #0f766e;
-        --accent-hover: #0b5f59;
-        --success: #16a34a;
-        --error: #dc2626;
-        --text: #0b1e2d;
-        --text-dim: #5f7284;
-      }
-
-      body {
-        font-family: "DM Sans", system-ui, sans-serif;
-        background:
-          radial-gradient(circle at 8% 10%, rgba(143, 194, 182, 0.46) 0%, transparent 34%),
-          radial-gradient(circle at 92% 0%, rgba(163, 185, 221, 0.44) 0%, transparent 30%),
-          linear-gradient(160deg, #d5e0e5 0%, #dde7ea 38%, #c5d2d9 100%);
-        color: var(--text);
-        min-height: 100vh;
-      }
-
-      .app-shell {
-        width: 100%;
-        max-width: none;
-        min-height: 100vh;
-        margin: 0;
-        padding: 24px clamp(16px, 2.2vw, 34px) 28px;
-        display: flex;
-        flex-direction: column;
-        gap: 18px;
-      }
-
-      header {
-        position: relative;
-        text-align: center;
-        padding-top: 6px;
-      }
-
-      .header-actions {
-        position: absolute;
-        right: 0;
-        top: 0;
-        display: flex;
-        gap: 8px;
-      }
-
-      header h1 {
-        font-size: 36px;
-        font-weight: 700;
-        color: var(--text);
-        margin-bottom: 8px;
-      }
-
-      .header-subtitle {
-        color: var(--text-dim);
-        font-size: 15px;
-      }
-
-      .header-intro {
-        max-width: 880px;
-        margin: 14px auto 0;
-        padding: 14px 18px;
-        border: 1px solid var(--border-strong);
-        border-radius: 14px;
-        background: rgba(255, 255, 255, 0.78);
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.85),
-          0 10px 24px rgba(11, 30, 45, 0.06);
-        text-align: left;
-      }
-
-      .header-intro p {
-        font-size: 15px;
-        line-height: 1.55;
-        color: var(--text-dim);
-      }
-
-      .header-intro p + p {
-        margin-top: 6px;
-      }
-
-      main {
-        min-height: 0;
-        flex: 1;
-        display: flex;
-      }
-
-      .workspace {
-        display: grid;
-        gap: 20px;
-        min-width: 0;
-        width: 100%;
-        align-items: stretch;
-        grid-template-columns: minmax(0, 1fr);
-      }
-
-      .workspace-column {
-        min-width: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 20px;
-      }
-
-      .app-shell.builder-only #rightRail {
-        display: none;
-      }
-
-      .panel {
-        background: var(--surface);
-        border: 1px solid var(--border-strong);
-        border-radius: 16px;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-        box-shadow:
-          0 1px 0 rgba(11, 30, 45, 0.05),
-          0 16px 34px rgba(11, 30, 45, 0.12);
-        transition:
-          box-shadow 0.2s ease,
-          transform 0.2s ease;
-        min-width: 0;
-        min-height: 0;
-      }
-
-      .panel:hover {
-        box-shadow: 0 22px 42px rgba(11, 30, 45, 0.16);
-      }
-
-      .json-panel {
-        min-height: 0;
-      }
-
-      .panel-header {
-        padding: 14px 16px;
-        border-bottom: 1px solid var(--border);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        flex-shrink: 0;
-      }
-
-      .panel-title {
-        font-size: 14px;
-        font-weight: 600;
-        color: var(--text);
-      }
-
-      .panel-body {
-        flex: 1;
-        overflow: auto;
-        padding: 18px 20px 20px;
-        background: var(--surface-subtle);
-      }
-
-      textarea {
-        width: 100%;
-        height: 100%;
-        background: transparent;
-        border: none;
-        color: var(--text);
-        font-family: "JetBrains Mono", monospace;
-        font-size: 13px;
-        line-height: 1.6;
-        resize: none;
-        outline: none;
-      }
-
-      textarea::placeholder {
-        color: var(--text-dim);
-      }
-
-      .btn {
-        padding: 8px 14px;
-        border-radius: 8px;
-        font-size: 13px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: all 0.15s ease;
-        border: none;
-        font-family: inherit;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.42),
-          0 10px 18px rgba(11, 30, 45, 0.06);
-      }
-
-      .btn-ghost {
-        background: linear-gradient(180deg, #edf4f8 0%, #dfe9ef 100%);
-        color: #274354;
-        border: 1px solid #bfd0dc;
-      }
-
-      .btn-ghost:hover {
-        color: #fff;
-        background: var(--accent-hover);
-        border-color: var(--accent-hover);
-      }
-
-      .workload-form {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-
-      .builder-hint {
-        font-size: 13px;
-        color: #567082;
-        margin-bottom: 10px;
-      }
-
-      .assistant-panel {
-        border: 1px solid var(--border-strong);
-        background: linear-gradient(164deg, #ffffff 0%, #f3fbf8 100%);
-        border-radius: 14px;
-        padding: 14px;
-        margin-bottom: 10px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.82),
-          0 10px 22px rgba(11, 30, 45, 0.05);
-      }
-
-      .assistant-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-      }
-
-      .assistant-title {
-        font-size: 14px;
-        font-weight: 700;
-        color: var(--text);
-      }
-
-      .assistant-status {
-        font-size: 12px;
-        border-radius: 999px;
-        padding: 5px 10px;
-        border: 1px solid #d3e7f7;
-        background: #ecf6fd;
-        color: #245272;
-        white-space: nowrap;
-      }
-
-      .assistant-status.loading {
-        border-color: #c6dfd8;
-        background: #edf9f6;
-        color: #0f6a5f;
-      }
-
-      .assistant-status.error {
-        border-color: #f5c2c2;
-        background: #fff2f2;
-        color: #b92a2a;
-      }
-
-      .assistant-status.warn {
-        border-color: #f1ddb2;
-        background: #fff8e8;
-        color: #8a5d0a;
-      }
-
-      .assistant-timeline {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        max-height: 360px;
-        overflow: auto;
-        padding-right: 2px;
-      }
-
-      .assistant-timeline:empty {
-        display: none;
-      }
-
-      .assistant-turn {
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        background: #ffffff;
-        padding: 10px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        animation: fadeSlide 0.18s ease;
-      }
-
-      .assistant-turn.user {
-        background: #f1f8fd;
-        border-color: #d8e8f5;
-      }
-
-      .assistant-turn.assistant {
-        border-color: #d7e5ef;
-        background:
-          linear-gradient(180deg, rgba(248, 252, 255, 0.98), #ffffff 68%);
-      }
-
-      .assistant-turn-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        font-size: 11px;
-        color: #5f7284;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        font-weight: 700;
-      }
-
-      .assistant-turn-message {
-        font-size: 13px;
-        line-height: 1.42;
-        color: #1a2e40;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-
-      .assistant-turn-summary {
-        font-size: 12px;
-        line-height: 1.4;
-        color: #345066;
-      }
-
-      .assistant-inline-meta {
-        font-size: 11px;
-        color: #5a6e82;
-        line-height: 1.35;
-      }
-
-      .assistant-assumptions {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-
-      .assistant-assumptions-title {
-        margin: 0;
-      }
-
-      .assistant-assumption-list {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        margin: 0;
-        padding-left: 18px;
-        list-style: disc;
-      }
-
-      .assistant-assumption-list li {
-        font-size: 12px;
-        line-height: 1.4;
-        color: #35506b;
-        padding: 0;
-      }
-
-      .assistant-turn-note {
-        margin: 0;
-      }
-
-      .assistant-clarification-list {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-
-      .assistant-clarification {
-        border: 1px solid #d7e5ef;
-        background: #fbfdff;
-        border-radius: 9px;
-        padding: 8px;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-
-      .assistant-clarification.required {
-        border-color: #e7c39f;
-        background: #fff8ee;
-      }
-
-      .assistant-clarification.resolved {
-        border-color: #9bc9ab;
-        background: #f2fbf5;
-      }
-
-      .assistant-clarification-label {
-        font-size: 12px;
-        color: #2f485d;
-        line-height: 1.4;
-        display: flex;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 6px;
-      }
-
-      .assistant-required-badge {
-        font-size: 10px;
-        font-weight: 700;
-        letter-spacing: 0.03em;
-        text-transform: uppercase;
-        color: #8a4d02;
-        background: #fde7cd;
-        border: 1px solid #f3c48d;
-        border-radius: 999px;
-        padding: 2px 6px;
-      }
-
-      .assistant-required-badge.resolved {
-        color: #21623a;
-        background: #ddf3e5;
-        border-color: #a5d3b6;
-      }
-
-      .assistant-clarification-input {
-        width: 100%;
-        min-height: 44px;
-        padding: 10px 12px;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        font-size: 13px;
-        color: var(--text);
-        background: #fff;
-        outline: none;
-        font-family: inherit;
-        transition:
-          border-color 0.15s ease,
-          box-shadow 0.15s ease;
-      }
-
-      .assistant-clarification-input:focus {
-        border-color: var(--accent);
-        box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
-      }
-
-      .assistant-clarification-input.invalid {
-        border-color: #d0472f;
-        box-shadow: 0 0 0 3px rgba(220, 56, 44, 0.12);
-      }
-
-      .assistant-clarification-choice-list {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-
-      .assistant-clarification-choice {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 8px 10px;
-        border: 1px solid #d8e6ef;
-        border-radius: 8px;
-        background: #fff;
-        cursor: pointer;
-      }
-
-      .assistant-clarification-choice:hover {
-        border-color: #bfd8d5;
-        background: #f7fcfb;
-      }
-
-      .assistant-clarification-choice input[type="checkbox"] {
-        accent-color: var(--accent);
-        margin: 0;
-      }
-
-      .assistant-clarification-choice-label {
-        font-size: 13px;
-        color: var(--text);
-        line-height: 1.35;
-      }
-
-      .assistant-clarification-hint {
-        font-size: 11px;
-        color: #5a6e82;
-        line-height: 1.35;
-      }
-
-      .assistant-clarification-error {
-        font-size: 11px;
-        color: #b4371d;
-        line-height: 1.35;
-        min-height: 14px;
-      }
-
-      .assistant-card-footer {
-        border-top: 1px solid #deebf5;
-        padding-top: 6px;
-        font-size: 11px;
-        color: #5a6e82;
-        display: flex;
-        justify-content: space-between;
-        gap: 8px;
-        align-items: center;
-        flex-wrap: wrap;
-      }
-
-      .assistant-composer {
-        border: 1px solid #d5e7e4;
-        border-radius: 10px;
-        background: #ffffff;
-        padding: 10px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-
-      .assistant-composer-label {
-        font-size: 12px;
-        color: #486174;
-        font-weight: 600;
-      }
-
-      .assistant-input {
-        width: 100%;
-        min-height: 72px;
-        resize: vertical;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 10px 12px;
-        background: #fff;
-        color: var(--text);
-        font-family: inherit;
-        font-size: 13px;
-        line-height: 1.4;
-        outline: none;
-        transition:
-          border-color 0.15s ease,
-          box-shadow 0.15s ease;
-      }
-
-      .assistant-input:focus {
-        border-color: var(--accent);
-        box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
-      }
-
-      .assistant-actions {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-
-      .assistant-composer-hint {
-        font-size: 11px;
-        color: #5a6e82;
-        line-height: 1.35;
-        min-height: 16px;
-      }
-
-      .hud {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 8px;
-        margin-bottom: 4px;
-      }
-
-      .hud-card {
-        border: 1px solid var(--border);
-        background: linear-gradient(165deg, #ffffff 0%, #f5fbfa 100%);
-        border-radius: 10px;
-        padding: 7px 8px;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        min-height: 50px;
-        justify-content: center;
-        transition: box-shadow 0.2s ease;
-      }
-
-      .hud-card:hover {
-        box-shadow: 0 8px 20px rgba(11, 30, 45, 0.08);
-      }
-
-      .hud-label {
-        font-size: 10px;
-        line-height: 1.1;
-        color: var(--text-dim);
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      .hud-value {
-        font-size: 16px;
-        line-height: 1.1;
-        font-weight: 700;
-        color: var(--text);
-      }
-
-      .form-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 10px;
-      }
-
-      .field {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        font-size: 12px;
-        color: var(--text-dim);
-        position: relative;
-      }
-
-      .field-row {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-      }
-
-      .field input,
-      .field select,
-      .field textarea {
-        width: 100%;
-        padding: 10px 12px;
-        background: #fff;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        color: var(--text);
-        font-family: inherit;
-        font-size: 13px;
-        outline: none;
-        transition:
-          border-color 0.15s ease,
-          box-shadow 0.15s ease;
-      }
-
-      .field textarea {
-        min-height: 96px;
-        resize: vertical;
-        font-family: "JetBrains Mono", monospace;
-        line-height: 1.45;
-      }
-
-      .field input:focus,
-      .field select:focus,
-      .field textarea:focus {
-        border-color: var(--accent);
-        box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
-      }
-
-      .field-description {
-        font-size: 11px;
-        line-height: 1.35;
-        color: #5f7284;
-        white-space: pre-line;
-        position: absolute;
-        left: 0;
-        right: 0;
-        top: calc(100% + 4px);
-        padding: 6px 8px;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        background: #ffffff;
-        box-shadow: 0 8px 20px rgba(11, 30, 45, 0.08);
-        z-index: 30;
-        opacity: 0;
-        visibility: hidden;
-        pointer-events: none;
-        transform: translateY(-2px);
-        transition:
-          opacity 0.14s ease,
-          transform 0.14s ease,
-          visibility 0.14s ease;
-      }
-
-      .field-description:empty {
-        display: none;
-      }
-
-      .field-inline-note {
-        font-size: 11px;
-        line-height: 1.35;
-        color: #5f7284;
-        min-height: 28px;
-      }
-
-      .field:hover .field-description,
-      .field:focus-within .field-description,
-      .checkbox-item:hover .field-description,
-      .checkbox-item:focus-within .field-description {
-        opacity: 0.95;
-        visibility: visible;
-        transform: translateY(0);
-      }
-
-      .fieldset {
-        border: 1px solid var(--border-strong);
-        border-radius: 10px;
-        padding: 12px;
-        background: #f8fbfd;
-        position: relative;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.72),
-          0 6px 14px rgba(11, 30, 45, 0.04);
-      }
-
-      .fieldset-title {
-        font-size: 12px;
-        color: var(--text-dim);
-        margin-bottom: 8px;
-        font-weight: 600;
-      }
-
-      .welcome-panel {
-        max-width: none;
-        margin: 0;
-        border: 1px solid #d8ebe7;
-        border-radius: 18px;
-        padding: 28px;
-        background:
-          radial-gradient(
-            circle at top left,
-            rgba(40, 145, 128, 0.12),
-            transparent 38%
-          ),
-          linear-gradient(
-            135deg,
-            rgba(15, 79, 74, 0.05),
-            rgba(40, 145, 128, 0.02)
-          ),
-          #f9fcfb;
-        box-shadow: 0 20px 40px rgba(15, 79, 74, 0.08);
-        display: flex;
-        flex-direction: column;
-        justify-content: flex-start;
-        min-width: 0;
-      }
-
-      .builder-panel {
-        min-height: 0;
-      }
-
-      .builder-panel > .panel-header {
-        display: none;
-      }
-
-      .builder-panel > .panel-body {
-        padding: 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-      }
-
-      .builder-entry-card {
-        border: 1px solid var(--border-strong);
-        border-radius: 14px;
-        background: linear-gradient(180deg, #ffffff 0%, #f8fbfd 100%);
-        padding: 14px;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.78),
-          0 10px 22px rgba(11, 30, 45, 0.05);
-      }
-
-      .builder-entry-head {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        padding: 4px 2px 2px;
-      }
-
-      .builder-entry-eyebrow {
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: #1f6a63;
-      }
-
-      .builder-entry-heading {
-        font-size: 23px;
-        line-height: 1.08;
-        font-weight: 700;
-        color: #102b3b;
-      }
-
-      .builder-entry-subheading {
-        max-width: 760px;
-        font-size: 14px;
-        line-height: 1.55;
-        color: #567082;
-      }
-
-      .builder-entry-routes {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 14px;
-        align-items: start;
-      }
-
-      .app-shell.preset-loaded .builder-entry-routes {
-        grid-template-columns: minmax(0, 1fr);
-      }
-
-      .app-shell.scratch-selected .builder-entry-routes {
-        grid-template-columns: minmax(0, 1fr);
-      }
-
-      .builder-entry-panel {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        min-width: 0;
-      }
-
-      .builder-assistant-slot {
-        display: flex;
-        flex-direction: column;
-      }
-
-      .builder-route-card {
-        border: 1px solid #d3e0ea;
-        border-radius: 16px;
-        padding: 16px;
-        background:
-          linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, #f9fcfd 100%);
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.82),
-          0 12px 26px rgba(11, 30, 45, 0.05);
-      }
-
-      .builder-route-card.load-path {
-        background:
-          radial-gradient(circle at top left, rgba(16, 125, 111, 0.08), transparent 42%),
-          linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, #f6fbfa 100%);
-      }
-
-      .builder-route-card.scratch-path {
-        background:
-          radial-gradient(circle at top right, rgba(85, 123, 207, 0.08), transparent 38%),
-          linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, #f8fbfd 100%);
-      }
-
-      .builder-route-head {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-      }
-
-      .builder-route-kicker {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-
-      .builder-route-badge {
-        align-self: flex-start;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 34px;
-        height: 34px;
-        padding: 0 10px;
-        border-radius: 999px;
-        border: 1px solid rgba(15, 118, 110, 0.18);
-        background: rgba(15, 118, 110, 0.08);
-        color: #0b5f59;
-        font-size: 13px;
-        font-weight: 700;
-        letter-spacing: 0.02em;
-      }
-
-      .builder-route-label {
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.11em;
-        text-transform: uppercase;
-        color: #5b7384;
-      }
-
-      .builder-route-title {
-        font-size: 19px;
-        line-height: 1.15;
-        font-weight: 700;
-        color: #163246;
-      }
-
-      .builder-route-help {
-        font-size: 13px;
-        line-height: 1.5;
-        color: #5b7284;
-      }
-
-      .builder-route-note {
-        padding: 10px 12px;
-        border: 1px dashed #c8d9e4;
-        border-radius: 12px;
-        background: rgba(255, 255, 255, 0.78);
-        color: #577083;
-        font-size: 12px;
-        line-height: 1.5;
-      }
-
-      .builder-route-note strong {
-        color: #163246;
-      }
-
-      .builder-preset-grid .field span,
-      .builder-entry-panel .assistant-composer-label {
-        font-weight: 600;
-        color: #30495c;
-      }
-
-      .builder-entry-copy {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-
-      .builder-entry-title {
-        font-size: 14px;
-        font-weight: 700;
-        color: var(--text);
-      }
-
-      .builder-entry-help {
-        font-size: 13px;
-        line-height: 1.45;
-        color: var(--text-dim);
-      }
-
-      .builder-preset-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-        gap: 12px;
-      }
-
-      .welcome-eyebrow {
-        margin: 0 0 10px;
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        color: #0f4f4a;
-      }
-
-      .welcome-title {
-        margin: 0;
-        font-size: 30px;
-        line-height: 1.1;
-        color: #113d39;
-      }
-
-      .welcome-lede {
-        margin: 12px 0 0;
-        max-width: 720px;
-        color: var(--text-dim);
-        font-size: 15px;
-        line-height: 1.6;
-      }
-
-      .welcome-choice-grid {
-        display: grid;
-        grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.9fr);
-        gap: 16px;
-        margin-top: 22px;
-      }
-
-      .welcome-option {
-        border: 1px solid rgba(15, 79, 74, 0.09);
-        border-radius: 14px;
-        padding: 18px;
-        background: rgba(255, 255, 255, 0.78);
-        backdrop-filter: blur(8px);
-      }
-
-      .welcome-option h3 {
-        margin: 0 0 8px;
-        font-size: 16px;
-        color: #113d39;
-      }
-
-      .welcome-option p {
-        margin: 0;
-        color: var(--text-dim);
-        font-size: 13px;
-        line-height: 1.5;
-      }
-
-      .preset-picker-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-        gap: 12px;
-        margin-top: 14px;
-      }
-
-      .welcome-actions {
-        display: flex;
-        gap: 10px;
-        margin-top: 14px;
-        flex-wrap: wrap;
-      }
-
-      .welcome-primary-btn {
-        background: var(--accent);
-        color: #fff;
-        border: 1px solid var(--accent);
-      }
-
-      .welcome-primary-btn:hover {
-        background: var(--accent-hover);
-        border-color: var(--accent-hover);
-      }
-
-      .preset-note {
-        margin-top: 12px;
-        padding: 12px;
-        border: 1px solid #d8ebe7;
-        border-radius: 12px;
-        background: #f6fbfa;
-      }
-
-      .preset-note-description {
-        font-size: 12px;
-        line-height: 1.45;
-        color: #54706f;
-      }
-
-      .structure-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 8px;
-      }
-
-      .structure-actions .btn {
-        min-height: 38px;
-      }
-
-      .builder-structure-toggle-row {
-        display: flex;
-        justify-content: flex-start;
-        margin: 0 0 14px;
-      }
-
-      .structure-panel {
-        border: 1px solid var(--border-strong);
-        border-radius: 14px;
-        background: linear-gradient(180deg, #ffffff 0%, #f8fbfd 100%);
-        padding: 14px;
-        margin-bottom: 14px;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.78),
-          0 10px 22px rgba(11, 30, 45, 0.05);
-      }
-
-      .structure-panel-head {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
-      }
-
-      .structure-panel-title {
-        font-size: 14px;
-        font-weight: 700;
-        color: #123b37;
-        margin: 0;
-      }
-
-      .structure-help {
-        margin: 6px 0 0;
-        font-size: 12px;
-        line-height: 1.5;
-        color: var(--text-dim);
-      }
-
-      .structure-selection {
-        margin: 12px 0 0;
-        font-size: 12px;
-        font-weight: 600;
-        color: #0f4f4a;
-      }
-
-      .structure-tree {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        margin-top: 14px;
-      }
-
-      .structure-section-card {
-        border: 1px solid var(--border-strong);
-        border-radius: 12px;
-        background: #ffffff;
-        padding: 12px;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.7),
-          0 6px 14px rgba(11, 30, 45, 0.04);
-      }
-
-      .structure-section-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        flex-wrap: wrap;
-      }
-
-      .structure-section-title {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-
-      .structure-section-btn,
-      .structure-group-btn,
-      .structure-mini-btn {
-        border: 1px solid #d3e4e0;
-        background: #ffffff;
-        color: #173a37;
-        border-radius: 10px;
-        cursor: pointer;
-        font: inherit;
-      }
-
-      .structure-section-btn {
-        padding: 8px 12px;
-        font-weight: 700;
-      }
-
-      .structure-group-btn {
-        padding: 8px 10px;
-        text-align: left;
-        flex: 1;
-      }
-
-      .structure-mini-btn {
-        padding: 6px 10px;
-        font-size: 12px;
-      }
-
-      .structure-section-btn.active,
-      .structure-group-btn.active {
-        border-color: var(--accent);
-        background: #edf9f6;
-        color: #0f4f4a;
-      }
-
-      .structure-mini-btn:hover,
-      .structure-section-btn:hover,
-      .structure-group-btn:hover {
-        border-color: var(--accent);
-      }
-
-      .structure-chip {
-        display: inline-flex;
-        align-items: center;
-        border-radius: 999px;
-        background: #eef8fb;
-        border: 1px solid #d3e7f7;
-        color: #245272;
-        padding: 3px 8px;
-        font-size: 11px;
-      }
-
-      .structure-group-list {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        margin-top: 12px;
-      }
-
-      .structure-group-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-
-      .structure-group-row + .structure-group-row {
-        border-top: 1px solid var(--divider);
-        padding-top: 8px;
-      }
-
-      @media (max-width: 860px) {
-        .welcome-panel {
-          padding: 20px;
-        }
-
-        .welcome-title {
-          font-size: 24px;
-        }
-
-        .welcome-choice-grid {
-          grid-template-columns: 1fr;
-        }
-      }
-
-      .checkbox-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 8px;
-      }
-
-      .checkbox-item {
-        display: flex;
-        align-items: flex-start;
-        gap: 8px;
-        font-size: 13px;
-        color: var(--text);
-        border: 1px solid transparent;
-        border-radius: 10px;
-        padding: 8px;
-        background: #ffffff;
-        transition:
-          border-color 0.2s ease,
-          background 0.2s ease;
-        cursor: pointer;
-        position: relative;
-      }
-
-      .checkbox-item:hover {
-        border-color: #d2e5e2;
-        background: #f8fdfc;
-      }
-
-      .checkbox-item input[type="checkbox"] {
-        accent-color: var(--accent);
-        margin-top: 3px;
-      }
-
-      .section-checkbox-item {
-        margin-top: 0;
-        width: 100%;
-        min-height: 43px;
-        align-items: center;
-        justify-content: flex-start;
-        gap: 8px;
-        padding: 10px 12px;
-        font-size: 13px;
-        line-height: 1.2;
-        border-radius: 8px;
-        border-color: var(--border);
-        background: #fff;
-      }
-
-      .section-checkbox-item:hover {
-        border-color: var(--border);
-        background: #fff;
-      }
-
-      .section-checkbox-item input[type="checkbox"] {
-        margin-top: 0;
-        width: 15px;
-        height: 15px;
-        flex: 0 0 auto;
-      }
-
-      .section-checkbox-item .checkbox-item-title {
-        font-size: inherit;
-        font-weight: 400;
-        line-height: 1.2;
-        color: var(--text);
-      }
-
-      .checkbox-label-text {
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-      }
-
-      .op-config > .field-description {
-        position: static;
-        opacity: 1;
-        visibility: visible;
-        transform: none;
-        border: none;
-        background: transparent;
-        box-shadow: none;
-        padding: 0;
-        pointer-events: auto;
-      }
-
-      .operation-config-container {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-
-      .workload-form > * + * {
-        border-top: 1px solid var(--divider);
-        padding-top: 14px;
-      }
-
-      .op-config {
-        border: 1px solid var(--border-strong);
-        border-radius: 10px;
-        background: #fff;
-        padding: 12px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        animation: fadeSlide 0.2s ease;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.8),
-          0 6px 14px rgba(11, 30, 45, 0.04);
-      }
-
-      .op-config-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 8px;
-      }
-
-      .op-config-title {
-        font-size: 12px;
-        font-weight: 600;
-        color: var(--text-dim);
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-      }
-
-      .op-default-btn {
-        border: 1px solid #cae3df;
-        border-radius: 999px;
-        padding: 5px 10px;
-        font-size: 11px;
-        color: #0f4f4a;
-        background: #f4fbfa;
-        cursor: pointer;
-      }
-
-      .op-default-btn:hover {
-        border-color: var(--accent);
-        color: #fff;
-        background: var(--accent);
-      }
-
-      .advanced-summary {
-        border: 1px solid #d8e8f5;
-        border-radius: 10px;
-        background: #f7fbff;
-        padding: 10px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-
-      .advanced-summary-title {
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: #4d667d;
-      }
-
-      .advanced-summary-list {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-
-      .advanced-summary-item {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        border: 1px solid #dbe7f3;
-        border-radius: 8px;
-        background: #ffffff;
-        padding: 8px;
-      }
-
-      .advanced-summary-text {
-        font-size: 12px;
-        line-height: 1.4;
-        color: #2c465b;
-      }
-
-      .advanced-summary-meta {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 10px;
-      }
-
-      .advanced-summary-controls {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-        gap: 8px;
-      }
-
-      .advanced-expression-builder,
-      .advanced-expression-collection {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-
-      .advanced-expression-row {
-        border: 1px solid #dbe7f3;
-        border-radius: 8px;
-        background: #ffffff;
-        padding: 8px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-
-      .advanced-expression-row-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-      }
-
-      .advanced-expression-row-head strong {
-        font-size: 12px;
-        font-weight: 600;
-        color: #2c465b;
-      }
-
-      .advanced-expression-row-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-      }
-
-      .advanced-expression-row-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        gap: 8px;
-      }
-
-      .advanced-summary-field {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-
-      .advanced-summary-field span {
-        font-size: 11px;
-        font-weight: 600;
-        color: #4d667d;
-      }
-
-      .advanced-summary-field input,
-      .advanced-summary-field select,
-      .advanced-summary-field textarea {
-        width: 100%;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        background: #ffffff;
-        color: var(--text);
-        padding: 8px 10px;
-        font-family: inherit;
-        font-size: 12px;
-      }
-
-      .advanced-summary-field textarea {
-        min-height: 84px;
-        resize: vertical;
-        font-family: "JetBrains Mono", monospace;
-        line-height: 1.45;
-      }
-
-      .advanced-summary-hint {
-        font-size: 11px;
-        line-height: 1.45;
-        color: #5f7284;
-      }
-
-      .advanced-summary-actions {
-        display: flex;
-        justify-content: flex-end;
-      }
-
-      .advanced-summary-clear {
-        border: 1px solid #cae3df;
-        border-radius: 999px;
-        padding: 4px 8px;
-        font-size: 11px;
-        color: #0f4f4a;
-        background: #f4fbfa;
-        cursor: pointer;
-        flex-shrink: 0;
-      }
-
-      .advanced-summary-clear:hover {
-        border-color: var(--accent);
-        color: #fff;
-        background: var(--accent);
-      }
-
-      [hidden] {
-        display: none !important;
-      }
-
-      .hidden {
-        display: none !important;
-      }
-
-      .panel-header-preview {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
-      }
-
-      .preview-header-top {
-        display: flex;
-        align-items: center;
-        justify-content: flex-start;
-        gap: 10px;
-        min-width: 0;
-        flex: 1 1 auto;
-      }
-
-      .preview-header-copy {
-        display: flex;
-        align-items: center;
-        min-width: 0;
-      }
-
-      .preview-toolbar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        flex-wrap: wrap;
-      }
-
-      .preview-toolbar-group {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-
-      .preview-stack {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        flex: 1;
-        min-height: 0;
-      }
-
-      .validation-result {
-        min-height: 18px;
-        font-size: 12px;
-        color: var(--text-dim);
-        transition: color 0.15s ease;
-      }
-
-      .validation-result.show.valid {
-        color: var(--success);
-      }
-      .validation-result.show.invalid {
-        color: var(--error);
-      }
-
-      .json-output {
-        height: 100%;
-        min-height: 360px;
-        border: 1px solid var(--border-strong);
-        border-radius: 10px;
-        background: #ffffff;
-        padding: 14px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        flex: 1;
-        min-width: 0;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.72),
-          0 10px 22px rgba(11, 30, 45, 0.05);
-      }
-
-      .json-summary {
-        display: grid;
-        gap: 12px;
-        padding: 14px;
-        border: 1px solid var(--border-strong);
-        border-radius: 12px;
-        background:
-          radial-gradient(
-            circle at top right,
-            rgba(84, 163, 145, 0.1),
-            transparent 34%
-          ),
-          linear-gradient(180deg, #fbfefd 0%, #f5fbfa 100%);
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.78),
-          0 10px 22px rgba(11, 30, 45, 0.05);
-      }
-
-      .json-summary:empty {
-        display: none;
-      }
-
-      .json-summary-header {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-
-      .json-summary-title {
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #4a6970;
-      }
-
-      .json-summary-live {
-        font-size: 11px;
-        color: #698087;
-      }
-
-      .json-summary-overview {
-        font-size: 13px;
-        line-height: 1.55;
-        color: #2a4856;
-      }
-
-      .json-summary-section {
-        display: grid;
-        gap: 8px;
-      }
-
-      .json-summary-section-title {
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: #5a7481;
-      }
-
-      .json-summary-list {
-        margin: 0;
-        padding-left: 18px;
-        display: grid;
-        gap: 6px;
-        color: #345261;
-        font-size: 12px;
-        line-height: 1.5;
-      }
-
-      .json-summary-assumptions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin: 0;
-        padding: 0;
-        list-style: none;
-      }
-
-      .json-summary-assumptions li {
-        font-size: 11px;
-        line-height: 1.35;
-        color: #35506b;
-        border: 1px solid #cfe2f4;
-        background: #edf5fc;
-        border-radius: 999px;
-        padding: 5px 9px;
-      }
-
-      .json-tree {
-        flex: 1;
-        min-height: 0;
-        overflow: auto;
-        font-family: "JetBrains Mono", monospace;
-        font-size: 13px;
-        line-height: 1.65;
-        color: #163146;
-        padding-right: 4px;
-      }
-
-      .json-tree details {
-        display: block;
-      }
-
-      .json-tree summary {
-        list-style: none;
-        cursor: pointer;
-      }
-
-      .json-tree summary::-webkit-details-marker {
-        display: none;
-      }
-
-      .json-tree details[open] > summary .json-tree-collapsed-preview {
-        display: none;
-      }
-
-      .json-tree-summary {
-        display: flex;
-        align-items: flex-start;
-        gap: 8px;
-        border-radius: 8px;
-        padding: 2px 6px 2px 0;
-      }
-
-      .json-tree-summary:hover {
-        background: rgba(15, 118, 110, 0.06);
-      }
-
-      .json-tree-marker {
-        flex: 0 0 auto;
-        width: 14px;
-        text-align: center;
-        color: #0f766e;
-        font-size: 11px;
-        line-height: 1.8;
-        margin-top: 1px;
-      }
-
-      .json-tree details[open] > summary .json-tree-marker {
-        transform: rotate(90deg);
-      }
-
-      .json-tree-line {
-        display: block;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-
-      .json-tree-collapsed-preview {
-        color: #8ea1b1;
-        letter-spacing: 0.02em;
-      }
-
-      .json-tree-children {
-        margin-left: 15px;
-        padding-left: 12px;
-        border-left: 1px solid #dbe8f3;
-      }
-
-      .json-tree-closing {
-        color: #5c6f82;
-        padding-left: 23px;
-      }
-
-      .json-tree-key {
-        color: #174b6e;
-      }
-
-      .json-tree-string {
-        color: #0c7a63;
-      }
-
-      .json-tree-number {
-        color: #8b4c19;
-      }
-
-      .json-tree-boolean {
-        color: #7a2ed6;
-      }
-
-      .json-tree-null {
-        color: #7a8b9a;
-        font-style: italic;
-      }
-
-      .json-tree-focus {
-        background: rgba(15, 118, 110, 0.12);
-        box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.12);
-      }
-
-      .benchmark-results-section {
-        border: 1px solid var(--border-strong);
-        border-radius: 16px;
-        background: linear-gradient(180deg, #ffffff 0%, #f8fbfd 100%);
-        display: flex;
-        flex-direction: column;
-        min-height: 0;
-        overflow: hidden;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.76),
-          0 10px 22px rgba(11, 30, 45, 0.05);
-      }
-
-      .benchmark-results-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 14px 16px;
-        border-bottom: 1px solid var(--border);
-      }
-
-      .benchmark-results-title {
-        font-size: 12px;
-        color: #4f6679;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-      }
-
-      .benchmark-results-subtitle {
-        font-size: 12px;
-        color: var(--text-dim);
-      }
-
-      .runs-list {
-        min-width: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-        padding: 14px;
-      }
-
-      .benchmark-batch-graphs {
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-      }
-
-      .benchmark-batch-card {
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        background: linear-gradient(180deg, #ffffff 0%, #f6fbfd 100%);
-        padding: 14px;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-
-      .benchmark-batch-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 12px;
-        flex-wrap: wrap;
-      }
-
-      .benchmark-batch-title {
-        font-size: 13px;
-        font-weight: 700;
-        color: var(--text);
-      }
-
-      .benchmark-batch-meta {
-        font-size: 12px;
-        color: var(--text-dim);
-      }
-
-      .benchmark-batch-stats {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-      }
-
-      .benchmark-batch-stat {
-        border: 1px solid #d6e4ef;
-        border-radius: 999px;
-        background: #f7fbfd;
-        padding: 6px 10px;
-        font-size: 12px;
-        color: #38536a;
-      }
-
-      .benchmark-batch-empty {
-        font-size: 12px;
-        color: var(--text-dim);
-      }
-
-      .benchmark-chart-section,
-      .benchmark-chart-explorer {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-
-      .benchmark-chart-section-head {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: flex-end;
-        justify-content: space-between;
-        gap: 8px 14px;
-      }
-
-      .benchmark-chart-section-title {
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #5f7789;
-      }
-
-      .benchmark-chart-section-copy {
-        font-size: 12px;
-        line-height: 1.4;
-        color: #6b8191;
-      }
-
-      .benchmark-metric-chart-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        gap: 16px;
-      }
-
-      .benchmark-metric-chart-grid-overview {
-        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-        align-items: stretch;
-      }
-
-      .benchmark-metric-chart-grid-overview .benchmark-metric-chart-card {
-        min-height: 100%;
-      }
-
-      .benchmark-metric-chart-grid-overview .benchmark-metric-chart-head {
-        min-height: 128px;
-      }
-
-      .benchmark-metric-chart-grid-overview .benchmark-metric-chart-title {
-        min-height: calc(1.3em * 3);
-      }
-
-      .benchmark-metric-chart-card {
-        border: 1px solid #d7e3ed;
-        border-radius: 18px;
-        background: linear-gradient(180deg, #ffffff 0%, #f8fbfd 100%);
-        padding: 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.9),
-          0 14px 28px rgba(11, 30, 45, 0.045);
-      }
-
-      .benchmark-metric-chart-card.explorer {
-        padding: 18px;
-      }
-
-      .benchmark-metric-chart-head {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-      }
-
-      .benchmark-metric-chart-copy {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        min-width: 0;
-      }
-
-      .benchmark-metric-chart-kicker {
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #6c8393;
-      }
-
-      .benchmark-metric-chart-title {
-        font-size: 15px;
-        font-weight: 700;
-        letter-spacing: 0.01em;
-        color: #30495d;
-      }
-
-      .benchmark-chart-explorer-controls {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-
-      .benchmark-chart-scope-switch {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-      }
-
-      .benchmark-chart-scope-btn {
-        border: 1px solid #c4d4df;
-        border-radius: 999px;
-        background: linear-gradient(180deg, #eef5f8 0%, #e1ebf0 100%);
-        color: #365063;
-        padding: 7px 12px;
-        font-size: 12px;
-        font-weight: 700;
-        cursor: pointer;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.78),
-          0 8px 16px rgba(11, 30, 45, 0.05);
-        transition:
-          border-color 0.15s ease,
-          background 0.15s ease,
-          color 0.15s ease;
-      }
-
-      .benchmark-chart-scope-btn:hover {
-        border-color: #aac2d0;
-        background: linear-gradient(180deg, #e5eef3 0%, #d7e3ea 100%);
-      }
-
-      .benchmark-chart-scope-btn.is-active {
-        border-color: rgba(15, 118, 110, 0.24);
-        background: rgba(15, 118, 110, 0.1);
-        color: #0f625b;
-      }
-
-      .benchmark-chart-picker-row {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: 12px;
-      }
-
-      .benchmark-chart-picker {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        min-width: 0;
-        position: relative;
-      }
-
-      .benchmark-chart-picker-label {
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
-        color: #60788b;
-      }
-
-      .benchmark-chart-picker::after {
-        content: "▾";
-        position: absolute;
-        right: 14px;
-        bottom: 13px;
-        font-size: 14px;
-        color: #5f7688;
-        pointer-events: none;
-      }
-
-      .benchmark-chart-select {
-        width: 100%;
-        min-height: 52px;
-        padding: 12px 42px 12px 14px;
-        border: 1px solid #d4e1ea;
-        border-radius: 14px;
-        background: linear-gradient(180deg, #ffffff 0%, #f4f9fc 100%);
-        color: #173247;
-        font-family: inherit;
-        font-size: 15px;
-        line-height: 1.35;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.88),
-          0 10px 20px rgba(11, 30, 45, 0.04);
-        appearance: none;
-        -webkit-appearance: none;
-        outline: none;
-        cursor: pointer;
-        transition:
-          border-color 0.15s ease,
-          box-shadow 0.15s ease,
-          transform 0.15s ease;
-      }
-
-      .benchmark-chart-select:hover {
-        border-color: #bfd3df;
-      }
-
-      .benchmark-chart-select:focus {
-        border-color: var(--accent);
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.9),
-          0 0 0 3px rgba(15, 118, 110, 0.12);
-      }
-
-      .benchmark-chart-explorer-body {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-
-      .benchmark-chart-explorer-empty {
-        font-size: 12px;
-        color: var(--text-dim);
-      }
-
-      .benchmark-metric-chart-meta {
-        display: flex;
-        flex-wrap: nowrap;
-        gap: 8px;
-        align-items: center;
-        justify-content: flex-end;
-        flex: 0 0 auto;
-      }
-
-      .benchmark-metric-chart-trend,
-      .benchmark-metric-chart-best {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        min-height: 36px;
-        padding: 0 14px 0 10px;
-        border-radius: 999px;
-        font-size: 12px;
-        line-height: 1;
-        white-space: nowrap;
-        flex: 0 0 auto;
-      }
-
-      .benchmark-metric-chart-trend {
-        position: relative;
-        border: 1px solid #cfe0ea;
-        background: linear-gradient(180deg, #f7fbfd 0%, #ebf3f8 100%);
-        color: #3f5a6d;
-        font-weight: 800;
-        letter-spacing: 0.01em;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.92),
-          0 8px 18px rgba(11, 30, 45, 0.05);
-      }
-
-      .benchmark-metric-chart-trend::before {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 22px;
-        height: 22px;
-        border-radius: 999px;
-        font-size: 12px;
-        font-weight: 900;
-        content: "•";
-        background: rgba(63, 90, 109, 0.1);
-      }
-
-      .benchmark-metric-chart-trend-positive {
-        border-color: rgba(15, 118, 110, 0.2);
-        background: linear-gradient(180deg, rgba(15, 118, 110, 0.12) 0%, rgba(15, 118, 110, 0.06) 100%);
-        color: #0d665f;
-      }
-
-      .benchmark-metric-chart-trend-positive::before {
-        content: "↑";
-        color: #0d665f;
-        background: rgba(15, 118, 110, 0.14);
-      }
-
-      .benchmark-metric-chart-trend-caution {
-        border-color: rgba(194, 122, 18, 0.22);
-        background: linear-gradient(180deg, rgba(194, 122, 18, 0.12) 0%, rgba(194, 122, 18, 0.06) 100%);
-        color: #8f5710;
-      }
-
-      .benchmark-metric-chart-trend-caution::before {
-        content: "↓";
-        color: #8f5710;
-        background: rgba(194, 122, 18, 0.14);
-      }
-
-      .benchmark-metric-chart-best {
-        border: 1px solid #d8e3ec;
-        background: #ffffff;
-        color: #4c6477;
-      }
-
-      .benchmark-chart-wrap {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-
-      .benchmark-chart {
-        width: 100%;
-        height: auto;
-        display: block;
-        border: 1px solid #dfe7ef;
-        border-radius: 16px;
-        background:
-          linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 251, 253, 0.98) 100%);
-      }
-
-      .benchmark-metric-chart-summary {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        gap: 8px;
-      }
-
-      .benchmark-metric-chart-summary-item {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        min-width: 0;
-        padding: 9px 10px;
-        border: 1px solid #dbe6ee;
-        border-radius: 12px;
-        background: rgba(255, 255, 255, 0.92);
-      }
-
-      .benchmark-metric-chart-summary-item.is-best {
-        border-color: rgba(15, 118, 110, 0.24);
-        background: rgba(15, 118, 110, 0.08);
-      }
-
-      .benchmark-metric-chart-summary-label {
-        min-width: 0;
-        font-size: 12px;
-        font-weight: 700;
-        color: #395366;
-      }
-
-      .benchmark-metric-chart-summary-value {
-        font-size: 12px;
-        font-weight: 700;
-        color: #183144;
-        text-align: right;
-      }
-
-      .benchmark-chart-legend {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        font-size: 12px;
-        color: var(--text-dim);
-      }
-
-      .benchmark-chart-legend-item {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-      }
-
-      .benchmark-chart-legend-swatch {
-        width: 12px;
-        height: 12px;
-        border-radius: 3px;
-      }
-
-      .benchmark-chart-legend-swatch.line {
-        width: 18px;
-        height: 3px;
-        border-radius: 999px;
-      }
-
-      .runs-table-shell {
-        overflow: auto;
-        max-height: 560px;
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        background: #fff;
-      }
-
-      .runs-table {
-        width: 100%;
-        min-width: 820px;
-        border-collapse: separate;
-        border-spacing: 0;
-      }
-
-      .runs-table thead th {
-        position: sticky;
-        top: 0;
-        z-index: 1;
-        background: #f7fbfd;
-        border-bottom: 1px solid var(--border);
-        padding: 11px 14px;
-        text-align: left;
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #61798b;
-      }
-
-      .runs-table tbody td {
-        padding: 12px 14px;
-        border-bottom: 1px solid var(--divider);
-        vertical-align: top;
-      }
-
-      .runs-table-summary-row {
-        cursor: pointer;
-      }
-
-      .runs-table-summary-row:hover {
-        background: #fbfefd;
-      }
-
-      .runs-table-summary-row.expanded {
-        background: #f8fcfb;
-      }
-
-      .runs-table-primary {
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--text);
-      }
-
-      .runs-table-secondary {
-        margin-top: 2px;
-        font-size: 11px;
-        line-height: 1.35;
-        color: var(--text-dim);
-      }
-
-      .runs-table-output {
-        font-family: "JetBrains Mono", monospace;
-        font-size: 12px;
-        color: #245272;
-        white-space: nowrap;
-        word-break: normal;
-      }
-
-      .runs-table-output.active {
-        font-family: inherit;
-        color: inherit;
-        white-space: normal;
-        word-break: normal;
-      }
-
-      .runs-table-detail-row[hidden] {
-        display: none;
-      }
-
-      .runs-table-detail-cell {
-        padding: 0;
-        background: #fbfefd;
-      }
-
-      .runs-table-detail {
-        padding: 14px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-
-      .runs-table-detail-copy {
-        font-size: 12px;
-        color: #506679;
-        line-height: 1.45;
-      }
-
-      .run-progress {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-
-      .run-progress.compact {
-        min-width: 180px;
-        gap: 5px;
-      }
-
-      .run-progress-meta {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-      }
-
-      .run-progress-label {
-        font-size: 12px;
-        line-height: 1.35;
-        color: #385266;
-      }
-
-      .run-progress.compact .run-progress-label {
-        font-size: 11px;
-        color: #4f6679;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      .run-progress-value {
-        flex: 0 0 auto;
-        font-size: 11px;
-        font-weight: 700;
-        color: #5b7285;
-      }
-
-      .run-progress-track {
-        position: relative;
-        height: 8px;
-        overflow: hidden;
-        border-radius: 999px;
-        background: #e5eef4;
-      }
-
-      .run-progress.compact .run-progress-track {
-        height: 6px;
-      }
-
-      .run-progress-fill {
-        height: 100%;
-        border-radius: inherit;
-        background: linear-gradient(90deg, #1c8876 0%, #58b7a0 100%);
-        transition: width 220ms ease;
-      }
-
-      .run-progress-track.indeterminate::after {
-        content: "";
-        position: absolute;
-        top: 0;
-        bottom: 0;
-        left: -32%;
-        width: 32%;
-        border-radius: inherit;
-        background: linear-gradient(
-          90deg,
-          transparent 0%,
-          rgba(28, 136, 118, 0.28) 18%,
-          rgba(28, 136, 118, 0.88) 52%,
-          rgba(28, 136, 118, 0.28) 84%,
-          transparent 100%
-        );
-        animation: run-progress-slide 1.1s linear infinite;
-      }
-
-      @keyframes run-progress-slide {
-        from {
-          transform: translateX(0);
-        }
-
-        to {
-          transform: translateX(420%);
-        }
-      }
-
-      .run-card {
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 8px;
-        background: #fbfefe;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-
-      .run-card-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        font-size: 11px;
-        color: var(--text-dim);
-      }
-
-      .run-status-badge {
-        border-radius: 999px;
-        padding: 3px 8px;
-        border: 1px solid #d3e7f7;
-        background: #ecf6fd;
-        color: #245272;
-        font-size: 10px;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        font-weight: 700;
-        white-space: nowrap;
-      }
-
-      .run-status-badge.running,
-      .run-status-badge.starting {
-        border-color: #c6dfd8;
-        background: #edf9f6;
-        color: #0f6a5f;
-      }
-
-      .run-status-badge.failed,
-      .run-status-badge.timed_out,
-      .run-status-badge.cancelled {
-        border-color: #f5c2c2;
-        background: #fff2f2;
-        color: #b92a2a;
-      }
-
-      .run-status-badge.succeeded {
-        border-color: #c8e7c9;
-        background: #effbf0;
-        color: #1e6f2a;
-      }
-
-      .run-progress {
-        font-size: 12px;
-        color: #506679;
-        line-height: 1.35;
-      }
-
-      .run-db-menu {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        width: 100%;
-      }
-
-      .run-db-menu[open] {
-        min-width: 0;
-      }
-
-      .run-db-menu-summary {
-        list-style: none;
-        display: grid;
-        grid-template-columns: auto minmax(0, 1fr) auto;
-        align-items: center;
-        gap: 12px;
-        min-height: 72px;
-        padding: 14px 16px;
-        border: 1px solid #d4e2eb;
-        border-radius: 18px;
-        background: linear-gradient(180deg, #fbfdfe 0%, #f3f8fb 100%);
-        color: #16364d;
-        cursor: pointer;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.82),
-          0 10px 24px rgba(11, 30, 45, 0.05);
-      }
-
-      .run-db-menu-summary::-webkit-details-marker {
-        display: none;
-      }
-
-      .run-db-menu-summary-copy {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        min-width: 0;
-      }
-
-      .run-db-menu-label {
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: #688091;
-      }
-
-      .run-db-menu-prompt {
-        font-size: 12px;
-        line-height: 1.35;
-        color: #6a7f8f;
-      }
-
-      .run-db-menu-value {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        min-width: 0;
-      }
-
-      .run-db-chip {
-        display: inline-flex;
-        align-items: center;
-        min-height: 28px;
-        padding: 0 10px;
-        border-radius: 999px;
-        border: 1px solid #c9dde8;
-        background: #ffffff;
-        color: #173a52;
-        font-size: 12px;
-        font-weight: 700;
-        white-space: nowrap;
-      }
-
-      .run-db-chip.more {
-        background: #eef5f9;
-        color: #527083;
-      }
-
-      .run-db-chip.empty {
-        border-style: dashed;
-        color: #718596;
-        background: #f7fbfd;
-      }
-
-      .run-db-menu-chevron {
-        font-size: 14px;
-        color: #6c8292;
-        transition: transform 0.18s ease;
-      }
-
-      .run-db-menu[open] .run-db-menu-chevron {
-        transform: rotate(180deg);
-      }
-
-      .run-db-menu-panel {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        padding: 12px;
-        border: 1px solid #d4e2eb;
-        border-radius: 18px;
-        background: #fff;
-        box-shadow: 0 14px 30px rgba(11, 30, 45, 0.08);
-      }
-
-      .run-db-menu-help {
-        font-size: 12px;
-        line-height: 1.4;
-        color: #678091;
-      }
-
-      .run-db-option {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        min-height: 48px;
-        padding: 0 12px;
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        background: linear-gradient(180deg, #ffffff 0%, #f7fbfd 100%);
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--text);
-        cursor: pointer;
-        transition:
-          border-color 0.15s ease,
-          background 0.15s ease,
-          transform 0.15s ease;
-      }
-
-      .run-db-option:hover {
-        border-color: #bed2df;
-        background: linear-gradient(180deg, #ffffff 0%, #f2f8fb 100%);
-      }
-
-      .run-db-option input {
-        margin: 0;
-        width: 16px;
-        height: 16px;
-        flex: 0 0 auto;
-      }
-
-      .run-location {
-        font-size: 11px;
-        line-height: 1.35;
-        color: #2f5d4d;
-        background: #eefaf3;
-        border: 1px solid #cae8d6;
-        border-radius: 6px;
-        padding: 5px 7px;
-        font-family: "JetBrains Mono", monospace;
-        word-break: break-all;
-      }
-
-      .run-error {
-        font-size: 11px;
-        color: #b4371d;
-        line-height: 1.35;
-      }
-
-      .benchmark-stats {
-        display: grid;
-        gap: 12px;
-        margin-top: 10px;
-      }
-
-      .benchmark-stats-group {
-        display: grid;
-        gap: 10px;
-      }
-
-      .benchmark-stats-group-title {
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #5b7285;
-        padding-left: 2px;
-      }
-
-      .benchmark-operations {
-        display: grid;
-        gap: 12px;
-      }
-
-      .benchmark-section {
-        border: 1px solid #d9e6ee;
-        border-radius: 14px;
-        background: linear-gradient(180deg, #fbfdff 0%, #f5f9fc 100%);
-        padding: 12px 14px;
-      }
-
-      .benchmark-section-overall {
-        border-color: #cfe2ed;
-        background:
-          radial-gradient(
-            circle at top right,
-            rgba(99, 168, 206, 0.12),
-            transparent 38%
-          ),
-          linear-gradient(180deg, #fbfdff 0%, #f2f8fc 100%);
-      }
-
-      .benchmark-section-title {
-        margin-bottom: 10px;
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #4f6778;
-      }
-
-      .benchmark-metric-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 10px;
-      }
-
-      .benchmark-metric {
-        display: grid;
-        gap: 4px;
-        padding: 10px 11px;
-        border: 1px solid #d9e7f0;
-        border-radius: 12px;
-        background: rgba(255, 255, 255, 0.9);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
-      }
-
-      .benchmark-metric-label {
-        font-size: 11px;
-        font-weight: 600;
-        color: #698091;
-        line-height: 1.3;
-      }
-
-      .benchmark-metric-value {
-        font-size: 18px;
-        font-weight: 700;
-        letter-spacing: -0.02em;
-        color: #17364a;
-        line-height: 1.4;
-        word-break: break-word;
-      }
-
-      .run-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-      }
-
-      .run-action-link {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border: 1px solid #b9d6d0;
-        border-radius: 999px;
-        padding: 5px 10px;
-        font-size: 11px;
-        color: #0b5750;
-        background: linear-gradient(180deg, #eef8f6 0%, #ddeeea 100%);
-        cursor: pointer;
-        text-decoration: none;
-        line-height: 1.2;
-        font-family: inherit;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.78),
-          0 8px 14px rgba(11, 30, 45, 0.05);
-      }
-
-      .run-action-link:hover {
-        border-color: var(--accent);
-        color: #fff;
-        background: var(--accent);
-      }
-
-      .run-action-link.disabled,
-      .run-action-link.disabled:hover {
-        border-color: #d9e6e2;
-        color: #8ea1ad;
-        background: #f8fbfa;
-        cursor: not-allowed;
-      }
-
-      .runs-empty {
-        margin: 0;
-        padding: 18px 16px 20px;
-        font-size: 13px;
-        color: #6d8091;
-        line-height: 1.45;
-      }
-
-      .runs-known-location {
-        font-size: 11px;
-        color: #4f6679;
-        line-height: 1.35;
-      }
-
-      .json-stats {
-        display: flex;
-        gap: 6px;
-        flex-wrap: wrap;
-      }
-
-      .json-pill {
-        font-size: 11px;
-        color: #245272;
-        background: #ecf6fd;
-        border: 1px solid #d3e7f7;
-        border-radius: 999px;
-        padding: 3px 8px;
-      }
-
-      .shortcut-hint {
-        font-size: 11px;
-        color: #7a8b9a;
-      }
-
-      .help-dot {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 15px;
-        height: 15px;
-        border-radius: 50%;
-        font-size: 10px;
-        font-weight: 700;
-        color: #3b7f90;
-        border: 1px solid #bfd8df;
-        background: #eef8fb;
-        cursor: help;
-        user-select: none;
-      }
-
-      @keyframes fadeSlide {
-        from {
-          opacity: 0;
-          transform: translateY(6px);
-        }
-        to {
-          opacity: 1;
-          transform: translateY(0);
-        }
-      }
-
-      @media (min-width: 980px) {
-        body {
-          overflow: hidden;
-        }
-
-        .app-shell {
-          height: 100vh;
-          overflow: hidden;
-        }
-
-        main {
-          min-height: 0;
-          overflow: hidden;
-        }
-
-        .workspace {
-          min-height: 0;
-          height: 100%;
-          grid-template-columns: minmax(360px, 0.92fr) minmax(420px, 1.08fr);
-          align-items: start;
-        }
-
-        .app-shell.builder-only .workspace {
-          grid-template-columns: minmax(0, 1fr);
-          justify-items: center;
-        }
-
-        .app-shell.builder-only #leftRail {
-          width: min(1480px, 100%);
-          max-width: 1480px;
-        }
-
-        .app-shell.builder-only #builderPanel {
-          min-height: auto;
-        }
-
-        .workspace-column {
-          min-height: 0;
-          max-height: 100%;
-          overflow: auto;
-          overscroll-behavior: contain;
-          scrollbar-gutter: stable;
-          padding-right: 6px;
-        }
-
-        #builderPanel,
-        #previewPanel,
-        #runsPanel {
-          min-width: 0;
-        }
-
-        #previewPanel,
-        #builderPanel {
-          min-height: min(720px, calc(100vh - 180px));
-        }
-      }
-
-      @media (max-width: 768px) {
-        body {
-          overflow: auto;
-        }
-
-        .app-shell {
-          padding: 20px 12px;
-        }
-        header {
-          text-align: left;
-          padding-top: 44px;
-        }
-        header h1 {
-          font-size: 28px;
-        }
-        .header-actions {
-          left: 0;
-          right: auto;
-        }
-        .hud {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-        .assistant-timeline {
-          max-height: 420px;
-        }
-
-        .builder-entry-routes {
-          grid-template-columns: minmax(0, 1fr);
-        }
-
-        .builder-entry-heading {
-          font-size: 20px;
-        }
-
-        .builder-route-card {
-          padding: 14px;
-        }
-        .assistant-card-footer {
-          position: sticky;
-          bottom: 0;
-          background: #ffffff;
-          padding-bottom: 6px;
-        }
-        .assistant-actions .btn {
-          min-height: 44px;
-        }
-      }
-      .panel-header-preview {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 12px 16px;
-        flex-wrap: wrap;
-      }
-
-      .preview-header-top {
-        min-width: 0;
-        display: flex;
-        align-items: center;
-        justify-content: flex-start;
-        gap: 10px;
-        flex: 1 1 auto;
-      }
-
-      .preview-header-copy,
-      .preview-header-actions {
-        min-width: 0;
-        display: flex;
-        align-items: center;
-      }
-
-      .preview-header-actions {
-        justify-content: flex-end;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-
-      .preview-header-copy .panel-title {
-        font-size: 15px;
-        font-weight: 600;
-        letter-spacing: 0;
-      }
-
-      .preview-stack {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-      }
-
-      .run-control-card {
-        border: 1px solid var(--border-strong);
-        border-radius: 16px;
-        background: linear-gradient(180deg, #f8fbfd 0%, #ffffff 100%);
-        padding: 16px;
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
-        gap: 18px;
-        align-items: center;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.76),
-          0 10px 22px rgba(11, 30, 45, 0.05);
-      }
-
-      .run-control-copy {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-
-      .run-control-label {
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #5d7384;
-      }
-
-      .run-control-help {
-        font-size: 14px;
-        line-height: 1.55;
-        color: var(--text-dim);
-        max-width: 620px;
-      }
-
-      .run-control-actions {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        gap: 12px;
-        justify-items: stretch;
-      }
-
-      .preview-action-btn {
-        min-height: 36px;
-        padding: 8px 14px;
-      }
-
-      #runWorkloadBtn {
-        min-height: 46px;
-        padding: 10px 16px;
-        font-size: 13px;
-        font-weight: 700;
-        border-radius: 12px;
-        justify-content: center;
-      }
-
-      #runWorkloadBtn:hover {
-        transform: translateY(-1px);
-      }
-
-      .run-db-menu {
-        min-height: 0;
-      }
-
-      .run-db-menu-summary {
-        width: 100%;
-      }
-
-      @media (max-width: 1080px) {
-        .run-control-card {
-          grid-template-columns: minmax(0, 1fr);
-        }
-      }
-
-      @media (max-width: 720px) {
-        .preview-header-top {
-          flex-wrap: wrap;
-        }
-
-        .preview-header-actions,
-        .run-control-actions {
-          justify-items: stretch;
-        }
-
-        .run-db-menu {
-          width: 100%;
-        }
-
-        .run-db-menu-summary {
-          width: 100%;
-        }
-      }
-      body {
-        font-size: 20px;
-        line-height: 1.55;
-      }
-
-      header h1 {
-        font-size: 42px;
-      }
-
-      .header-subtitle {
-        font-size: 17px;
-      }
-
-      .panel-title,
-      .assistant-title {
-        font-size: 17px;
-      }
-
-      .panel-body {
-        padding: 20px 22px 22px;
-      }
-
-      .btn {
-        padding: 10px 16px;
-        font-size: 16px;
-      }
-
-      label,
-      input,
-      select,
-      button,
-      textarea {
-        font-size: inherit;
-      }
-
-      input:not([type="checkbox"]):not([type="radio"]),
-      select,
-      textarea {
-        font-size: 16px;
-        line-height: 1.5;
-      }
-
-      textarea {
-        font-size: 16px;
-        line-height: 1.7;
-      }
-
-      .assistant-status,
-      .builder-hint,
-      .benchmark-results-title,
-      .benchmark-results-subtitle,
-      .runs-table-secondary,
-      .run-progress-value {
-        font-size: 14px;
-      }
-
-      .runs-table thead th {
-        font-size: 13px;
-      }
-
-      .runs-table tbody td,
-      .runs-table-primary,
-      .runs-table-output,
-      .run-progress-label,
-      .runs-table-detail-copy {
-        font-size: 15px;
-      }
-
-      @media (max-width: 720px) {
-        body {
-          font-size: 16px;
-        }
-
-        header h1 {
-          font-size: 36px;
-        }
-
-        .btn,
-        input:not([type="checkbox"]):not([type="radio"]),
-        select,
-        textarea {
-          font-size: 15px;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="app-shell" id="appShell">
-      <header id="appHeader" hidden>
-        <div class="header-actions">
-          <button class="btn btn-ghost" id="presetBrowserBtn" hidden>
-            Browse Workloads
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TexBench</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <!-- ── Navbar ── -->
+  <nav class="navbar">
+    <div class="navbar-inner">
+      <a href="#landingHero" class="navbar-brand">
+        <div class="navbar-icon">
+          <div class="navbar-disc navbar-disc-top"></div>
+          <div class="navbar-disc navbar-disc-mid"></div>
+          <div class="navbar-disc navbar-disc-bot"></div>
+        </div>
+        <span class="navbar-name">TexBench</span>
+      </a>
+      <div class="navbar-links">
+        <a href="#landingHero" class="navbar-link overview">Overview</a>
+        <a href="#landingForms" class="navbar-link benchmark">Let's Benchmark</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── Section 1: Hero — big name, white ── -->
+  <section class="landing-hero" id="landingHero">
+    <div class="tectonic-icon">
+      <div class="tectonic-disc disc-top"></div>
+      <div class="disc-smoke upper">
+        <span class="smoke-puff"></span>
+        <span class="smoke-puff"></span>
+        <span class="smoke-puff"></span>
+        <span class="smoke-puff"></span>
+        <span class="smoke-puff"></span>
+        <span class="smoke-puff"></span>
+      </div>
+      <div class="tectonic-disc disc-mid"></div>
+      <div class="disc-smoke lower">
+        <span class="smoke-puff"></span>
+        <span class="smoke-puff"></span>
+        <span class="smoke-puff"></span>
+        <span class="smoke-puff"></span>
+        <span class="smoke-puff"></span>
+        <span class="smoke-puff"></span>
+      </div>
+      <div class="tectonic-disc disc-bot"></div>
+      <div class="disc-float-zone left" id="floatZoneLeft"></div>
+      <div class="disc-float-zone right" id="floatZoneRight"></div>
+    </div>
+    <h1>TexBench: A Unified <i>Benchmarking Suite</i> For <i>Shifting Workloads</i></h1>
+  </section>
+
+  <!-- ── Section 2: Description — dark charcoal ── -->
+  <section class="landing-about" id="landingAbout">
+    <div class="landing-about-inner">
+      <p>
+        Welcome to TexBench, an <b>LLM-powered benchmarking interface</b> that allows users 
+        evaluate multiple key-value stores in parallel against standard benchmarks such as, 
+        YCSB, KVBench, db_bench, and Tectonic, along with dynamically shifting and user described
+        custom workloads. To meet <b>performance targets</b> and <b>minimize latency</b>, 
+        benchmarking several data stores against expected workloads is often the only approach 
+        for selecting the most suitable one.
+    </div>
+
+    <button class="cta-btn" id="ctaBtn" type="button" style="margin-top: 48px;">
+      Try it out
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 5v14M5 12l7 7 7-7" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
+  <!-- Spec badge (shown when app is active) -->
+  <div class="spec-badge" id="specBadge">
+    <span class="spec-badge-dot preset" id="specBadgeDot"></span>
+    <span id="specBadgeText">YCSB Workload A (scale: 1)</span>
+    <span class="spec-badge-change">Change</span>
+  </div>
+  </section>
+
+  <!-- ── Section 3: Forms ── -->
+  <section class="landing-forms" id="landingForms">
+    <div class="forms-row" id="formsRow">
+      <!-- Left: Standard Benchmarks -->
+      <div class="form-side" id="formSideLeft">
+        <h3 class="form-side-title">Standard Benchmarks</h3>
+        <div class="steps">
+          <div class="step active">
+            <div class="step-indicator">
+              <div class="step-number">1</div>
+              <div class="step-line"></div>
+            </div>
+            <div class="step-content">
+              <div class="step-title">Benchmark Family</div>
+              <div class="step-field">
+                <select id="landingPresetFamily">
+                  <option value="">Choose a family...</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="step active">
+            <div class="step-indicator">
+              <div class="step-number">2</div>
+              <div class="step-line"></div>
+            </div>
+            <div class="step-content">
+              <div class="step-title">Workload Specification</div>
+              <div class="step-field">
+                <select id="landingPresetFile" disabled>
+                  <option value="">Choose a type...</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="step active">
+            <div class="step-indicator">
+              <div class="step-number">3</div>
+            </div>
+            <div class="step-content">
+              <div class="step-title">Scale</div>
+              <div class="step-field">
+                <input id="landingPresetScale" type="number" inputmode="decimal" step="any" min="0.1" value="1" placeholder="Scale factor (e.g. 1.5)" />
+              </div>
+              <button type="button" class="step-submit preset" id="landingPresetSubmit" disabled>Load Specification</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OR divider -->
+      <div class="forms-or" id="formsOrDivider">
+        <div class="forms-or-line"></div>
+        <span class="forms-or-text">OR</span>
+        <div class="forms-or-line"></div>
+      </div>
+
+      <!-- Right: Describe Workload -->
+      <div class="form-side" id="formSideRight">
+        <h3 class="form-side-title">Describe Workload</h3>
+        <div class="step-field">
+          <textarea id="landingWorkloadPrompt" placeholder="Example: Generate an insert-heavy workload with 1 KB key-value size and 100K operations, with 80% inserts and 20% reads using a zipfian distribution."></textarea>
+        </div>
+        <button type="button" class="step-submit custom" id="landingPromptSubmit" disabled>Generate Specification</button>
+      </div>
+    </div>
+
+    <!-- Collapsed vertical tab (shown after spec loads — left side only) -->
+    <div class="forms-collapsed-tabs" id="formsCollapsedTabs">
+      <button class="forms-collapsed-tab left" id="collapsedTabLeft">Standard Benchmarks</button>
+    </div>
+
+    <!-- Spec Summary (shown after spec loads) -->
+    <div class="spec-summary" id="specSummaryView">
+      <div class="spec-summary-header">
+        <div style="display:flex;align-items:center;gap:14px;">
+          <span class="spec-summary-valid" id="specSummaryValid">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            Valid
+          </span>
+        </div>
+        <div class="spec-summary-actions">
+          <button class="spec-action-btn" id="specViewJsonBtn" title="View JSON">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            View JSON
           </button>
-          <button class="btn btn-ghost" id="newWorkloadBtn" hidden>
-            Clear Form
+          <button class="spec-action-btn" id="specEditBtn" title="Edit Workload">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            Edit
+          </button>
+          <button class="spec-action-btn" id="specDownloadBtn" title="Download JSON">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download
+          </button>
+          <button class="spec-action-btn" id="specCopyBtn" title="Copy JSON">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            Copy
           </button>
         </div>
-        <h1>Workload Spec Generator</h1>
-        <p class="header-subtitle">
-          Generate JSON configurations for your workload specifications
+      </div>
+      <!-- Workload content area: structure + optional JSON side by side -->
+      <div class="spec-summary-body" id="specSummaryBody">
+        <div class="spec-workload-structure" id="specWorkloadStructure">
+          <!-- Populated by JS from the app shell's structure panel -->
+        </div>
+        <div class="spec-json-viewer" id="specJsonViewer">
+          <pre id="specJsonPre"></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Floating Chat Panel (right edge of screen) -->
+  <div class="spec-chat-panel" id="specChatPanel">
+    <div class="spec-chat-header">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <span>Describe Workload</span>
+      <span class="spec-chat-status" id="specChatStatus">Ready</span>
+    </div>
+    <div class="spec-chat-messages" id="specChatMessages">
+      <div class="spec-chat-empty" id="specChatEmpty">
+        Describe changes to your workload or ask the AI to modify the current configuration.
+      </div>
+    </div>
+    <div class="spec-chat-composer">
+      <textarea id="specChatInput" class="spec-chat-input" placeholder="e.g. Change to 80% reads and 20% writes..." rows="2"></textarea>
+      <button type="button" class="spec-chat-send" id="specChatSendBtn" disabled>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── App (shown after CTA) ── -->
+  <div class="app-shell" id="appShell">
+    <!-- App Tab Bar -->
+    <div class="app-progress" id="appTabs">
+      <button class="app-step active" data-tab="edit">
+        <span class="app-step-circle">A</span>
+        <span class="app-step-label">Edit Specification</span>
+      </button>
+      <div class="app-step-connector" id="connectorAB"></div>
+      <button class="app-step" data-tab="databases">
+        <span class="app-step-circle">B</span>
+        <span class="app-step-label">Databases</span>
+      </button>
+      <div class="app-step-connector" id="connectorBC"></div>
+      <button class="app-step" data-tab="results">
+        <span class="app-step-circle">C</span>
+        <span class="app-step-label">Results</span>
+      </button>
+    </div>
+    <header id="appHeader" hidden>
+      <div class="header-actions">
+        <button class="btn btn-ghost" id="presetBrowserBtn" hidden>
+          Browse Workloads
+        </button>
+        <button class="btn btn-ghost" id="newWorkloadBtn" hidden>
+          Clear Form
+        </button>
+      </div>
+      <h1>Workload Spec Generator</h1>
+      <p class="header-subtitle">
+        Generate JSON configurations for your workload specifications
+      </p>
+      <div class="header-intro" id="headerIntro">
+        <p>
+          This demo turns natural-language workload requests into editable
+          benchmark specifications.
         </p>
-        <div class="header-intro" id="headerIntro">
-          <p>
-            This demo turns natural-language workload requests into editable
-            benchmark specifications.
-          </p>
-          <p>
-            You can start from a workload or describe the workload you want, then
-            refine sections, phases, operations, and advanced fields directly in
-            the builder.
-          </p>
-          <p>
-            Once the spec looks right, run it against one or more databases and
-            compare the resulting benchmark metrics side by side.
-          </p>
-        </div>
-      </header>
-      <main>
-        <div class="workspace">
-          <div class="workspace-column" id="leftRail">
+        <p>
+          You can start from a workload or describe the workload you want, then
+          refine sections, phases, operations, and advanced fields directly in
+          the builder.
+        </p>
+        <p>
+          Once the spec looks right, run it against one or more databases and
+          compare the resulting benchmark metrics side by side.
+        </p>
+      </div>
+    </header>
+    <main>
+      <!-- Tab: Edit Specification -->
+      <div class="app-tab-content active" id="tabEdit">
+      <div class="workspace">
+        <div class="workspace-column" id="leftRail">
           <div id="builderPanel" class="panel builder-panel" hidden>
             <div class="panel-header">
               <span class="panel-title">Workload Form</span>
@@ -3234,356 +287,299 @@
                   </p>
                 </div>
                 <div class="builder-entry-routes">
-                <div
-                  class="builder-entry-panel builder-route-card load-path"
-                  id="builderPresetPanel"
-                >
-                  <div class="builder-route-head">
-                    <div class="builder-route-kicker">
-                      <span class="builder-route-label">Option 1</span>
-                      <span class="builder-route-title">Load a workload and customize it</span>
-                    </div>
-                    <span class="builder-route-badge">1</span>
-                  </div>
-                  <p class="builder-route-help">
-                    Start from a known benchmark shape.
-                  </p>
-                  <div class="builder-preset-grid">
-                    <label class="field">
-                      <span>Select benchmark</span>
-                      <select id="presetFamilySelect">
-                        <option value="">Choose a family...</option>
-                      </select>
-                    </label>
-                    <label class="field">
-                      <span>Select workload</span>
-                      <select id="presetFileSelect" disabled>
-                        <option value="">Choose a file...</option>
-                      </select>
-                    </label>
-                    <label class="field">
-                      <span>Scale</span>
-                      <input
-                        id="presetScaleInput"
-                        type="text"
-                        inputmode="numeric"
-                        pattern="[1-9][0-9]*"
-                        value="1"
-                        disabled
-                      />
-                    </label>
-                  </div>
-                  <div class="preset-note" id="presetSelectionNote" hidden></div>
-                  <div
-                    class="builder-assistant-slot"
-                    id="builderPresetAssistantSlot"
-                    hidden
-                  ></div>
-                </div>
-                <div
-                  class="builder-entry-panel builder-route-card scratch-path"
-                  id="builderDescribePanel"
-                >
-                  <div class="builder-route-head">
-                    <div class="builder-route-kicker">
-                      <span class="builder-route-label">Option 2</span>
-                      <span class="builder-route-title">Start from scratch and generate one</span>
-                    </div>
-                    <span class="builder-route-badge">2</span>
-                  </div>
-                  <p class="builder-route-help">
-                    Describe the workload you want in plain English.
-                  </p>
-                  <div class="builder-assistant-slot" id="builderScratchAssistantSlot">
-                  <div class="assistant-panel" id="assistantPanel">
-                    <div class="assistant-head">
-                      <span class="assistant-title" id="assistantTitle">Generate From Scratch</span>
-                      <span
-                        class="assistant-status"
-                        id="assistantStatus"
-                        aria-live="polite"
-                        >Ready</span
-                      >
-                    </div>
-                    <div
-                      class="assistant-timeline"
-                      id="assistantTimeline"
-                      aria-live="polite"
-                    ></div>
-                    <div class="assistant-composer">
-                      <label
-                        for="assistantInput"
-                        class="assistant-composer-label"
-                        id="assistantComposerLabel"
-                        >Describe your workload</label
-                      >
-                      <textarea
-                        id="assistantInput"
-                        class="assistant-input"
-                        placeholder="Example: Generate an insert-only workload with 1 KB key value size. The number of inserts is 100K."
-                      ></textarea>
-                      <div class="assistant-actions">
-                        <button
-                          type="button"
-                          class="btn btn-ghost"
-                          id="assistantApplyBtn"
-                        >
-                          Apply
-                        </button>
-                        <button
-                          type="button"
-                          class="btn btn-ghost"
-                          id="assistantClearBtn"
-                        >
-                          Clear
-                        </button>
+                  <div class="builder-entry-panel builder-route-card load-path" id="builderPresetPanel">
+                    <div class="builder-route-head">
+                      <div class="builder-route-kicker">
+                        <span class="builder-route-label">Option 1</span>
+                        <span class="builder-route-title">Load a workload and customize it</span>
                       </div>
-                      <p class="assistant-composer-hint" id="assistantComposerHint"></p>
+                      <span class="builder-route-badge">1</span>
+                    </div>
+                    <p class="builder-route-help">
+                      Start from a known benchmark shape.
+                    </p>
+                    <div class="builder-preset-grid">
+                      <label class="field">
+                        <span>Select benchmark</span>
+                        <select id="presetFamilySelect">
+                          <option value="">Choose a family...</option>
+                        </select>
+                      </label>
+                      <label class="field">
+                        <span>Select workload</span>
+                        <select id="presetFileSelect" disabled>
+                          <option value="">Choose a type...</option>
+                        </select>
+                      </label>
+                      <label class="field">
+                        <span>Scale</span>
+                        <input id="presetScaleInput" type="text" inputmode="numeric" pattern="[1-9][0-9]*" value="1"
+                          disabled />
+                      </label>
+                    </div>
+                    <div class="preset-note" id="presetSelectionNote" hidden></div>
+                    <div class="builder-assistant-slot" id="builderPresetAssistantSlot" hidden></div>
+                  </div>
+                  <div class="builder-entry-panel builder-route-card scratch-path" id="builderDescribePanel">
+                    <div class="builder-route-head">
+                      <div class="builder-route-kicker">
+                        <span class="builder-route-label">Option 2</span>
+                        <span class="builder-route-title">Start from scratch and generate one</span>
+                      </div>
+                      <span class="builder-route-badge">2</span>
+                    </div>
+                    <p class="builder-route-help">
+                      Describe the workload you want in plain English.
+                    </p>
+                    <div class="builder-assistant-slot" id="builderScratchAssistantSlot">
+                      <div class="assistant-panel" id="assistantPanel">
+                        <div class="assistant-head">
+                          <span class="assistant-title" id="assistantTitle">Generate From Scratch</span>
+                          <span class="assistant-status" id="assistantStatus" aria-live="polite">Ready</span>
+                        </div>
+                        <div class="assistant-timeline" id="assistantTimeline" aria-live="polite"></div>
+                        <div class="assistant-composer">
+                          <label for="assistantInput" class="assistant-composer-label"
+                            id="assistantComposerLabel">Describe your workload</label>
+                          <textarea id="assistantInput" class="assistant-input"
+                            placeholder="Example: Generate an insert-only workload with 1 KB key value size. The number of inserts is 100K."></textarea>
+                          <div class="assistant-actions">
+                            <button type="button" class="btn btn-ghost" id="assistantApplyBtn">
+                              Apply
+                            </button>
+                            <button type="button" class="btn btn-ghost" id="assistantClearBtn">
+                              Clear
+                            </button>
+                          </div>
+                          <p class="assistant-composer-hint" id="assistantComposerHint"></p>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  </div>
-                </div>
                 </div>
               </div>
-                <div
-                  class="builder-structure-toggle-row"
-                  id="structurePanelToggleRow"
-                  hidden
-                >
-                  <button
-                    type="button"
-                    class="btn btn-ghost"
-                    id="toggleStructurePanelBtn"
-                    aria-expanded="false"
-                    aria-controls="structurePanel workloadForm"
-                  >
-                    Customize Further
+              <div class="builder-structure-toggle-row" id="structurePanelToggleRow" hidden>
+                <button type="button" class="btn btn-ghost" id="toggleStructurePanelBtn" aria-expanded="false"
+                  aria-controls="structurePanel workloadForm">
+                  Customize Further
+                </button>
+              </div>
+              <div class="structure-panel" id="structurePanel" hidden>
+                <div class="structure-panel-head">
+                  <div>
+                    <p class="structure-panel-title">Workload Structure</p>
+                    <p class="structure-help">
+                      Same phase = interleaved operations. Different phases in
+                      the same section share valid keys but run separately.
+                    </p>
+                  </div>
+                  <button type="button" class="btn btn-ghost" id="addSectionBtn">
+                    Add Section
                   </button>
                 </div>
-                <div class="structure-panel" id="structurePanel" hidden>
-                  <div class="structure-panel-head">
-                    <div>
-                      <p class="structure-panel-title">Workload Structure</p>
-                      <p class="structure-help">
-                        Same phase = interleaved operations. Different phases in
-                        the same section share valid keys but run separately.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      class="btn btn-ghost"
-                      id="addSectionBtn"
-                    >
-                      Add Section
-                    </button>
-                  </div>
-                  <p class="structure-selection" id="structureSelectionLabel">
-                    Editing Section 1 / Phase 1
-                  </p>
-                  <div class="structure-tree" id="structureTree"></div>
-                </div>
-                <form id="workloadForm" class="workload-form" hidden>
-                  <div class="form-grid">
-                    <label class="field">
-                      <span id="formCharacterSetLabel">Character Set</span>
-                      <select id="formCharacterSet">
-                        <option value="alphanumeric">alphanumeric</option>
-                        <option value="alphabetic">alphabetic</option>
-                        <option value="numeric">numeric</option>
-                      </select>
-                      <small
-                        class="field-description"
-                        id="characterSetDescription"
-                      ></small>
-                    </label>
-                    <label class="field hidden" aria-hidden="true">
-                      <span id="formSectionsLabel">Active Section</span>
-                      <select id="formSections"></select>
-                      <small
-                        class="field-description"
-                        id="sectionsDescription"
-                      ></small>
-                    </label>
-                    <label class="field hidden" aria-hidden="true">
-                      <span id="formGroupsLabel">Active Phase</span>
-                      <select id="formGroups"></select>
-                      <small
-                        class="field-description"
-                        id="groupsDescription"
-                      ></small>
-                    </label>
-                    <div class="field">
-                      <span id="skipKeyContainsCheckLabel"
-                        >Skip Key Contains Check</span
-                      >
-                      <label class="checkbox-item section-checkbox-item">
-                        <input type="checkbox" id="formSkipKeyContainsCheck" />
-                        <span class="checkbox-item-title"
-                          >Enable across sections</span
-                        >
-                      </label>
-                      <small
-                        class="field-description"
-                        id="skipKeyContainsCheckDescription"
-                      ></small>
-                    </div>
-                  </div>
-
-                  <div class="fieldset">
-                    <p class="fieldset-title" id="operationsTitle">Operations</p>
-                    <div class="checkbox-grid" id="operationToggles"></div>
-                  </div>
-
-                  <div
-                    id="operationConfigContainer"
-                    class="operation-config-container"
-                  ></div>
-                </form>
+                <p class="structure-selection" id="structureSelectionLabel">
+                  Editing Section 1 / Phase 1
+                </p>
+                <div class="structure-tree" id="structureTree"></div>
               </div>
+              <form id="workloadForm" class="workload-form" hidden>
+                <div class="form-grid">
+                  <label class="field">
+                    <span id="formCharacterSetLabel">Character Set</span>
+                    <select id="formCharacterSet">
+                      <option value="alphanumeric">alphanumeric</option>
+                      <option value="alphabetic">alphabetic</option>
+                      <option value="numeric">numeric</option>
+                    </select>
+                    <small class="field-description" id="characterSetDescription"></small>
+                  </label>
+                  <label class="field hidden" aria-hidden="true">
+                    <span id="formSectionsLabel">Active Section</span>
+                    <select id="formSections"></select>
+                    <small class="field-description" id="sectionsDescription"></small>
+                  </label>
+                  <label class="field hidden" aria-hidden="true">
+                    <span id="formGroupsLabel">Active Phase</span>
+                    <select id="formGroups"></select>
+                    <small class="field-description" id="groupsDescription"></small>
+                  </label>
+                  <div class="field">
+                    <span id="skipKeyContainsCheckLabel">Skip Key Contains Check</span>
+                    <label class="checkbox-item section-checkbox-item">
+                      <input type="checkbox" id="formSkipKeyContainsCheck" />
+                      <span class="checkbox-item-title">Enable across sections</span>
+                    </label>
+                    <small class="field-description" id="skipKeyContainsCheckDescription"></small>
+                  </div>
+                </div>
+
+                <div class="fieldset">
+                  <p class="fieldset-title" id="operationsTitle">Operations</p>
+                  <div class="checkbox-grid" id="operationToggles"></div>
+                </div>
+
+                <div id="operationConfigContainer" class="operation-config-container"></div>
+              </form>
             </div>
           </div>
-          <div class="workspace-column" id="rightRail">
-            <div id="previewPanel" class="panel json-panel" hidden>
-              <div class="panel-header panel-header-preview">
-                <div class="preview-header-top">
-                  <div class="preview-header-copy">
-                    <span class="panel-title">Workload Overview</span>
-                  </div>
-                  <div class="validation-result" id="validationResult"></div>
+        </div>
+        <div class="workspace-column" id="rightRail">
+          <div id="previewPanel" class="panel json-panel" hidden>
+            <div class="panel-header panel-header-preview">
+              <div class="preview-header-top">
+                <div class="preview-header-copy">
+                  <span class="panel-title">Workload Overview</span>
                 </div>
-                <div class="preview-header-actions">
-                  <button class="btn btn-ghost preview-action-btn" id="toggleJsonPreviewBtn">
-                    Show Spec JSON
-                  </button>
-                  <button class="btn btn-ghost preview-action-btn" id="downloadJsonBtn">
-                    Download Spec JSON
-                  </button>
-                  <button class="btn btn-ghost preview-action-btn" id="copyBtn">Copy</button>
-                </div>
+                <div class="validation-result" id="validationResult"></div>
               </div>
-              <div class="panel-body">
-                <div class="preview-stack">
-                  <div
-                    id="jsonSummary"
-                    class="json-summary"
-                    aria-live="polite"
-                  ></div>
-                  <div class="run-control-card">
-                    <div class="run-control-copy">
-                      <span class="run-control-label">Benchmark target</span>
-                      <p class="run-control-help">
-                        Choose one or more database engines and run the current
-                        workload spec.
-                      </p>
-                    </div>
-                    <div class="run-control-actions">
-                      <details class="run-db-menu">
-                        <summary class="run-db-menu-summary">
-                          <div class="run-db-menu-summary-copy">
-                            <span class="run-db-menu-label">Databases</span>
-                            <span class="run-db-menu-prompt"
-                              >Select one or more engines</span
-                            >
-                          </div>
-                          <span
-                            class="run-db-menu-value"
-                            id="benchmarkDatabaseSummary"
-                          >
-                            <span class="run-db-chip">rocksdb</span>
-                          </span>
-                          <span class="run-db-menu-chevron" aria-hidden="true"
-                            >▾</span
-                          >
-                        </summary>
-                        <div class="run-db-menu-panel">
-                          <p class="run-db-menu-help">
-                            Run the same workload in parallel across the selected
-                            database engines.
-                          </p>
-                          <label class="run-db-option">
-                            <input
-                              type="checkbox"
-                              name="benchmarkDatabase"
-                              value="rocksdb"
-                              checked
-                            />
-                            <span>rocksdb</span>
-                          </label>
-                          <label class="run-db-option">
-                            <input
-                              type="checkbox"
-                              name="benchmarkDatabase"
-                              value="cassandra"
-                            />
-                            <span>cassandra</span>
-                          </label>
-                          <label class="run-db-option">
-                            <input
-                              type="checkbox"
-                              name="benchmarkDatabase"
-                              value="printdb"
-                            />
-                            <span>printdb</span>
-                          </label>
-                        </div>
-                      </details>
-                      <button class="btn btn-ghost" id="runWorkloadBtn">
-                        Run Workload
-                      </button>
-                    </div>
-                  </div>
-                  <section class="benchmark-results-section" id="runsPanel" hidden>
-                    <div class="benchmark-results-head">
-                      <span class="benchmark-results-title">Benchmark results</span>
-                      <span class="benchmark-results-subtitle">Parallel batches and recent runs</span>
-                    </div>
-                    <div class="runs-list" id="runsList">
-                      <p class="runs-empty">
-                        No runs yet. Click "Run Workload" to execute a tectonic benchmark.
-                      </p>
-                    </div>
-                  </section>
-                  <div id="jsonOutputShell" class="json-output" hidden>
-                    <div class="json-stats">
-                      <span class="json-pill" id="jsonSectionsPill"
-                        >sections: 0</span
-                      >
-                      <span class="json-pill" id="jsonOpsPill">ops: 0</span>
-                      <span class="json-pill" id="jsonBytesPill">bytes: 2</span>
-                    </div>
-                    <p class="shortcut-hint">
-                      JSON validates automatically. Shortcut: Ctrl/Cmd + Shift + C
-                      to copy.
+              <div class="preview-header-actions">
+                <button class="btn btn-ghost preview-action-btn" id="toggleJsonPreviewBtn">
+                  Show Spec JSON
+                </button>
+                <button class="btn btn-ghost preview-action-btn" id="downloadJsonBtn">
+                  Download Spec JSON
+                </button>
+                <button class="btn btn-ghost preview-action-btn" id="copyBtn">Copy</button>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="preview-stack">
+                <div id="jsonSummary" class="json-summary" aria-live="polite"></div>
+                <div class="run-control-card">
+                  <div class="run-control-copy">
+                    <span class="run-control-label">Benchmark target</span>
+                    <p class="run-control-help">
+                      Choose one or more database engines and run the current
+                      workload spec.
                     </p>
-                    <div id="jsonTree" class="json-tree" aria-live="polite"></div>
-                    <textarea
-                      id="jsonOutput"
-                      readonly
-                      hidden
-                      aria-hidden="true"
-                      placeholder="Generated JSON will appear here..."
-                    >
-{}</textarea
-                    >
                   </div>
+                  <div class="run-control-actions">
+                    <details class="run-db-menu">
+                      <summary class="run-db-menu-summary">
+                        <div class="run-db-menu-summary-copy">
+                          <span class="run-db-menu-label">Databases</span>
+                          <span class="run-db-menu-prompt">Select one or more engines</span>
+                        </div>
+                        <span class="run-db-menu-value" id="benchmarkDatabaseSummary">
+                          <span class="run-db-chip">rocksdb</span>
+                        </span>
+                        <span class="run-db-menu-chevron" aria-hidden="true">▾</span>
+                      </summary>
+                      <div class="run-db-menu-panel">
+                        <p class="run-db-menu-help">
+                          Run the same workload in parallel across the selected
+                          database engines.
+                        </p>
+                        <label class="run-db-option">
+                          <input type="checkbox" name="benchmarkDatabase" value="rocksdb" checked />
+                          <span>rocksdb</span>
+                        </label>
+                        <label class="run-db-option">
+                          <input type="checkbox" name="benchmarkDatabase" value="cassandra" />
+                          <span>cassandra</span>
+                        </label>
+                        <label class="run-db-option">
+                          <input type="checkbox" name="benchmarkDatabase" value="printdb" />
+                          <span>printdb</span>
+                        </label>
+                      </div>
+                    </details>
+                    <button class="btn btn-ghost" id="runWorkloadBtn">
+                      Run Workload
+                    </button>
+                  </div>
+                </div>
+                <section class="benchmark-results-section" id="runsPanel" hidden>
+                  <div class="benchmark-results-head">
+                    <span class="benchmark-results-title">Benchmark results</span>
+                    <span class="benchmark-results-subtitle">Parallel batches and recent runs</span>
+                  </div>
+                  <div class="runs-list" id="runsList">
+                    <p class="runs-empty">
+                      No runs yet. Click "Run Workload" to execute a tectonic benchmark.
+                    </p>
+                  </div>
+                </section>
+                <div id="jsonOutputShell" class="json-output" hidden>
+                  <div class="json-stats">
+                    <span class="json-pill" id="jsonSectionsPill">sections: 0</span>
+                    <span class="json-pill" id="jsonOpsPill">ops: 0</span>
+                    <span class="json-pill" id="jsonBytesPill">bytes: 2</span>
+                  </div>
+                  <p class="shortcut-hint">
+                    JSON validates automatically. Shortcut: Ctrl/Cmd + Shift + C
+                    to copy.
+                  </p>
+                  <div id="jsonTree" class="json-tree" aria-live="polite"></div>
+                  <textarea id="jsonOutput" readonly hidden aria-hidden="true"
+                    placeholder="Generated JSON will appear here...">
+{}</textarea>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      </main>
-    </div>
+      </div>
+      </div><!-- /tabEdit -->
 
-    <script src="/workload-runs.js"></script>
-    <script src="/workload-runs-panel.js"></script>
-    <script src="/ui-structured-normalization.js"></script>
-    <script src="/builder-session.js"></script>
-    <script src="/range-scan.js"></script>
-    <script src="/preset-flow.js"></script>
-    <script src="/structure-panel.js"></script>
-    <script src="/json-tree-view.js"></script>
-    <script src="/advanced-expressions.js"></script>
-    <script src="/assistant-panel.js"></script>
-    <script src="/app.js"></script>
-  </body>
+      <!-- Tab: Databases -->
+      <div class="app-tab-content" id="tabDatabases">
+        <div class="db-tab-content">
+          <div class="db-card">
+            <h3 class="db-card-title">Select Database Engines</h3>
+            <p class="db-card-help">Choose one or more database engines to benchmark your workload against. The same specification will run in parallel across all selected engines.</p>
+            <div class="db-option-list" id="dbOptionList">
+              <label class="db-option-item">
+                <input type="checkbox" name="benchmarkDatabase" value="rocksdb" checked />
+                <span>RocksDB</span>
+              </label>
+              <label class="db-option-item">
+                <input type="checkbox" name="benchmarkDatabase" value="cassandra" />
+                <span>Cassandra</span>
+              </label>
+              <label class="db-option-item">
+                <input type="checkbox" name="benchmarkDatabase" value="printdb" />
+                <span>PrintDB</span>
+              </label>
+            </div>
+            <button class="db-run-btn" id="dbRunWorkloadBtn">
+              Run Workload
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: Results -->
+      <div class="app-tab-content" id="tabResults">
+        <div class="results-tab-content">
+          <section class="benchmark-results-section" id="tabRunsPanel">
+            <div class="benchmark-results-head">
+              <span class="benchmark-results-title">Benchmark Results</span>
+              <span class="benchmark-results-subtitle">Parallel batches and recent runs</span>
+            </div>
+            <div class="runs-list" id="tabRunsList">
+              <p class="runs-empty" style="color:#999;font-size:14px;text-align:center;padding:40px 0;">
+                No runs yet. Select databases and click "Run Workload" to start a benchmark.
+              </p>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/workload-runs.js"></script>
+  <script src="/workload-runs-panel.js"></script>
+  <script src="/ui-structured-normalization.js"></script>
+  <script src="/builder-session.js"></script>
+  <script src="/range-scan.js"></script>
+  <script src="/preset-flow.js"></script>
+  <script src="/structure-panel.js"></script>
+  <script src="/json-tree-view.js"></script>
+  <script src="/advanced-expressions.js"></script>
+  <script src="/assistant-panel.js"></script>
+  <script src="/app.js"></script>
+  <script src="script.js"></script>
+</body>
 </html>

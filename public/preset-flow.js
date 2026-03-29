@@ -204,7 +204,7 @@
       }
       if (refs.presetFileSelect) {
         refs.presetFileSelect.innerHTML =
-          '<option value="">Choose a file...</option>';
+          '<option value="">Choose a type...</option>';
         refs.presetFileSelect.value = "";
         refs.presetFileSelect.disabled = true;
       }
@@ -396,7 +396,7 @@
       refs.presetFileSelect.innerHTML = "";
       const defaultOption = document.createElement("option");
       defaultOption.value = "";
-      defaultOption.textContent = "Choose a file...";
+      defaultOption.textContent = "Choose a type...";
       refs.presetFileSelect.appendChild(defaultOption);
       matchingPresets.forEach(function appendPresetOption(preset) {
         const option = document.createElement("option");
