@@ -144,6 +144,83 @@
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
+  function findScrollContainer(node) {
+    let current = node && node.parentElement ? node.parentElement : null;
+    while (current) {
+      const style = window.getComputedStyle(current);
+      const overflowY = style ? style.overflowY : "";
+      if (
+        /(auto|scroll|overlay)/.test(String(overflowY || "").toLowerCase()) &&
+        current.scrollHeight > current.clientHeight
+      ) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return null;
+  }
+
+  function captureScrollState(node) {
+    const container = findScrollContainer(node);
+    const scrollingElement =
+      document.scrollingElement || document.documentElement || document.body;
+    const activeElement =
+      document.activeElement && typeof document.activeElement.closest === "function"
+        ? document.activeElement
+        : null;
+    const focusedRunId =
+      activeElement &&
+      activeElement.closest &&
+      activeElement.closest("[data-run-id]")
+        ? activeElement.closest("[data-run-id]").getAttribute("data-run-id")
+        : "";
+    return {
+      container: container || null,
+      top: container ? container.scrollTop : 0,
+      left: container ? container.scrollLeft : 0,
+      pageTop: scrollingElement ? scrollingElement.scrollTop : 0,
+      pageLeft: scrollingElement ? scrollingElement.scrollLeft : 0,
+      focusedRunId: focusedRunId || "",
+    };
+  }
+
+  function restoreScrollState(state, rootNode) {
+    if (!state) {
+      return;
+    }
+    const scrollingElement =
+      document.scrollingElement || document.documentElement || document.body;
+    const apply = () => {
+      if (state.container) {
+        state.container.scrollTop = state.top;
+        state.container.scrollLeft = state.left;
+      }
+      if (scrollingElement) {
+        scrollingElement.scrollTop = state.pageTop;
+        scrollingElement.scrollLeft = state.pageLeft;
+      }
+      if (state.focusedRunId && rootNode && typeof rootNode.querySelector === "function") {
+        const focusTarget = rootNode.querySelector(
+          '[data-run-id="' + CSS.escape(state.focusedRunId) + '"]',
+        );
+        if (focusTarget && typeof focusTarget.focus === "function") {
+          try {
+            focusTarget.focus({ preventScroll: true });
+          } catch (_error) {
+            focusTarget.focus();
+          }
+        }
+      }
+    };
+    apply();
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(apply);
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(apply);
+      });
+    }
+  }
+
   function toStatusClass(status) {
     const value = String(status || "")
       .toLowerCase()
@@ -447,6 +524,37 @@
     });
   }
 
+  function formatWholeNumberAxisValue(value, options = {}) {
+    const parsed = Number.parseFloat(value);
+    if (!Number.isFinite(parsed)) {
+      return "—";
+    }
+    const rounded = Math.max(0, Math.round(parsed));
+    if (options.compact === true && rounded >= 1000) {
+      return new Intl.NumberFormat(undefined, {
+        notation: "compact",
+        maximumFractionDigits: 0,
+      }).format(rounded);
+    }
+    return rounded.toLocaleString();
+  }
+
+  function buildWholeNumberAxis(maxValue, divisor = 1, intervalCount = 4) {
+    const safeDivisor =
+      Number.isFinite(divisor) && divisor > 0 ? divisor : 1;
+    const safeIntervals =
+      Number.isInteger(intervalCount) && intervalCount > 0 ? intervalCount : 4;
+    const displayMax = Number.isFinite(maxValue) ? maxValue / safeDivisor : 0;
+    const displayStep = Math.max(1, Math.ceil(displayMax / safeIntervals));
+    const axisDisplayMax = displayStep * safeIntervals;
+    return {
+      axisMaxRaw: axisDisplayMax * safeDivisor,
+      ticks: Array.from({ length: safeIntervals + 1 }, (_, index) =>
+        axisDisplayMax - displayStep * index,
+      ),
+    };
+  }
+
   function chooseLatencyChartUnit(maxValueMicros) {
     if (!Number.isFinite(maxValueMicros)) {
       return { divisor: 1, unit: "µs" };
@@ -476,8 +584,13 @@
       return {
         emphasis: "positive",
         trendLabel: "Higher is better",
+        axisDivisor: 1,
+        titleUnit: unit,
         formatAxisValue(value) {
           return formatChartDecimalValue(value) + " " + unit;
+        },
+        formatAxisBucketValue(value) {
+          return formatWholeNumberAxisValue(value);
         },
         formatValue(value) {
           return formatThroughputLabel(value, unit);
@@ -492,8 +605,13 @@
       return {
         emphasis: "caution",
         trendLabel: "Lower is better",
+        axisDivisor: latencyUnit.divisor,
+        titleUnit: latencyUnit.unit === "µs" ? "us" : latencyUnit.unit,
         formatAxisValue(value) {
           return formatChartDecimalValue(value / latencyUnit.divisor) + " " + latencyUnit.unit;
+        },
+        formatAxisBucketValue(value) {
+          return formatWholeNumberAxisValue(value / latencyUnit.divisor);
         },
         formatValue(value) {
           return formatChartDecimalValue(value / latencyUnit.divisor) + " " + latencyUnit.unit;
@@ -503,13 +621,30 @@
     return {
       emphasis: "neutral",
       trendLabel: "Higher is better",
+      axisDivisor: 1,
+      titleUnit: "",
       formatAxisValue(value) {
         return formatChartDecimalValue(value, { compact: true });
+      },
+      formatAxisBucketValue(value) {
+        return formatWholeNumberAxisValue(value, { compact: true });
       },
       formatValue(value) {
         return formatChartDecimalValue(value);
       },
-    };
+      };
+  }
+
+  function formatMetricChartTitle(label, descriptor) {
+    const baseLabel = String(label || "").trim() || "Benchmark metric";
+    const unit =
+      descriptor && typeof descriptor.titleUnit === "string"
+        ? descriptor.titleUnit.trim()
+        : "";
+    if (!unit) {
+      return baseLabel;
+    }
+    return `${baseLabel} (${unit})`;
   }
 
   function metricChartPalette(metricKey) {
@@ -839,6 +974,12 @@
       maxValue,
       metricSeries.throughputUnit,
     );
+    const axisDescriptor = buildWholeNumberAxis(
+      maxValue,
+      chartDescriptor.axisDivisor,
+      4,
+    );
+    const axisMax = Math.max(1, axisDescriptor.axisMaxRaw);
     const ns = "http://www.w3.org/2000/svg";
     const palette = metricChartPalette(metricSeries.key);
     const assetId =
@@ -895,7 +1036,7 @@
     plotBg.setAttribute("stroke", "#dde8f1");
     svg.appendChild(plotBg);
 
-    for (let index = 0; index <= 4; index += 1) {
+    axisDescriptor.ticks.forEach((tickValue, index) => {
       const ratio = index / 4;
       const y = margin.top + plotHeight * ratio;
       const grid = document.createElementNS(ns, "line");
@@ -913,11 +1054,9 @@
       axisLabel.setAttribute("text-anchor", "end");
       axisLabel.setAttribute("font-size", "12");
       axisLabel.setAttribute("fill", "#5f7388");
-      axisLabel.textContent = chartDescriptor.formatAxisValue(
-        maxValue * (1 - ratio),
-      );
+      axisLabel.textContent = chartDescriptor.formatAxisBucketValue(tickValue);
       svg.appendChild(axisLabel);
-    }
+    });
 
     const baseline = document.createElementNS(ns, "line");
     baseline.setAttribute("x1", String(margin.left));
@@ -933,7 +1072,7 @@
 
     points.forEach((point, index) => {
       const centerX = margin.left + step * index + step / 2;
-      const barHeight = (point.value / maxValue) * plotHeight;
+      const barHeight = (point.value / axisMax) * plotHeight;
       const rect = document.createElementNS(ns, "rect");
       rect.setAttribute("x", String(centerX - barWidth / 2));
       rect.setAttribute("y", String(margin.top + (plotHeight - barHeight)));
@@ -1192,6 +1331,12 @@
     const card = document.createElement("section");
     card.className =
       "benchmark-metric-chart-card" + (opts.explorer ? " explorer" : "");
+    const seriesMaxValue = Math.max(...metricSeries.points.map((entry) => entry.value));
+    const chartDescriptor = createMetricChartDescriptor(
+      metricSeries.key,
+      seriesMaxValue,
+      metricSeries.throughputUnit,
+    );
 
     const head = document.createElement("div");
     head.className = "benchmark-metric-chart-head";
@@ -1211,16 +1356,9 @@
     title.textContent =
       typeof opts.title === "string" && opts.title.trim()
         ? opts.title.trim()
-        : metricSeries.label;
+        : formatMetricChartTitle(metricSeries.label, chartDescriptor);
     headCopy.appendChild(title);
     head.appendChild(headCopy);
-
-    const seriesMaxValue = Math.max(...metricSeries.points.map((entry) => entry.value));
-    const chartDescriptor = createMetricChartDescriptor(
-      metricSeries.key,
-      seriesMaxValue,
-      metricSeries.throughputUnit,
-    );
     const meta = document.createElement("div");
     meta.className = "benchmark-metric-chart-meta";
 
@@ -1692,6 +1830,7 @@
 
       const summaryRow = document.createElement("tr");
       summaryRow.className = "runs-table-summary-row";
+      summaryRow.dataset.runId = run.run_id;
       summaryRow.tabIndex = 0;
       summaryRow.setAttribute("role", "button");
       summaryRow.setAttribute("aria-expanded", isExpanded ? "true" : "false");
@@ -2074,6 +2213,7 @@
       if (!runsListEl) {
         return;
       }
+      const scrollState = captureScrollState(runsListEl);
       runsListEl.innerHTML = "";
       if (runs.length === 0) {
         expandedRunIds.clear();
@@ -2081,7 +2221,8 @@
         empty.className = "runs-empty";
         empty.textContent =
           'No runs yet. Click "Run Workload" to execute a tectonic benchmark.';
-        runsListEl.appendChild(empty);
+      runsListEl.appendChild(empty);
+        restoreScrollState(scrollState, runsListEl);
         return;
       }
       const batchGraphs = buildBatchGraphDeck(runs);
@@ -2091,6 +2232,7 @@
       runsListEl.appendChild(
         buildRunTable(runs, { cancel: cancelRun }, expandedRunIds),
       );
+      restoreScrollState(scrollState, runsListEl);
     }
 
     async function startRun(specJson, options) {
