@@ -87,7 +87,7 @@
     "source": "example-specs/ycsb/f.spec.json",
     "description": "Read-modify-write YCSB workload with point queries and merges."
   },
-{
+  {
     "id": "tec-1",
     "family": "Tectonic",
     "label": "1: Multi-phased dynamic",

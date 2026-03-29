@@ -1,3 +1,25 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:48b08c3f86c248274165c176fef6feaa7b64d30aeab6934997932ab1dde0e062
-size 449
+{
+  "$schema": "../workload_schema.json",
+  "sections": [
+    {
+      "groups": [
+        {
+          "inserts": {
+            "op_count": 900000000,
+            "key": {
+              "uniform": {
+                "len": 20,
+                "character_set": "numeric"
+              }
+            },
+            "val": {
+              "uniform": {
+                "len": 400
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
