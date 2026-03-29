@@ -293,7 +293,11 @@
         refs.headerIntro.hidden = hideHeaderIntro;
       }
       if (refs.appShell && refs.appShell.classList) {
-        refs.appShell.classList.remove("landing");
+        if (typeof refs.appShell.classList.remove === "function") {
+          refs.appShell.classList.remove("landing");
+        } else if (typeof refs.appShell.classList.toggle === "function") {
+          refs.appShell.classList.toggle("landing", false);
+        }
         refs.appShell.classList.toggle("builder-only", !showPreview);
         refs.appShell.classList.toggle("preset-loaded", presetLoaded);
         refs.appShell.classList.toggle("scratch-selected", scratchSelected);
@@ -336,6 +340,16 @@
 
     function enableCustomWorkloadMode() {
       setCustomWorkloadMode(true);
+      setActivePresetJson(null);
+      if (refs.presetFamilySelect) {
+        refs.presetFamilySelect.value = "";
+      }
+      if (refs.presetFileSelect) {
+        refs.presetFileSelect.value = "";
+        refs.presetFileSelect.disabled = true;
+      }
+      clearPresetSelectionNote();
+      syncPresetScaleInputState();
       setSelectedBuilderRoute("scratch");
       ensureWorkloadStructureState();
       loadActiveStructureIntoForm();

@@ -10,12 +10,16 @@
       return "empty";
     }
     const operationNames = Object.keys(group)
+      .filter((name) => name !== "sorted")
       .map(humanizeOperationName)
       .filter(Boolean);
+    if (group.sorted && typeof group.sorted === "object") {
+      operationNames.push("near-sorted");
+    }
     if (operationNames.length === 0) {
       return "empty";
     }
-    return operationNames.join(", ");
+    return operationNames.join(" • ");
   }
 
   function createRenderer({

@@ -46,6 +46,11 @@ class FakeElement {
     return child;
   }
 
+  replaceChildren(...children) {
+    this.children = children.filter(Boolean);
+    this.textContent = "";
+  }
+
   focus() {
     this.focused = true;
   }
@@ -60,15 +65,27 @@ class FakeElement {
   }
 }
 
+function flattenText(node) {
+  if (!node) {
+    return "";
+  }
+  return [node.textContent || ""]
+    .concat((node.children || []).map((child) => flattenText(child)))
+    .join(" ");
+}
+
 function createTestContext() {
   const refs = {
     appHeader: new FakeElement("header"),
+    builderDescribePanel: new FakeElement("section"),
     appShell: new FakeElement("div"),
     assistantInput: new FakeElement("textarea"),
     builderPanel: new FakeElement("section"),
+    builderPresetPanel: new FakeElement("section"),
     copyBtn: new FakeElement("button"),
     customWorkloadBtn: new FakeElement("button"),
     downloadJsonBtn: new FakeElement("button"),
+    headerIntro: new FakeElement("div"),
     newWorkloadBtn: new FakeElement("button"),
     presetFamilySelect: new FakeElement("select"),
     presetFileSelect: new FakeElement("select"),
@@ -82,6 +99,7 @@ function createTestContext() {
 
   let activePresetJson = null;
   let customWorkloadMode = false;
+  let selectedBuilderRoute = null;
   const calls = {
     renderGeneratedJson: [],
     updateInteractiveStats: [],
@@ -140,6 +158,16 @@ function createTestContext() {
       setCustomWorkloadMode(value) {
         customWorkloadMode = value === true;
       },
+      getSelectedBuilderRoute() {
+        return selectedBuilderRoute;
+      },
+      setSelectedBuilderRoute(value) {
+        selectedBuilderRoute =
+          typeof value === "string" && value.trim() ? value.trim() : null;
+      },
+      hasConfiguredWorkload() {
+        return activePresetJson !== null || customWorkloadMode;
+      },
     },
   };
 }
@@ -166,6 +194,10 @@ test("preset flow controller covers landing, preset load, and custom mode", asyn
       },
       ensureWorkloadStructureState() {},
       loadActiveStructureIntoForm() {},
+      loadPresetIntoBuilder(value) {
+        ctx.calls.renderGeneratedJson.push(value);
+        ctx.calls.validateGeneratedJson.push(value);
+      },
       updateJsonFromForm() {},
       resetFormInterface() {},
       renderGeneratedJson(value) {
@@ -186,8 +218,10 @@ test("preset flow controller covers landing, preset load, and custom mode", asyn
     await controller.loadPresetCatalog();
     controller.syncLandingUi();
 
-    assert.equal(ctx.refs.welcomePanel.hidden, false);
-    assert.equal(ctx.refs.builderPanel.hidden, true);
+    assert.equal(ctx.refs.headerIntro.hidden, false);
+    assert.equal(ctx.refs.builderPanel.hidden, false);
+    assert.equal(ctx.refs.builderPresetPanel.hidden, false);
+    assert.equal(ctx.refs.builderDescribePanel.hidden, false);
     assert.equal(ctx.refs.previewPanel.hidden, true);
     assert.equal(ctx.refs.runsPanel.hidden, true);
     assert.equal(ctx.refs.newWorkloadBtn.hidden, true);
@@ -200,11 +234,13 @@ test("preset flow controller covers landing, preset load, and custom mode", asyn
 
     await controller.handlePresetFileChange({ target: { value: "scale-001m" } });
     assert.deepEqual(ctx.state.getActivePresetJson(), ctx.loadedPresetJson);
+    assert.equal(ctx.refs.headerIntro.hidden, true);
     assert.equal(ctx.refs.previewPanel.hidden, false);
     assert.equal(ctx.refs.runsPanel.hidden, false);
-    assert.equal(ctx.refs.welcomePanel.hidden, false);
-    assert.equal(ctx.refs.builderPanel.hidden, true);
-    assert.match(ctx.refs.presetSelectionNote.textContent, /scale\/001m\.spec\.json/);
+    assert.equal(ctx.refs.builderPanel.hidden, false);
+    assert.equal(ctx.refs.builderPresetPanel.hidden, false);
+    assert.equal(ctx.refs.builderDescribePanel.hidden, true);
+    assert.match(flattenText(ctx.refs.presetSelectionNote), /Scale workload example\./);
     assert.equal(ctx.calls.renderGeneratedJson.length, 1);
     assert.deepEqual(ctx.calls.renderGeneratedJson[0], ctx.loadedPresetJson);
     assert.equal(ctx.calls.validateGeneratedJson.length, 1);
@@ -212,8 +248,10 @@ test("preset flow controller covers landing, preset load, and custom mode", asyn
     controller.enableCustomWorkloadMode();
     assert.equal(ctx.state.getCustomWorkloadMode(), true);
     assert.equal(ctx.state.getActivePresetJson(), null);
-    assert.equal(ctx.refs.welcomePanel.hidden, true);
+    assert.equal(ctx.refs.headerIntro.hidden, true);
     assert.equal(ctx.refs.builderPanel.hidden, false);
+    assert.equal(ctx.refs.builderPresetPanel.hidden, true);
+    assert.equal(ctx.refs.builderDescribePanel.hidden, false);
     assert.equal(ctx.refs.previewPanel.hidden, false);
     assert.equal(ctx.refs.runsPanel.hidden, false);
     assert.equal(ctx.refs.assistantInput.focused, true);

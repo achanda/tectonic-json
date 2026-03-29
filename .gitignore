@@ -2,3 +2,5 @@ node_modules/**
 .wrangler/tmp/
 generated-workloads/
 states/
+.bootstrap/
+dist/
