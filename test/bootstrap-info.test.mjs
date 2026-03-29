@@ -55,6 +55,24 @@ test("bootstrap info resolves tectonic asset naming for darwin x64", () => {
   assert.equal(result.stdout.trim(), "tectonic-cli-v0.3.1-darwin-x64.tar.gz");
 });
 
+test("bootstrap info resolves Rust target for darwin arm64", () => {
+  const result = runInfo("rust-target", {
+    BOOTSTRAP_UNAME_S: "Darwin",
+    BOOTSTRAP_UNAME_M: "arm64",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "aarch64-apple-darwin");
+});
+
+test("bootstrap info resolves Rust target for linux x64", () => {
+  const result = runInfo("rust-target", {
+    BOOTSTRAP_UNAME_S: "Linux",
+    BOOTSTRAP_UNAME_M: "x86_64",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "x86_64-unknown-linux-gnu");
+});
+
 test("bootstrap info exposes default Cassandra library path for apple silicon", () => {
   const result = runInfo("cassandra-sys-lib-path", {
     BOOTSTRAP_UNAME_S: "Darwin",

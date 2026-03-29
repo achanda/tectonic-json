@@ -140,10 +140,29 @@ To package the current platform locally from a sibling `../Tectonic` checkout:
 make package-tectonic
 ```
 
+To attempt the full platform matrix:
+
+```bash
+make package-tectonic-all
+```
+
 That target runs [scripts/package-tectonic-cli.sh](scripts/package-tectonic-cli.sh), which builds `tectonic-cli` with all currently available features enabled:
 
 ```bash
 cargo build --release -p tectonic-cli --all-features
+```
+
+For multi-platform packaging, the script maps the repo bootstrap platforms to Rust targets:
+
+- `darwin-arm64` -> `aarch64-apple-darwin`
+- `darwin-x64` -> `x86_64-apple-darwin`
+- `linux-arm64` -> `aarch64-unknown-linux-gnu`
+- `linux-x64` -> `x86_64-unknown-linux-gnu`
+
+You can override the platform list with:
+
+```bash
+PACKAGE_PLATFORMS=darwin-arm64,linux-x64 make package-tectonic
 ```
 
 If Cassandra libraries live outside the default linker path, set `CASSANDRA_SYS_LIB_PATH` before packaging. On Apple Silicon macOS, that often means:
@@ -151,6 +170,13 @@ If Cassandra libraries live outside the default linker path, set `CASSANDRA_SYS_
 ```bash
 export CASSANDRA_SYS_LIB_PATH=/opt/homebrew/lib
 make package-tectonic
+```
+
+For platform-specific overrides, use env vars like:
+
+```bash
+export CASSANDRA_SYS_LIB_PATH_DARWIN_ARM64=/opt/homebrew/lib
+export CASSANDRA_SYS_LIB_PATH_DARWIN_X64=/usr/local/lib
 ```
 
 Packaged artifacts are written to:

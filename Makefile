@@ -35,6 +35,9 @@ bootstrap-info:
 package-tectonic:
 	bash scripts/package-tectonic-cli.sh
 
+package-tectonic-all:
+	PACKAGE_PLATFORMS="darwin-arm64,darwin-x64,linux-arm64,linux-x64" bash scripts/package-tectonic-cli.sh
+
 check-ai-env:
 	@provider="$${AI_PROVIDER:-openai}"; \
 	if [ "$$provider" = "cloudflare" ]; then \

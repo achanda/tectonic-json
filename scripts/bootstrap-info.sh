@@ -13,6 +13,7 @@ case "$key" in
   node-archive) bootstrap_node_archive_name ;;
   node-url) bootstrap_node_archive_url ;;
   node-bin) bootstrap_node_bin ;;
+  rust-target) bootstrap_rust_target ;;
   tectonic-version) printf '%s\n' "$BOOTSTRAP_TECTONIC_CLI_VERSION" ;;
   tectonic-asset) bootstrap_tectonic_asset_name ;;
   tectonic-url) bootstrap_tectonic_asset_url ;;
@@ -34,6 +35,7 @@ Keys:
   node-archive
   node-url
   node-bin
+  rust-target
   tectonic-version
   tectonic-asset
   tectonic-url

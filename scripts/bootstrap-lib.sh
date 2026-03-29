@@ -107,6 +107,24 @@ bootstrap_detect_platform() {
 
 BOOTSTRAP_PLATFORM="${BOOTSTRAP_PLATFORM:-$(bootstrap_detect_platform)}"
 
+bootstrap_supported_platforms() {
+  printf '%s\n' "darwin-arm64 darwin-x64 linux-arm64 linux-x64"
+}
+
+bootstrap_rust_target() {
+  case "${1:-$BOOTSTRAP_PLATFORM}" in
+    darwin-arm64) printf 'aarch64-apple-darwin\n' ;;
+    darwin-x64) printf 'x86_64-apple-darwin\n' ;;
+    linux-arm64) printf 'aarch64-unknown-linux-gnu\n' ;;
+    linux-x64) printf 'x86_64-unknown-linux-gnu\n' ;;
+    *) bootstrap_fail "Unsupported Rust target platform: ${1:-$BOOTSTRAP_PLATFORM}" ;;
+  esac
+}
+
+bootstrap_platform_env_key() {
+  printf '%s\n' "${1:-$BOOTSTRAP_PLATFORM}" | tr '[:lower:]-' '[:upper:]_'
+}
+
 bootstrap_node_archive_name() {
   case "${1:-$BOOTSTRAP_PLATFORM}" in
     darwin-arm64) printf 'node-v%s-darwin-arm64.tar.gz\n' "$BOOTSTRAP_NODE_VERSION" ;;
