@@ -168,9 +168,9 @@ body {
     align-items: center;
     justify-content: center;
     background: #ffffff;
-    padding: 80px 48px 80px;
+    padding: 100px 48px 100px;
     position: relative;
-    gap: 80px;
+    gap: 100px;
 }
 
 .landing-hero h1 {
@@ -221,7 +221,7 @@ body {
 /* Section 2: Description — dark charcoal */
 .landing-about {
     background: #2d2d2d;
-    padding: clamp(80px, 12vw, 140px) 24px;
+    padding: clamp(100px, 12vw, 140px) 24px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -251,6 +251,11 @@ body {
 
 .landing-about p:last-of-type {
     margin-bottom: 0;
+}
+
+.landing-about b {
+    color: #ffffff;
+    font-weight: 700;
 }
 
 /* Tectonic icon + animated plates */
@@ -633,6 +638,12 @@ body {
     align-items: center;
     padding: 60px 24px 100px;
     position: relative;
+    min-height: 400px;
+}
+
+/* Tighter top padding when spec is loaded */
+.landing-forms.spec-loaded {
+    padding-top: 12px;
 }
 
 .forms-row {
@@ -669,7 +680,7 @@ body {
     writing-mode: vertical-lr;
     padding: 28px 13px;
     font-family: "Space Grotesk", system-ui, sans-serif;
-    font-size: 20px;
+    font-size: 16px;
     font-weight: 500;
     letter-spacing: 1.5px;
     color: #ffffff;
@@ -761,47 +772,125 @@ body {
 .spec-summary {
     display: none;
     width: 100%;
-    max-width: 1100px;
+    max-width: 95%;
 }
 
 .spec-summary.active {
     display: block;
-    padding-top: 20px;
+    padding-top: 6px;
 }
 
-/* Two-column layout: main (left) + chat (right) */
-.spec-summary-layout {
-    display: grid;
-    grid-template-columns: 1fr 320px;
-    gap: 24px;
-    align-items: start;
-}
-
-.spec-summary-main {
-    min-width: 0;
-}
-
-/* ── LLM Chat Panel ── */
-.spec-chat-panel {
-    background: #faf8f7;
-    border: 1px solid #e0dcda;
-    border-radius: 12px;
+/* Spec summary progress tabs (A/B/C) */
+.spec-summary-progress {
     display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    padding: 10px 0 14px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid #e8e8e8;
+}
+
+.spec-progress-step {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    padding: 6px 12px;
+    border: none;
+    background: none;
+    transition: all 0.2s;
+}
+
+.spec-progress-circle {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "Space Grotesk", system-ui, sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    border: 2px solid #ddd;
+    color: #bbb;
+    background: #ffffff;
+    transition: all 0.25s;
+}
+
+.spec-progress-step.active .spec-progress-circle {
+    border-color: #b33a3a;
+    background: #b33a3a;
+    color: #ffffff;
+}
+
+.spec-progress-step.done .spec-progress-circle {
+    border-color: #2d2d2d;
+    background: #2d2d2d;
+    color: #ffffff;
+}
+
+.spec-progress-label {
+    font-family: "Space Grotesk", system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    color: #bbb;
+    letter-spacing: -0.2px;
+    transition: all 0.2s;
+}
+
+.spec-progress-step.active .spec-progress-label {
+    color: #2d2d2d;
+}
+
+.spec-progress-step.done .spec-progress-label {
+    color: #2d2d2d;
+}
+
+.spec-progress-connector {
+    width: 48px;
+    height: 2px;
+    background: #e0e0e0;
+    margin: 0 8px;
+    transition: background 0.3s;
+}
+
+.spec-progress-connector.done {
+    background: #2d2d2d;
+}
+
+/* ── LLM Chat Panel (inside section, collapsible) ── */
+.spec-chat-panel {
+    position: sticky;
+    top: 0;
+    bottom: 0;
+    align-self: flex-start;
+    width: 320px;
+    height: 70vh;
+    margin-left: auto;
+    background: #faf8f7;
+    border-left: 1px solid #e0dcda;
+    display: none;
     flex-direction: column;
-    height: 420px;
-    overflow: hidden;
+    z-index: 8;
+    box-shadow: -2px 0 12px rgba(0, 0, 0, 0.06);
+}
+
+.spec-chat-panel.active {
+    display: flex;
 }
 
 .spec-chat-header {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 12px 16px;
+    padding: 14px 16px;
     border-bottom: 1px solid #e0dcda;
     font-family: "Space Grotesk", system-ui, sans-serif;
     font-size: 13px;
     font-weight: 700;
     color: #2d2d2d;
+    background: #fff;
 }
 
 .spec-chat-header svg {
@@ -823,6 +912,27 @@ body {
 
 .spec-chat-status.error {
     color: #dc2626;
+}
+
+.spec-chat-close {
+    width: 26px;
+    height: 26px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    color: #999;
+    transition: all 0.15s;
+    margin-left: 4px;
+    flex-shrink: 0;
+}
+
+.spec-chat-close:hover {
+    background: #eee;
+    color: #2d2d2d;
 }
 
 .spec-chat-messages {
@@ -932,99 +1042,48 @@ body {
     background: #922e2e;
 }
 
-@media (max-width: 820px) {
-    .spec-summary-layout {
-        grid-template-columns: 1fr;
-    }
-    .spec-chat-panel {
-        height: 300px;
-    }
+/* Workload editor inside spec summary */
+.spec-workload-editor {
+    background: #faf8f7;
+    border: 1px solid #e0dcda;
+    border-radius: 12px;
+    padding: 20px 24px;
+    min-height: 120px;
+    overflow-y: auto;
 }
 
-/* Spec summary progress tabs (A/B/C) */
-.spec-summary-progress {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0;
-    padding: 14px 0 20px;
+.spec-structure-summary {
+    font-size: 13px;
+    line-height: 1.6;
+    color: #2d2d2d;
     margin-bottom: 16px;
-    border-bottom: 1px solid #e8e8e8;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #e0dcda;
 }
 
-.spec-progress-step {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    cursor: pointer;
-    padding: 6px 12px;
-    border: none;
-    background: none;
-    transition: all 0.2s;
+.spec-workload-editor .structure-panel-head {
+    margin-bottom: 12px;
 }
 
-.spec-progress-circle {
-    width: 34px;
-    height: 34px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: "Space Grotesk", system-ui, sans-serif;
+.spec-workload-editor .structure-panel-title {
     font-size: 14px;
     font-weight: 700;
-    border: 2px solid #ddd;
-    color: #bbb;
-    background: #ffffff;
-    transition: all 0.25s;
 }
 
-.spec-progress-step.active .spec-progress-circle {
-    border-color: #b33a3a;
-    background: #b33a3a;
-    color: #ffffff;
+.spec-workload-editor .structure-help {
+    font-size: 12px;
+    color: #888;
 }
 
-.spec-progress-step.done .spec-progress-circle {
-    border-color: #2d2d2d;
-    background: #2d2d2d;
-    color: #ffffff;
-}
-
-.spec-progress-label {
-    font-family: "Space Grotesk", system-ui, sans-serif;
-    font-size: 13px;
-    font-weight: 600;
-    color: #bbb;
-    letter-spacing: -0.2px;
-    transition: all 0.2s;
-}
-
-.spec-progress-step.active .spec-progress-label {
-    color: #2d2d2d;
-}
-
-.spec-progress-step.done .spec-progress-label {
-    color: #2d2d2d;
-}
-
-.spec-progress-connector {
-    width: 48px;
-    height: 2px;
-    background: #e0e0e0;
-    margin: 0 8px;
-    transition: background 0.3s;
-}
-
-.spec-progress-connector.done {
-    background: #2d2d2d;
+.spec-workload-editor .structure-tree {
+    margin-top: 8px;
 }
 
 .spec-summary-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 24px;
+    margin-bottom: 14px;
 }
 
 .spec-summary-title {
@@ -1099,7 +1158,7 @@ body {
     color: #16a34a;
 }
 
-/* Summary body layout */
+/* Summary body layout — structure only by default, split when JSON shown */
 .spec-summary-body {
     display: grid;
     grid-template-columns: 1fr;
@@ -1107,8 +1166,14 @@ body {
 }
 
 .spec-summary-body.with-json {
-    grid-template-columns: 1fr;
-    gap: 24px;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+@media (max-width: 820px) {
+    .spec-summary-body.with-json {
+        grid-template-columns: 1fr;
+    }
 }
 
 .spec-summary-card {
@@ -1133,9 +1198,12 @@ body {
     background: #2d2d2d;
     border-radius: 12px;
     padding: 20px;
-    max-height: 500px;
     overflow-y: auto;
     display: none;
+    position: sticky;
+    top: 80px;
+    max-height: calc(100vh - 100px);
+    align-self: start;
 }
 
 .spec-json-viewer.active {
@@ -1343,7 +1411,6 @@ body {
     border-bottom: 1px solid #e8e8e8;
     position: sticky;
     top: 56px;
-    z-index: 50;
 }
 
 .app-step {

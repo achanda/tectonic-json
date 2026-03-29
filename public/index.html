@@ -155,13 +155,32 @@
       </div>
     </div>
 
-    <!-- Collapsed vertical tab (shown after spec loads — left side only) -->
+    <!-- Collapsed vertical tabs (shown after spec loads) -->
     <div class="forms-collapsed-tabs" id="formsCollapsedTabs">
       <button class="forms-collapsed-tab left" id="collapsedTabLeft">Standard Benchmarks</button>
+      <button class="forms-collapsed-tab right" id="collapsedTabRight">Edit Workload</button>
     </div>
 
     <!-- Spec Summary (shown after spec loads) -->
     <div class="spec-summary" id="specSummaryView">
+      <!-- A/B/C Progress Tabs -->
+      <div class="spec-summary-progress" id="specProgressTabs">
+        <button class="spec-progress-step active" data-tab="edit">
+          <span class="spec-progress-circle">A</span>
+          <span class="spec-progress-label">Edit Specification</span>
+        </button>
+        <div class="spec-progress-connector" id="specConnectorAB"></div>
+        <button class="spec-progress-step" data-tab="databases">
+          <span class="spec-progress-circle">B</span>
+          <span class="spec-progress-label">Select Databases</span>
+        </button>
+        <div class="spec-progress-connector" id="specConnectorBC"></div>
+        <button class="spec-progress-step" data-tab="results">
+          <span class="spec-progress-circle">C</span>
+          <span class="spec-progress-label">Results</span>
+        </button>
+      </div>
+      <!-- Action bar -->
       <div class="spec-summary-header">
         <div style="display:flex;align-items:center;gap:14px;">
           <span class="spec-summary-valid" id="specSummaryValid">
@@ -174,10 +193,6 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             View JSON
           </button>
-          <button class="spec-action-btn" id="specEditBtn" title="Edit Workload">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-            Edit
-          </button>
           <button class="spec-action-btn" id="specDownloadBtn" title="Download JSON">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Download
@@ -188,37 +203,40 @@
           </button>
         </div>
       </div>
-      <!-- Workload content area: structure + optional JSON side by side -->
+      <!-- Workload editor + optional JSON side by side -->
       <div class="spec-summary-body" id="specSummaryBody">
-        <div class="spec-workload-structure" id="specWorkloadStructure">
-          <!-- Populated by JS from the app shell's structure panel -->
+        <div class="spec-workload-editor" id="specWorkloadEditor">
+          <!-- Populated by JS: full workload editor (structure + form) -->
         </div>
         <div class="spec-json-viewer" id="specJsonViewer">
           <pre id="specJsonPre"></pre>
         </div>
       </div>
     </div>
-  </section>
 
-  <!-- Floating Chat Panel (right edge of screen) -->
-  <div class="spec-chat-panel" id="specChatPanel">
-    <div class="spec-chat-header">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      <span>Describe Workload</span>
-      <span class="spec-chat-status" id="specChatStatus">Ready</span>
-    </div>
-    <div class="spec-chat-messages" id="specChatMessages">
-      <div class="spec-chat-empty" id="specChatEmpty">
-        Describe changes to your workload or ask the AI to modify the current configuration.
+    <!-- Chat Panel (right side, inside section, collapsible) -->
+    <div class="spec-chat-panel" id="specChatPanel">
+      <div class="spec-chat-header">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span>Describe Workload</span>
+        <span class="spec-chat-status" id="specChatStatus">Ready</span>
+        <button class="spec-chat-close" id="specChatCloseBtn" title="Hide chat">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="spec-chat-messages" id="specChatMessages">
+        <div class="spec-chat-empty" id="specChatEmpty">
+          Describe changes to your workload or ask the AI to modify the current configuration.
+        </div>
+      </div>
+      <div class="spec-chat-composer">
+        <textarea id="specChatInput" class="spec-chat-input" placeholder="e.g. Change to 80% reads and 20% writes..." rows="2"></textarea>
+        <button type="button" class="spec-chat-send" id="specChatSendBtn" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
       </div>
     </div>
-    <div class="spec-chat-composer">
-      <textarea id="specChatInput" class="spec-chat-input" placeholder="e.g. Change to 80% reads and 20% writes..." rows="2"></textarea>
-      <button type="button" class="spec-chat-send" id="specChatSendBtn" disabled>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-      </button>
-    </div>
-  </div>
+  </section>
 
   <!-- ── App (shown after CTA) ── -->
   <div class="app-shell" id="appShell">
@@ -513,7 +531,7 @@
                   <div id="jsonTree" class="json-tree" aria-live="polite"></div>
                   <textarea id="jsonOutput" readonly hidden aria-hidden="true"
                     placeholder="Generated JSON will appear here...">
-{}</textarea>
+                  {}</textarea>
                 </div>
               </div>
             </div>

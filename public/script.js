@@ -380,15 +380,21 @@ document.getElementById("ctaBtn").addEventListener("click", function () {
         var formsRow = document.getElementById("formsRow");
         var summaryView = document.getElementById("specSummaryView");
         var collapsedTabs = document.getElementById("formsCollapsedTabs");
-        // Collapse only left form + OR divider (CSS handles this via .collapsed class)
+        // Collapse forms row
         formsRow.classList.add("collapsed");
+        // Reduce top gap
+        landingForms.classList.add("spec-loaded");
         // Hide spec badge (redundant now)
         specBadge.classList.remove("visible");
-        // Show collapsed side tab and summary after collapse animation
+        // Hide app shell (everything is in workload editor now)
+        appShell.classList.remove("active");
+        // Show collapsed side tab, summary, and chat panel after collapse animation
         setTimeout(function () {
             collapsedTabs.classList.add("active");
             summaryView.classList.add("active");
             positionCollapsedTabs();
+            // Populate workload structure
+            populateSpecEditor();
         }, 300);
 
         // Populate JSON viewer from the existing jsonOutput
@@ -401,6 +407,35 @@ document.getElementById("ctaBtn").addEventListener("click", function () {
         setTimeout(function () {
             summaryView.scrollIntoView({ behavior: "smooth", block: "start" });
         }, 100);
+    }
+
+    // Move the workload editor components into the spec summary area
+    function populateSpecEditor() {
+        var target = document.getElementById("specWorkloadEditor");
+        if (!target || target.dataset.populated) return;
+
+        // Tell app.js to stop hiding the panels
+        window.__specEditorActive = true;
+
+        // Move (not clone) the actual editor panels — preserves event listeners
+        var structurePanel = document.getElementById("structurePanel");
+        var workloadForm = document.getElementById("workloadForm");
+
+        target.innerHTML = "";
+
+        // Move structure panel (the actual element, with all its listeners)
+        if (structurePanel) {
+            structurePanel.hidden = false;
+            target.appendChild(structurePanel);
+        }
+
+        // Move workload form
+        if (workloadForm) {
+            workloadForm.hidden = false;
+            target.appendChild(workloadForm);
+        }
+
+        target.dataset.populated = "true";
     }
 
     // Refresh JSON in spec summary viewer
@@ -517,23 +552,37 @@ document.getElementById("ctaBtn").addEventListener("click", function () {
         var entryCard = document.querySelector(".builder-entry-card");
         if (entryCard) entryCard.style.display = "";
 
-        // Show forms, hide summary and collapsed tabs
+        // Show forms, hide summary, collapsed tabs, and chat panel
         var formsRow = document.getElementById("formsRow");
         var summaryView = document.getElementById("specSummaryView");
         var collapsedTabs = document.getElementById("formsCollapsedTabs");
+        var chatPanel = document.getElementById("specChatPanel");
         formsRow.classList.remove("collapsed");
         summaryView.classList.remove("active");
         collapsedTabs.classList.remove("active");
+        landingForms.classList.remove("spec-loaded");
+        if (chatPanel) chatPanel.classList.remove("active");
+        // Restore right tab visibility
+        var rightTab = document.getElementById("collapsedTabRight");
+        if (rightTab) rightTab.style.display = "";
 
-        // Reset spec progress tabs
-        var specSteps = document.querySelectorAll(".spec-progress-step");
-        specSteps.forEach(function (s) { s.classList.remove("active", "done"); });
-        var firstStep = document.querySelector('.spec-progress-step[data-tab="edit"]');
-        if (firstStep) firstStep.classList.add("active");
-        var specConAB = document.getElementById("specConnectorAB");
-        var specConBC = document.getElementById("specConnectorBC");
-        if (specConAB) specConAB.classList.remove("done");
-        if (specConBC) specConBC.classList.remove("done");
+        // Clear spec editor flag and move elements back to app shell
+        window.__specEditorActive = false;
+        var specEditor = document.getElementById("specWorkloadEditor");
+        var builderPanel = document.getElementById("builderPanel");
+        var structurePanel = document.getElementById("structurePanel");
+        var workloadForm = document.getElementById("workloadForm");
+        if (builderPanel && structurePanel && specEditor && specEditor.contains(structurePanel)) {
+            var panelBody = builderPanel.querySelector(".panel-body");
+            if (panelBody) {
+                panelBody.appendChild(structurePanel);
+                if (workloadForm) panelBody.appendChild(workloadForm);
+            }
+        }
+        if (specEditor) {
+            specEditor.innerHTML = "";
+            delete specEditor.dataset.populated;
+        }
 
         // Hide JSON viewer
         document.getElementById("specJsonViewer").classList.remove("active");
@@ -543,6 +592,32 @@ document.getElementById("ctaBtn").addEventListener("click", function () {
         setTimeout(function () {
             landingForms.scrollIntoView({ behavior: "smooth" });
         }, 100);
+    }
+
+    // Spec badge click → go back to forms
+    specBadge.addEventListener("click", exitApp);
+
+    // Collapsed side tab — Left ("Standard Benchmarks") → expand forms back
+    document.getElementById("collapsedTabLeft").addEventListener("click", exitApp);
+
+    // Collapsed side tab — Right ("Describe Workload") → open chat panel & hide tab
+    var collapsedTabRight = document.getElementById("collapsedTabRight");
+    collapsedTabRight.addEventListener("click", function () {
+        var chatPanel = document.getElementById("specChatPanel");
+        if (chatPanel) {
+            chatPanel.classList.add("active");
+            collapsedTabRight.style.display = "none";
+        }
+    });
+
+    // Chat close button → hide chat panel & re-show right tab
+    var specChatCloseBtn = document.getElementById("specChatCloseBtn");
+    if (specChatCloseBtn) {
+        specChatCloseBtn.addEventListener("click", function () {
+            var chatPanel = document.getElementById("specChatPanel");
+            if (chatPanel) chatPanel.classList.remove("active");
+            collapsedTabRight.style.display = "";
+        });
     }
 
     // ── Spec progress tab switching (mirrors app tabs) ──
@@ -563,13 +638,18 @@ document.getElementById("ctaBtn").addEventListener("click", function () {
             });
             if (specConAB) specConAB.classList.toggle("done", activeIdx > 0);
             if (specConBC) specConBC.classList.toggle("done", activeIdx > 1);
-
             // Also switch the app shell tab
             if (window.__switchAppTab) window.__switchAppTab(tabName);
-
-            // Scroll to app shell for databases/results tabs
+            // Show/hide app shell based on tab
             if (tabName !== "edit") {
-                appShell.scrollIntoView({ behavior: "smooth" });
+                // Show app shell for Databases / Results tabs
+                appShell.classList.add("active");
+                setTimeout(function () {
+                    appShell.scrollIntoView({ behavior: "smooth", block: "start" });
+                }, 50);
+            } else {
+                // Hide app shell for Edit tab (editor is in spec summary)
+                appShell.classList.remove("active");
             }
         }
 
@@ -579,25 +659,6 @@ document.getElementById("ctaBtn").addEventListener("click", function () {
             });
         });
     })();
-
-    // Spec badge click → go back to forms
-    specBadge.addEventListener("click", exitApp);
-
-    // Collapsed side tab — Left ("Standard Benchmarks") → expand forms back
-    document.getElementById("collapsedTabLeft").addEventListener("click", function () {
-        var formsRow = document.getElementById("formsRow");
-        formsRow.classList.remove("collapsed");
-        var collapsedTabs = document.getElementById("formsCollapsedTabs");
-        collapsedTabs.classList.remove("active");
-        var summaryView = document.getElementById("specSummaryView");
-        summaryView.classList.remove("active");
-        // Hide JSON viewer
-        document.getElementById("specJsonViewer").classList.remove("active");
-        document.getElementById("specSummaryBody").classList.remove("with-json");
-        setTimeout(function () {
-            landingForms.scrollIntoView({ behavior: "smooth" });
-        }, 100);
-    });
 
     // Position collapsed tabs within the forms section on scroll
     function positionCollapsedTabs() {
@@ -661,11 +722,6 @@ document.getElementById("ctaBtn").addEventListener("click", function () {
             body.classList.add("with-json");
             this.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Hide JSON';
         }
-    });
-
-    // Edit → scroll to app shell editor
-    document.getElementById("specEditBtn").addEventListener("click", function () {
-        appShell.scrollIntoView({ behavior: "smooth" });
     });
 
     // Download

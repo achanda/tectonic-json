@@ -1360,6 +1360,12 @@ function syncStructurePanelToggleUi(showBuilderEditor) {
 }
 
 function updateStructurePanelVisibility() {
+  // When spec editor is active, panels are managed by the spec summary — don't hide them
+  if (window.__specEditorActive) {
+    if (structurePanel) structurePanel.hidden = false;
+    if (workloadForm) workloadForm.hidden = false;
+    return;
+  }
   const showBuilderEditor = hasConfiguredWorkloadStructure();
   if (!showBuilderEditor) {
     structurePanelExpanded = false;
