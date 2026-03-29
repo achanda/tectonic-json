@@ -376,6 +376,9 @@ bootstrap_wait_for_cassandra() {
   timeout_seconds="${2:-120}"
   deadline=$((SECONDS + timeout_seconds))
   while [ "$SECONDS" -lt "$deadline" ]; do
+    if [ -n "$BOOTSTRAP_CASSANDRA_PID" ] && ! kill -0 "$BOOTSTRAP_CASSANDRA_PID" >/dev/null 2>&1; then
+      return 1
+    fi
     output="$(bootstrap_cqlsh_show_version "$cqlsh_bin" || true)"
     if printf '%s\n' "$output" | grep -q "Cassandra $BOOTSTRAP_CASSANDRA_VERSION"; then
       printf '%s\n' "$output"
@@ -411,16 +414,21 @@ bootstrap_start_cassandra_for_session() {
   bootstrap_prepare_cassandra_config
 
   bootstrap_log "Starting Cassandra $BOOTSTRAP_CASSANDRA_VERSION for this session"
+  rm -f "$BOOTSTRAP_RUN_DIR/cassandra.pid"
   PATH="$(bootstrap_java_bin_dir):$(dirname "$BOOTSTRAP_NODE_BIN"):$PATH" \
     JAVA_HOME="${BOOTSTRAP_JAVA_HOME:-}" \
     CASSANDRA_CONF="$BOOTSTRAP_CASSANDRA_CONF_DIR" \
     CASSANDRA_LOG_DIR="$BOOTSTRAP_RUN_DIR/cassandra-logs" \
     MAX_HEAP_SIZE="${BOOTSTRAP_CASSANDRA_MAX_HEAP_SIZE:-512M}" \
     HEAP_NEWSIZE="${BOOTSTRAP_CASSANDRA_HEAP_NEWSIZE:-128M}" \
-    "$BOOTSTRAP_CASSANDRA_BIN" -f >"$BOOTSTRAP_RUN_DIR/cassandra.log" 2>&1 &
-  BOOTSTRAP_CASSANDRA_PID="$!"
+    "$BOOTSTRAP_CASSANDRA_BIN" -p "$BOOTSTRAP_RUN_DIR/cassandra.pid" >"$BOOTSTRAP_RUN_DIR/cassandra.log" 2>&1
+  BOOTSTRAP_CASSANDRA_PID="$(cat "$BOOTSTRAP_RUN_DIR/cassandra.pid" 2>/dev/null || true)"
+  if [ -z "$BOOTSTRAP_CASSANDRA_PID" ]; then
+    bootstrap_fail "Cassandra did not write a pid file. See $BOOTSTRAP_RUN_DIR/cassandra.log."
+  fi
   BOOTSTRAP_CASSANDRA_STARTED=1
-  printf '%s\n' "$BOOTSTRAP_CASSANDRA_PID" >"$BOOTSTRAP_RUN_DIR/cassandra.pid"
+  bootstrap_log "Cassandra started in the background with pid $BOOTSTRAP_CASSANDRA_PID"
+  bootstrap_log "Waiting for Cassandra to accept connections on $BOOTSTRAP_CASSANDRA_HOST:$BOOTSTRAP_CASSANDRA_PORT"
 
   version_output="$(bootstrap_wait_for_cassandra "$BOOTSTRAP_CQLSH_BIN" 120 || true)"
   if [ -z "$version_output" ]; then
