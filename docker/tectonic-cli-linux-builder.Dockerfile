@@ -51,7 +51,10 @@ RUN cargo +"${RUST_TOOLCHAIN}" build --jobs "${CARGO_BUILD_JOBS}" --release --ta
 
 RUN install -D "target/${TARGET_TRIPLE}/release/tectonic-cli" /out/tectonic-cli \
   && mkdir -p /out/lib \
-  && cp -P /usr/local/lib/libcassandra.so* /out/lib/
+  && cassandra_lib_dir="$(dirname "$(find /usr/local /usr -name 'libcassandra.so.2' 2>/dev/null | head -n 1)")" \
+  && test -n "$cassandra_lib_dir" \
+  && cp -P "$cassandra_lib_dir"/libcassandra.so* /out/lib/
 
 FROM scratch AS export
 COPY --from=builder /out/tectonic-cli /tectonic-cli
+COPY --from=builder /out/lib /lib
