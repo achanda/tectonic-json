@@ -307,7 +307,6 @@ bootstrap_prepare_cassandra_config() {
     "$BOOTSTRAP_RUN_DIR/cassandra-logs"
   cp -R "$BOOTSTRAP_CASSANDRA_HOME/conf/." "$BOOTSTRAP_CASSANDRA_CONF_DIR/"
   "$BOOTSTRAP_NODE_BIN" --input-type=module -e '
-    import fs from "node:fs";
     const [
       configPath,
       dataDir,
@@ -318,24 +317,42 @@ bootstrap_prepare_cassandra_config() {
       host,
       port,
     ] = process.argv.slice(1);
-    let text = fs.readFileSync(configPath, "utf8");
-    const replaceLine = (pattern, value) => {
-      if (!pattern.test(text)) {
-        throw new Error("Could not update " + pattern);
+    import fs from "node:fs";
+    const escapeRegex = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const replaceOrInsertScalar = (text, key, value) => {
+      const activePattern = new RegExp(`^${escapeRegex(key)}:.*$`, "m");
+      const commentedPattern = new RegExp(`^#\\s*${escapeRegex(key)}:.*$`, "m");
+      const rendered = `${key}: ${value}`;
+      if (activePattern.test(text)) {
+        return text.replace(activePattern, rendered);
       }
-      text = text.replace(pattern, value);
+      if (commentedPattern.test(text)) {
+        return text.replace(commentedPattern, rendered);
+      }
+      return `${text.trimEnd()}\n${rendered}\n`;
     };
-    replaceLine(/^commitlog_directory:.*$/m, `commitlog_directory: ${commitlogDir}`);
-    replaceLine(/^saved_caches_directory:.*$/m, `saved_caches_directory: ${savedCachesDir}`);
-    replaceLine(/^hints_directory:.*$/m, `hints_directory: ${hintsDir}`);
-    replaceLine(/^cdc_raw_directory:.*$/m, `cdc_raw_directory: ${cdcDir}`);
-    replaceLine(/^listen_address:.*$/m, `listen_address: ${host}`);
-    replaceLine(/^rpc_address:.*$/m, `rpc_address: ${host}`);
-    replaceLine(/^native_transport_port:.*$/m, `native_transport_port: ${port}`);
-    text = text.replace(
-      /^data_file_directories:\n(?:\s*-\s*.*\n)+/m,
-      `data_file_directories:\n    - ${dataDir}\n`,
-    );
+    const replaceOrInsertList = (text, key, values) => {
+      const rendered = `${key}:\n${values.map((value) => `    - ${value}`).join("\n")}`;
+      const activePattern = new RegExp(`^${escapeRegex(key)}:\\n(?:\\s*-\\s*.*\\n?)+`, "m");
+      const commentedPattern = new RegExp(`^#\\s*${escapeRegex(key)}:\\n(?:\\s*#\\s*-\\s*.*\\n?)+`, "m");
+      if (activePattern.test(text)) {
+        return text.replace(activePattern, `${rendered}\n`);
+      }
+      if (commentedPattern.test(text)) {
+        return text.replace(commentedPattern, `${rendered}\n`);
+      }
+      return `${text.trimEnd()}\n${rendered}\n`;
+    };
+    let text = fs.readFileSync(configPath, "utf8");
+    text = replaceOrInsertScalar(text, "commitlog_directory", commitlogDir);
+    text = replaceOrInsertScalar(text, "saved_caches_directory", savedCachesDir);
+    text = replaceOrInsertScalar(text, "hints_directory", hintsDir);
+    text = replaceOrInsertScalar(text, "cdc_raw_directory", cdcDir);
+    text = replaceOrInsertScalar(text, "listen_address", host);
+    text = replaceOrInsertScalar(text, "rpc_address", host);
+    text = replaceOrInsertScalar(text, "native_transport_address", host);
+    text = replaceOrInsertScalar(text, "native_transport_port", port);
+    text = replaceOrInsertList(text, "data_file_directories", [dataDir]);
     fs.writeFileSync(configPath, text);
   ' \
     "$BOOTSTRAP_CASSANDRA_CONF_DIR/cassandra.yaml" \
