@@ -265,7 +265,7 @@ build_host_platform() {
     if [[ "$platform" == darwin-* ]]; then
       bootstrap_log "Would configure Apple SDK and target-specific clang flags for $platform"
     fi
-    package_run cargo "+$BOOTSTRAP_TECTONIC_RUST_TOOLCHAIN" build --release --target "$rust_target" -p tectonic-cli --bin tectonic-cli --all-features
+    package_run cargo "+$BOOTSTRAP_TECTONIC_RUST_TOOLCHAIN" build --release --target "$rust_target" --all-features
     package_built_binary "$TECTONIC_SOURCE_DIR/target/$rust_target/release/tectonic-cli" "$asset_path"
     SUCCESSFUL_PLATFORMS+=("$platform")
     return 0
@@ -299,7 +299,7 @@ build_host_platform() {
       export "$cflags_var=-arch $apple_arch -isysroot $sdkroot"
       export "$cxxflags_var=-arch $apple_arch -isysroot $sdkroot"
     fi
-    cargo "+$BOOTSTRAP_TECTONIC_RUST_TOOLCHAIN" build --release --target "$rust_target" -p tectonic-cli --bin tectonic-cli --all-features
+    cargo "+$BOOTSTRAP_TECTONIC_RUST_TOOLCHAIN" build --release --target "$rust_target" --all-features
   ); then
     built_bin="$(resolve_built_tectonic_bin "$rust_target" || true)"
     if [ -z "$built_bin" ]; then

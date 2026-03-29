@@ -832,6 +832,7 @@ function buildTectonicBenchmarkArgs(run) {
 }
 
 async function runTectonicCommand(run, args, options = {}) {
+  console.log("Running tectonic-cli from:", TECTONIC_BIN);
   const child = spawn(TECTONIC_BIN, args, {
     stdio: ["ignore", "pipe", "pipe"],
   });

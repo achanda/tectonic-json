@@ -47,7 +47,7 @@ ENV CC=gcc-11
 ENV CXX=g++-11
 RUN rustup toolchain install "${RUST_TOOLCHAIN}"
 RUN rustup target add --toolchain "${RUST_TOOLCHAIN}" "${TARGET_TRIPLE}"
-RUN cargo +"${RUST_TOOLCHAIN}" build --jobs "${CARGO_BUILD_JOBS}" --release --target "${TARGET_TRIPLE}" -p tectonic-cli --bin tectonic-cli --all-features
+RUN cargo +"${RUST_TOOLCHAIN}" build --jobs "${CARGO_BUILD_JOBS}" --release --target "${TARGET_TRIPLE}" --all-features
 
 RUN install -D "target/${TARGET_TRIPLE}/release/tectonic-cli" /out/tectonic-cli
 

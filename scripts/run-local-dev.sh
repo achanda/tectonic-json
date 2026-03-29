@@ -24,6 +24,7 @@ BOOTSTRAP_NPM_BIN=""
 BOOTSTRAP_JAVA_BIN=""
 BOOTSTRAP_JAVA_HOME=""
 BOOTSTRAP_TECTONIC_BIN=""
+BOOTSTRAP_TECTONIC_SOURCE=""
 BOOTSTRAP_OLLAMA_BIN=""
 BOOTSTRAP_CASSANDRA_BIN=""
 BOOTSTRAP_CQLSH_BIN=""
@@ -175,15 +176,30 @@ bootstrap_install_tectonic_cli() {
 }
 
 bootstrap_select_tectonic_cli() {
-  local existing_bin
-  existing_bin="$(bootstrap_existing_tectonic_bin || true)"
-  if [ -n "$existing_bin" ]; then
-    BOOTSTRAP_TECTONIC_BIN="$existing_bin"
-    bootstrap_log "Using existing tectonic-cli at $BOOTSTRAP_TECTONIC_BIN"
+  local explicit_bin path_bin
+  explicit_bin="$(bootstrap_resolve_command "${TECTONIC_BIN:-}" || true)"
+  if [ -n "$explicit_bin" ]; then
+    BOOTSTRAP_TECTONIC_BIN="$explicit_bin"
+    BOOTSTRAP_TECTONIC_SOURCE="explicit"
+    bootstrap_log "Using explicitly configured tectonic-cli at $BOOTSTRAP_TECTONIC_BIN"
+    return
+  fi
+  if [ -x "$BOOTSTRAP_DOWNLOADED_TECTONIC_BIN" ]; then
+    BOOTSTRAP_TECTONIC_BIN="$BOOTSTRAP_DOWNLOADED_TECTONIC_BIN"
+    BOOTSTRAP_TECTONIC_SOURCE="repo-local"
+    bootstrap_log "Using repo-local tectonic-cli at $BOOTSTRAP_TECTONIC_BIN"
+    return
+  fi
+  path_bin="$(bootstrap_resolve_command tectonic-cli || true)"
+  if [ -n "$path_bin" ]; then
+    BOOTSTRAP_TECTONIC_BIN="$path_bin"
+    BOOTSTRAP_TECTONIC_SOURCE="path"
+    bootstrap_log "Using existing PATH tectonic-cli at $BOOTSTRAP_TECTONIC_BIN"
     return
   fi
   bootstrap_install_tectonic_cli
   BOOTSTRAP_TECTONIC_BIN="$BOOTSTRAP_DOWNLOADED_TECTONIC_BIN"
+  BOOTSTRAP_TECTONIC_SOURCE="repo-local"
 }
 
 bootstrap_install_ollama_if_missing() {
