@@ -153,6 +153,25 @@ function createTwoGroupWriteDeleteState() {
   ]);
 }
 
+function applyNormalizedPrompt({
+  prompt,
+  state,
+  rawPatch = {},
+}) {
+  const normalized = __test.normalizeAssistPayload(
+    {
+      summary: "Applied prompt.",
+      patch: rawPatch,
+      clarifications: [],
+      assumptions: [],
+    },
+    NORMALIZED_SCHEMA_HINTS,
+    state,
+    prompt,
+  );
+  return applyPatchToState(state, normalized.patch);
+}
+
 function canonicalGroupProjection(group) {
   const operationNames = configuredOperations(group);
   const counts = Object.fromEntries(
@@ -330,6 +349,121 @@ test("intent boundaries: unique matching multi-group refinements project without
   assert.equal(
     effective.sections[0].groups[1].point_queries.selection_distribution,
     "normal",
+  );
+});
+
+test("intent boundaries: phase-targeted distribution edits stay in the addressed phase", () => {
+  const formState = createStructuredState([
+    {
+      inserts: {
+        enabled: true,
+        op_count: 1000,
+      },
+    },
+    {
+      point_queries: {
+        enabled: true,
+        op_count: 5000,
+        selection_distribution: "uniform",
+        selection_min: 0,
+        selection_max: 1,
+      },
+    },
+  ]);
+  const nextState = applyNormalizedPrompt({
+    prompt: "Change phase 2 point queries distribution to zipf",
+    state: formState,
+    rawPatch: {
+      operations: {
+        point_queries: {
+          enabled: true,
+          op_count: 500000,
+          selection_distribution: "zipf",
+          selection_n: 1000000,
+          selection_s: 1.5,
+        },
+      },
+    },
+  });
+
+  assert.equal(nextState.sections_count, 1);
+  assert.equal(nextState.groups_per_section, 2);
+  assert.deepEqual(configuredOperations(nextState.sections[0].groups[0]), ["inserts"]);
+  assert.deepEqual(
+    configuredOperations(nextState.sections[0].groups[1]),
+    ["point_queries"],
+  );
+  assert.equal(nextState.sections[0].groups[0].inserts.op_count, 1000);
+  assert.equal(nextState.sections[0].groups[1].point_queries.op_count, 5000);
+  assert.equal(
+    nextState.sections[0].groups[1].point_queries.selection_distribution,
+    "zipf",
+  );
+  assert.equal(
+    nextState.sections[0].groups[1].point_queries.selection_n,
+    1000000,
+  );
+  assert.equal(
+    nextState.sections[0].groups[1].point_queries.selection_s,
+    1.5,
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      nextState.sections[0].groups[0],
+      "point_queries",
+    ),
+    false,
+  );
+});
+
+test("intent boundaries: phase-targeted distribution edits still work when the AI patch is sparse", () => {
+  const formState = createStructuredState([
+    {
+      inserts: {
+        enabled: true,
+        op_count: 1000,
+      },
+    },
+    {
+      point_queries: {
+        enabled: true,
+        op_count: 5000,
+        selection_distribution: "uniform",
+        selection_min: 0,
+        selection_max: 1,
+      },
+    },
+  ]);
+  const nextState = applyNormalizedPrompt({
+    prompt: "Change phase 2 point queries distribution to normal",
+    state: formState,
+    rawPatch: {
+      operations: {
+        point_queries: {
+          enabled: true,
+        },
+      },
+    },
+  });
+
+  assert.equal(nextState.sections_count, 1);
+  assert.equal(nextState.groups_per_section, 2);
+  assert.deepEqual(configuredOperations(nextState.sections[0].groups[0]), ["inserts"]);
+  assert.deepEqual(
+    configuredOperations(nextState.sections[0].groups[1]),
+    ["point_queries"],
+  );
+  assert.equal(nextState.sections[0].groups[1].point_queries.op_count, 5000);
+  assert.equal(
+    nextState.sections[0].groups[1].point_queries.selection_distribution,
+    "normal",
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      nextState.sections[0].groups[0],
+      "point_queries",
+    ),
+    false,
   );
 });
 

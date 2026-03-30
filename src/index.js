@@ -3888,12 +3888,12 @@ function extractExplicitGroupTarget(prompt, formState, schemaHints) {
     return null;
   }
   const directMatch = text.match(
-    /\b(?:(?:in|for)\s+)?(?:section\s+(\d+|1st|first|2nd|second|3rd|third|4th|fourth)\s+)?group\s+(\d+|1st|first|2nd|second|3rd|third|4th|fourth)\b/,
+    /\b(?:(?:in|for)\s+)?(?:section\s+(\d+|1st|first|2nd|second|3rd|third|4th|fourth)\s+)?(?:group|phase)\s+(\d+|1st|first|2nd|second|3rd|third|4th|fourth)\b/,
   );
   const possessiveMatch = directMatch
     ? null
     : text.match(
-        /\b(?:the\s+)?(\d+|1st|first|2nd|second|3rd|third|4th|fourth)\s+group(?:['’]s)?\b/,
+        /\b(?:the\s+)?(\d+|1st|first|2nd|second|3rd|third|4th|fourth)\s+(?:group|phase)(?:['’]s)?\b/,
       );
   if (!directMatch && !possessiveMatch) {
     return null;
@@ -4088,6 +4088,16 @@ function applyPromptTargetedGroupEditFallback(
   const derivedGroup =
     deriveStructuredGroupFromClause(prompt, schemaHints) || {};
   const promptSelectivity = extractPromptRangeSelectivityHint(prompt);
+  const lowerPrompt = String(prompt || "").toLowerCase();
+  const promptCount = extractPromptCountHint(prompt);
+  const detectedDistribution = detectSelectionDistribution(
+    lowerPrompt,
+    schemaHints.selection_distributions,
+  );
+  const distributionChangeRequested =
+    !!detectedDistribution &&
+    promptMentionsDistributionChange(lowerPrompt) &&
+    !shouldTreatPromptAsStringDistribution(lowerPrompt, schemaHints);
   const allowedOperations = new Set(
     replacement &&
     replacement.sourceOperation &&
@@ -4114,10 +4124,41 @@ function applyPromptTargetedGroupEditFallback(
     if (allowedOperations.size > 0 && !allowedOperations.has(operationName)) {
       return;
     }
+    const sanitizedPatch =
+      operationPatch && typeof operationPatch === "object"
+        ? cloneJsonValue(operationPatch)
+        : {};
+    const capabilities =
+      schemaHints.capabilities && schemaHints.capabilities[operationName]
+        ? schemaHints.capabilities[operationName]
+        : {};
+    if (capabilities.has_selection && distributionChangeRequested) {
+      delete sanitizedPatch.op_count;
+    }
+    if (
+      capabilities.has_op_count !== false &&
+      promptCount === null &&
+      !promptLikelySetsOperationCount(lowerPrompt)
+    ) {
+      delete sanitizedPatch.op_count;
+    }
+    if (capabilities.has_selection && distributionChangeRequested) {
+      const currentState = normalizeOperationPatch(
+        nextGroup[operationName],
+        operationName,
+        schemaHints,
+      );
+      applyDetectedSelectionDistributionToOperationPatch(
+        sanitizedPatch,
+        currentState,
+        prompt,
+        detectedDistribution,
+      );
+    }
     applyOperationPatchToStructuredGroup(
       nextGroup,
       operationName,
-      operationPatch,
+      sanitizedPatch,
       schemaHints,
     );
     appliedOperationPatch = true;
@@ -4211,6 +4252,30 @@ function applyPromptTargetedGroupEditFallback(
         if (!nextGroup[operationName].range_format) {
           nextGroup[operationName].range_format = "StartCount";
         }
+      }
+      if (
+        distributionChangeRequested &&
+        nextGroup[operationName] &&
+        typeof nextGroup[operationName] === "object"
+      ) {
+        const currentState = normalizeOperationPatch(
+          nextGroup[operationName],
+          operationName,
+          schemaHints,
+        );
+        const distributionPatch = {};
+        applyDetectedSelectionDistributionToOperationPatch(
+          distributionPatch,
+          currentState,
+          prompt,
+          detectedDistribution,
+        );
+        applyOperationPatchToStructuredGroup(
+          nextGroup,
+          operationName,
+          { ...distributionPatch, enabled: true },
+          schemaHints,
+        );
       }
     });
   }
