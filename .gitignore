@@ -4,3 +4,4 @@ generated-workloads/
 states/
 .bootstrap/
 dist/
+test-results/
