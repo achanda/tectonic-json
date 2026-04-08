@@ -10,6 +10,12 @@
   const POLL_INTERVAL_MS = 2500;
   const WORKLOAD_RUNS_STORAGE_KEY = "tectonic.workloadRuns.v2";
 
+  var DB_DISPLAY_NAMES = { rocksdb: "RocksDB", cassandra: "Cassandra", printdb: "PrintDB" };
+  function dbDisplayName(name) {
+    if (!name) return "unknown";
+    return DB_DISPLAY_NAMES[name.toLowerCase()] || name;
+  }
+
   function defaultNoop() {}
 
   function readPersistedRuns() {
@@ -1033,7 +1039,7 @@
     wrap.appendChild(svg);
     var lbl = document.createElement("span");
     lbl.className = "db-progress-label";
-    lbl.textContent = run.database || "unknown";
+    lbl.textContent = dbDisplayName(run.database);
     wrap.appendChild(lbl);
     return wrap;
   }
@@ -1049,7 +1055,7 @@
     var title = document.createElement("div");
     title.className = "results-panel-title";
     var ts = batchRuns[0] ? formatLocalTime(batchRuns[0].created_at) : "";
-    var dbList = batchRuns.map(function (r) { return r.database || ""; }).filter(Boolean).join(", ");
+    var dbList = batchRuns.map(function (r) { return dbDisplayName(r.database); }).filter(function (n) { return n !== "unknown"; }).join(", ");
     title.textContent = ts + (dbList ? " — " + dbList : "");
     titleWrap.appendChild(title);
     if (!isExpanded) {
@@ -1106,7 +1112,7 @@
           "throughput_using_start_and_end_time_ops_ms",
           "throughput_using_start_and_end_time",
         ]);
-        return { label: r.database || "?", value: parseThroughputMetricValue(met) || 0 };
+        return { label: dbDisplayName(r.database), value: parseThroughputMetricValue(met) || 0 };
       }).filter(function (p) { return p.value > 0; });
 
       if (tpPoints.length > 0) {
@@ -1124,7 +1130,7 @@
       var latPoints = succeeded.map(function (r) {
         var met = findOverallMetric(r.benchmark_stats, ["average_latency"]);
         var v = parseLatencyMetricValueMicros(met);
-        return { label: r.database || "?", value: v || 0 };
+        return { label: dbDisplayName(r.database), value: v || 0 };
       }).filter(function (p) { return p.value > 0; });
       var latUnit = chooseLatencyChartUnit(Math.max(1, ...latPoints.map(function (p) { return p.value; })));
       var latConverted = latPoints.map(function (p) { return { label: p.label, value: p.value / latUnit.divisor }; });
@@ -1147,7 +1153,7 @@
         ops.forEach(function (od) {
           if (!opMap.has(od.operationKey)) opMap.set(od.operationKey, { name: od.operation, databases: [] });
           opMap.get(od.operationKey).databases.push({
-            label: r.database || "?", min: od.min, max: od.max,
+            label: dbDisplayName(r.database), min: od.min, max: od.max,
             avg: od.avg, p50: od.p50, p95: od.p95, p99: od.p99,
           });
         });
@@ -1186,7 +1192,7 @@
           a.className = "results-download-link";
           a.href = r.links.output_download_path;
           a.target = "_blank";
-          a.textContent = "Download " + (r.database || "log");
+          a.textContent = "Download " + dbDisplayName(r.database);
           links.appendChild(a);
         }
       });
@@ -2298,7 +2304,7 @@
       summaryRow.appendChild(startedCell);
 
       const databaseCell = document.createElement("td");
-      databaseCell.textContent = run.database || "—";
+      databaseCell.textContent = dbDisplayName(run.database);
       summaryRow.appendChild(databaseCell);
 
       const statusCell = document.createElement("td");
@@ -2737,11 +2743,36 @@
       stopPolling();
     }
 
+    // Load historical runs from server disk
+    async function loadHistoricalRuns() {
+      try {
+        const response = await fetch("/api/workloads/runs", { method: "GET", cache: "no-store" });
+        if (!response.ok) return;
+        const body = await response.json();
+        if (!Array.isArray(body.runs)) return;
+        var added = 0;
+        body.runs.forEach(function (serverRun) {
+          if (!serverRun.run_id) return;
+          // Skip if already in local list
+          if (runs.some(function (r) { return r.run_id === serverRun.run_id; })) return;
+          // Only add runs that have benchmark stats (completed)
+          if (!serverRun.benchmark_stats) return;
+          runs.push(normalizeRunEntry(serverRun, serverRun.run_id));
+          added++;
+        });
+        if (added > 0) {
+          persistRuns();
+          render();
+        }
+      } catch (_e) { /* ignore */ }
+    }
+
     render();
     ensurePolling();
     if (hasActiveRuns()) {
       void pollRuns();
     }
+    void loadHistoricalRuns();
     return {
       startRun,
       clear,

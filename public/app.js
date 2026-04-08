@@ -1,3 +1,9 @@
+var DB_DISPLAY_NAMES = { rocksdb: "RocksDB", cassandra: "Cassandra", printdb: "PrintDB" };
+function dbDisplayName(name) {
+  if (!name) return "unknown";
+  return DB_DISPLAY_NAMES[name.toLowerCase()] || name;
+}
+
 const workloadForm = document.getElementById("workloadForm");
 const formCharacterSet = document.getElementById("formCharacterSet");
 const formSections = document.getElementById("formSections");
@@ -66,7 +72,7 @@ const downloadJsonBtn = document.getElementById("downloadJsonBtn");
 const runWorkloadBtn = document.getElementById("runWorkloadBtn");
 const copyBtn = document.getElementById("copyBtn");
 const validationResult = document.getElementById("validationResult");
-const runsList = document.getElementById("tabRunsList") || document.getElementById("runsList");
+const runsList = document.getElementById("inlineRunsList") || document.getElementById("tabRunsList") || document.getElementById("runsList");
 const newWorkloadBtn = document.getElementById("newWorkloadBtn");
 const presetBrowserBtn = document.getElementById("presetBrowserBtn");
 const assistantInput = document.getElementById("assistantInput");
@@ -1642,7 +1648,7 @@ function updateBenchmarkDatabaseSummary() {
   selected.slice(0, 2).forEach((name) => {
     const chip = document.createElement("span");
     chip.className = "run-db-chip";
-    chip.textContent = name;
+    chip.textContent = dbDisplayName(name);
     benchmarkDatabaseSummary.appendChild(chip);
   });
   if (selected.length > 2) {

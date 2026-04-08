@@ -238,7 +238,6 @@
       loadPresetIntoBuilder(
         scalePresetOperationCounts(cloneJsonValue(activePresetJson), scale),
       );
-      clearWorkloadRuns();
       if (preset) {
         renderPresetSelectionNote(preset.family, preset.id);
       }
@@ -524,7 +523,6 @@
         setActivePresetJson(cloneJsonValue(loadedJson));
         setSelectedBuilderRoute("preset");
         loadPresetIntoBuilder(scaledJson);
-        clearWorkloadRuns();
         renderPresetSelectionNote(preset.family, preset.id);
         syncLandingUi();
       } catch (error) {

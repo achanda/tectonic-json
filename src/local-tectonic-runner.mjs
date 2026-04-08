@@ -164,6 +164,10 @@ async function routeRequest(req, res) {
   }
 
   if (pathname === "/api/workloads/runs") {
+    if (method === "GET") {
+      await handleListRuns(res);
+      return;
+    }
     if (method !== "POST") {
       sendJson(res, 405, { error: "Method not allowed" });
       return;
@@ -233,6 +237,78 @@ async function routeRequest(req, res) {
     error: "Not found.",
     code: "not_found",
   });
+}
+
+async function handleListRuns(res) {
+  try {
+    const entries = await fs.readdir(RUNS_DIR).catch(() => []);
+    const runDirs = entries.filter((e) => e.startsWith("run-")).sort().reverse();
+    // Limit to last 20 runs
+    const limited = runDirs.slice(0, 20);
+    const results = [];
+    for (const dir of limited) {
+      const runId = dir;
+      const runDir = path.join(RUNS_DIR, dir);
+      const outputPath = path.join(runDir, OUTPUT_FILENAME);
+      const specPath = path.join(runDir, SPEC_FILENAME);
+      // Try to detect database from the first line of output
+      let database = null;
+      let benchmarkStats = null;
+      let createdAt = null;
+      try {
+        const stat = await fs.stat(runDir);
+        createdAt = stat.birthtime ? stat.birthtime.toISOString() : stat.mtime.toISOString();
+      } catch (_e) { /* ignore */ }
+      try {
+        const outputText = await fs.readFile(outputPath, "utf8");
+        benchmarkStats = parseBenchmarkStats(outputText);
+        // Extract database from first line: $ tectonic-cli benchmark ... --database <db>
+        const firstLine = outputText.split("\n")[0] || "";
+        const dbMatch = firstLine.match(/--database\s+(\S+)/);
+        if (dbMatch) database = dbMatch[1];
+      } catch (_e) { /* no output yet */ }
+      results.push({
+        run_id: runId,
+        status: benchmarkStats ? "succeeded" : "unknown",
+        database: database,
+        created_at: createdAt,
+        benchmark_stats: benchmarkStats,
+        batch_id: null,
+        batch_index: null,
+        batch_size: null,
+        links: buildRunLinks(runId, benchmarkStats ? "succeeded" : "unknown"),
+      });
+    }
+    // Group runs by close timestamps (within 30s) into batches
+    results.sort(function (a, b) { return String(a.created_at || "").localeCompare(String(b.created_at || "")); });
+    let currentBatchId = null;
+    let currentBatchTime = null;
+    let batchIdx = 0;
+    const batchMembers = new Map();
+    for (const run of results) {
+      const t = run.created_at ? new Date(run.created_at).getTime() : 0;
+      if (currentBatchTime === null || Math.abs(t - currentBatchTime) > 30000) {
+        currentBatchId = "hist-" + (run.run_id || String(Date.now()));
+        currentBatchTime = t;
+        batchIdx = 0;
+        batchMembers.set(currentBatchId, []);
+      }
+      run.batch_id = currentBatchId;
+      run.batch_index = batchIdx++;
+      batchMembers.get(currentBatchId).push(run);
+      currentBatchTime = t;
+    }
+    // Set batch_size for each
+    for (const [bid, members] of batchMembers) {
+      for (const m of members) {
+        m.batch_size = members.length;
+      }
+    }
+
+    sendJson(res, 200, { runs: results });
+  } catch (error) {
+    sendJson(res, 500, { error: "Failed to list runs.", details: String(error.message || error) });
+  }
 }
 
 async function handleStartRun(req, res) {
