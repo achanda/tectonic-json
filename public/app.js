@@ -66,7 +66,8 @@ const downloadJsonBtn = document.getElementById("downloadJsonBtn");
 const runWorkloadBtn = document.getElementById("runWorkloadBtn");
 const copyBtn = document.getElementById("copyBtn");
 const validationResult = document.getElementById("validationResult");
-const runsList = document.getElementById("runsList");
+const runsList =
+  document.getElementById("tabRunsList") || document.getElementById("runsList");
 const newWorkloadBtn = document.getElementById("newWorkloadBtn");
 const presetBrowserBtn = document.getElementById("presetBrowserBtn");
 const assistantInput = document.getElementById("assistantInput");
@@ -1377,6 +1378,15 @@ function syncStructurePanelToggleUi(showBuilderEditor) {
 }
 
 function updateStructurePanelVisibility() {
+  if (window.__specEditorActive) {
+    if (structurePanel) {
+      structurePanel.hidden = false;
+    }
+    if (workloadForm) {
+      workloadForm.hidden = false;
+    }
+    return;
+  }
   const showBuilderEditor = hasConfiguredWorkloadStructure();
   if (!showBuilderEditor) {
     structurePanelExpanded = false;
