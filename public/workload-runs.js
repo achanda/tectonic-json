@@ -595,6 +595,9 @@
         formatValue(value) {
           return formatThroughputLabel(value, unit);
         },
+        formatSummaryValue(value) {
+          return formatNumericString(value, 2);
+        },
       };
     }
     if (
@@ -616,6 +619,9 @@
         formatValue(value) {
           return formatChartDecimalValue(value / latencyUnit.divisor) + " " + latencyUnit.unit;
         },
+        formatSummaryValue(value) {
+          return formatChartDecimalValue(value / latencyUnit.divisor);
+        },
       };
     }
     return {
@@ -630,6 +636,9 @@
         return formatWholeNumberAxisValue(value, { compact: true });
       },
       formatValue(value) {
+        return formatChartDecimalValue(value);
+      },
+      formatSummaryValue(value) {
         return formatChartDecimalValue(value);
       },
       };
@@ -1135,7 +1144,10 @@
 
       const value = document.createElement("span");
       value.className = "benchmark-metric-chart-summary-value";
-      value.textContent = descriptor.formatValue(point.value);
+      value.textContent =
+        typeof descriptor.formatSummaryValue === "function"
+          ? descriptor.formatSummaryValue(point.value)
+          : descriptor.formatValue(point.value);
       item.appendChild(value);
 
       list.appendChild(item);
