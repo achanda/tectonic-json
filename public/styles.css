@@ -3807,6 +3807,19 @@ textarea::placeholder {
     min-height: calc(1.3em * 2);
 }
 
+.benchmark-chart-phase-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.benchmark-chart-phase-title {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: #4f4745;
+}
+
 .benchmark-metric-chart-card {
     border: 1px solid #ddd9d7;
     border-radius: 18px;

@@ -1356,17 +1356,26 @@
 
     successfulRuns.forEach((run) => {
       const runLabel = getRunComparisonLabel(run);
+      const rawOperationBuckets = normalizeStatsBuckets(
+        run.benchmark_stats && run.benchmark_stats.operations,
+      );
+      const explicitPhaseBuckets = normalizeStatsBuckets(
+        run.benchmark_stats && run.benchmark_stats.phases,
+      );
+      const phaseBuckets =
+        explicitPhaseBuckets.length > 0
+          ? explicitPhaseBuckets
+          : rawOperationBuckets.filter((entry) => isPhaseStatsBucket(entry));
+      const operationBuckets = rawOperationBuckets.filter(
+        (entry) => !isPhaseStatsBucket(entry),
+      );
       normalizeMetricsList(run.benchmark_stats && run.benchmark_stats.overall).forEach(
         (metric) => {
           appendMetricSeriesPoint(overallMap, metric, runLabel);
         },
       );
-      appendBucketMetrics(phaseMap, run.benchmark_stats && run.benchmark_stats.phases, runLabel);
-      appendBucketMetrics(
-        operationMap,
-        run.benchmark_stats && run.benchmark_stats.operations,
-        runLabel,
-      );
+      appendBucketMetrics(phaseMap, phaseBuckets, runLabel);
+      appendBucketMetrics(operationMap, operationBuckets, runLabel);
     });
 
     return {
@@ -1529,6 +1538,65 @@
       }
     });
     section.appendChild(grid);
+    return section;
+  }
+
+  function buildPhaseOverviewGrid(catalog) {
+    const phaseBuckets =
+      catalog && Array.isArray(catalog.phases) ? catalog.phases : [];
+    const highlightedPhases = phaseBuckets
+      .map((bucket) => ({
+        bucket,
+        series: selectOverviewMetricSeries(bucket && bucket.series),
+      }))
+      .filter((entry) => entry.series.length > 0);
+    if (highlightedPhases.length === 0) {
+      return null;
+    }
+
+    const section = document.createElement("section");
+    section.className = "benchmark-chart-section";
+
+    const head = document.createElement("div");
+    head.className = "benchmark-chart-section-head";
+
+    const title = document.createElement("div");
+    title.className = "benchmark-chart-section-title";
+    title.textContent = "Section Highlights";
+    head.appendChild(title);
+
+    const subtitle = document.createElement("div");
+    subtitle.className = "benchmark-chart-section-copy";
+    subtitle.textContent =
+      "Pinned phase-by-phase comparisons for the most important benchmark signals.";
+    head.appendChild(subtitle);
+    section.appendChild(head);
+
+    highlightedPhases.forEach((entry) => {
+      const group = document.createElement("div");
+      group.className = "benchmark-chart-phase-group";
+
+      const groupTitle = document.createElement("div");
+      groupTitle.className = "benchmark-chart-phase-title";
+      groupTitle.textContent = entry.bucket.name;
+      group.appendChild(groupTitle);
+
+      const grid = document.createElement("div");
+      grid.className =
+        "benchmark-metric-chart-grid benchmark-metric-chart-grid-overview";
+      entry.series.forEach((series) => {
+        const card = buildMetricSeriesCard(series, {
+          kicker: "Phase benchmark • " + entry.bucket.name,
+          title: series.label,
+        });
+        if (card) {
+          grid.appendChild(card);
+        }
+      });
+      group.appendChild(grid);
+      section.appendChild(group);
+    });
+
     return section;
   }
 
@@ -1843,6 +1911,11 @@
     const overview = buildOverviewMetricGrid(catalog);
     if (overview) {
       shell.appendChild(overview);
+    }
+
+    const phaseOverview = buildPhaseOverviewGrid(catalog);
+    if (phaseOverview) {
+      shell.appendChild(phaseOverview);
     }
 
     const explorer = buildMetricExplorer(catalog);

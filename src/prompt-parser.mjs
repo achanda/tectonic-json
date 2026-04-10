@@ -408,7 +408,132 @@ export function createPromptParser(deps = {}) {
     return true;
   }
 
-  function buildStructuredGroupsFromPromptText(text, schemaHints) {
+  function splitIntegerTotalAcrossClauses(total, count) {
+    const safeTotal = positiveIntegerOrNull(total);
+    const safeCount = positiveIntegerOrNull(count);
+    if (safeTotal === null || safeCount === null || safeCount <= 0) {
+      return [];
+    }
+    const base = Math.floor(safeTotal / safeCount);
+    let remainder = safeTotal % safeCount;
+    return Array.from({ length: safeCount }, () => {
+      const next = base + (remainder > 0 ? 1 : 0);
+      if (remainder > 0) {
+        remainder -= 1;
+      }
+      return next;
+    });
+  }
+
+  function extractPromptKeyLengthHint(prompt) {
+    const text = String(prompt || "");
+    if (!text) {
+      return null;
+    }
+    const patterns = [
+      /\b(\d[\d,]*(?:\.\d+)?)\s*-\s*(?:byte|bytes?)\b[\s\S]{0,20}\bkeys?\b/i,
+      /\b(\d[\d,]*(?:\.\d+)?)\s*(?:byte|bytes?)\b[\s\S]{0,20}\bkeys?\b/i,
+      /\bkeys?\b[\s\S]{0,20}\b(\d[\d,]*(?:\.\d+)?)\s*-\s*(?:byte|bytes?)\b/i,
+      /\bkeys?\b[\s\S]{0,20}\b(\d[\d,]*(?:\.\d+)?)\s*(?:byte|bytes?)\b/i,
+    ];
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (!match || !match[1]) {
+        continue;
+      }
+      const parsed = positiveIntegerOrNull(
+        Number.parseFloat(String(match[1]).replace(/,/g, "")),
+      );
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+    return null;
+  }
+
+  function extractPromptValueSizeBytes(prompt) {
+    const text = String(prompt || "");
+    if (!text) {
+      return null;
+    }
+    const patterns = [
+      /\b(\d[\d,]*(?:\.\d+)?)\s*(b|bytes?|kb|kilobytes?|mb|megabytes?)\b[\s\S]{0,24}\b(?:key[- ]?value|value)\s+size\b/i,
+      /\b(\d[\d,]*(?:\.\d+)?)\s*(b|bytes?|kb|kilobytes?|mb|megabytes?)\b[\s\S]{0,12}\bvalues?\b/i,
+    ];
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (!match) {
+        continue;
+      }
+      const amount = Number.parseFloat(String(match[1]).replace(/,/g, ""));
+      if (!Number.isFinite(amount) || amount <= 0) {
+        continue;
+      }
+      const unit = String(match[2] || "").toLowerCase();
+      if (unit === "kb" || unit === "kilobyte" || unit === "kilobytes") {
+        return Math.round(amount * 1024);
+      }
+      if (unit === "mb" || unit === "megabyte" || unit === "megabytes") {
+        return Math.round(amount * 1024 * 1024);
+      }
+      return Math.round(amount);
+    }
+    return null;
+  }
+
+  function extractPromptCharacterSetHint(prompt) {
+    const lowerPrompt = String(prompt || "").toLowerCase();
+    if (!lowerPrompt) {
+      return null;
+    }
+    if (/\balphanumeric\b/.test(lowerPrompt)) {
+      return "alphanumeric";
+    }
+    if (/\bascii\b/.test(lowerPrompt)) {
+      return "ascii";
+    }
+    return null;
+  }
+
+  function applyStructuredPromptInsertShapeHints(groups, prompt) {
+    if (!Array.isArray(groups) || groups.length === 0) {
+      return;
+    }
+    const keyLen = extractPromptKeyLengthHint(prompt);
+    const valueSizeBytes = extractPromptValueSizeBytes(prompt);
+    const characterSet = extractPromptCharacterSetHint(prompt);
+    if (keyLen === null && valueSizeBytes === null && !characterSet) {
+      return;
+    }
+
+    groups.forEach((group) => {
+      const inserts =
+        group && group.inserts && typeof group.inserts === "object"
+          ? group.inserts
+          : null;
+      if (!inserts) {
+        return;
+      }
+      if (keyLen !== null && !inserts.key) {
+        inserts.key = {
+          uniform: {
+            len: keyLen,
+            ...(characterSet ? { character_set: characterSet } : {}),
+          },
+        };
+      }
+      if (valueSizeBytes !== null && !inserts.val) {
+        inserts.val = {
+          uniform: {
+            len: valueSizeBytes,
+            ...(characterSet ? { character_set: characterSet } : {}),
+          },
+        };
+      }
+    });
+  }
+
+  function buildStructuredGroupsFromPromptText(text, schemaHints, options = {}) {
     const rawClauses = splitPromptIntoPhaseClauses(text);
     const clauses = [];
     rawClauses.forEach((clause) => {
@@ -431,8 +556,17 @@ export function createPromptParser(deps = {}) {
       }
       clauses.push(clause);
     });
+    const perClauseTotals = splitIntegerTotalAcrossClauses(
+      options.defaultPercentTotalCount,
+      clauses.length,
+    );
     const groups = clauses
-      .map((clause) => deriveStructuredGroupFromClause(clause, schemaHints))
+      .map((clause, index) =>
+        deriveStructuredGroupFromClause(clause, schemaHints, {
+          defaultPercentTotalCount:
+            perClauseTotals[index] !== undefined ? perClauseTotals[index] : null,
+        }),
+      )
       .filter(
         (group) =>
           group &&
@@ -444,6 +578,7 @@ export function createPromptParser(deps = {}) {
     if (groups.length === 0) {
       return null;
     }
+    applyStructuredPromptInsertShapeHints(groups, text);
     applyStructuredPromptSelectionHints(groups, text, schemaHints);
     applyStructuredPromptScanLengthHints(groups, text);
     return groups;
@@ -481,6 +616,41 @@ export function createPromptParser(deps = {}) {
       : null;
   }
 
+  function splitPromptIntoExplicitPhaseClauses(prompt) {
+    const text = String(prompt || "");
+    if (!text) {
+      return null;
+    }
+    const matches = Array.from(
+      text.matchAll(
+        /\bphase\s+(\d+|1st|first|2nd|second|3rd|third|4th|fourth)\b\s*(?:should\s+be|should|:)?\s*/gi,
+      ),
+    );
+    if (matches.length === 0) {
+      return null;
+    }
+    const phases = [];
+    matches.forEach((match, index) => {
+      const phaseIndex = parsePromptOrdinalIndex(match[1]);
+      if (!Number.isInteger(phaseIndex) || phaseIndex < 0) {
+        return;
+      }
+      const start = (match.index ?? 0) + match[0].length;
+      const end =
+        index + 1 < matches.length && Number.isInteger(matches[index + 1].index)
+          ? matches[index + 1].index
+          : text.length;
+      const clause = text
+        .slice(start, end)
+        .trim()
+        .replace(/^[,.\s]+|[,.\s]+$/g, "");
+      phases[phaseIndex] = clause;
+    });
+    return phases.every((phaseText) => typeof phaseText === "string" && phaseText)
+      ? phases
+      : null;
+  }
+
   function deriveStructuredSectionsFromPrompt(prompt, schemaHints) {
     const text = typeof prompt === "string" ? prompt.trim() : "";
     if (!text || !structuredWorkloadPattern || !structuredWorkloadPattern.test(text)) {
@@ -489,12 +659,62 @@ export function createPromptParser(deps = {}) {
 
     const lowerPrompt = text.toLowerCase();
     const sectionClauses = splitPromptIntoSectionClauses(text);
+    const declaredPhaseCount = /\bthree[- ]phase\b/.test(lowerPrompt)
+      ? 3
+      : /\btwo[- ]phase\b/.test(lowerPrompt)
+        ? 2
+        : /\bsingle[- ]shot\b|\bone[- ]phase\b/.test(lowerPrompt)
+          ? 1
+          : null;
+    const distributedTotalCount = extractPromptCountHint(text);
+    const defaultTotalPerClause =
+      distributedTotalCount !== null
+        ? distributedTotalCount
+        : null;
+    const phaseClauses = splitPromptIntoExplicitPhaseClauses(text);
+    if (Array.isArray(phaseClauses) && phaseClauses.length > 0) {
+      const perPhaseTotals = splitIntegerTotalAcrossClauses(
+        defaultTotalPerClause,
+        phaseClauses.length,
+      );
+      const groups = phaseClauses
+        .map((phaseText, index) =>
+          deriveStructuredGroupFromClause(phaseText, schemaHints, {
+            defaultPercentTotalCount:
+              perPhaseTotals[index] !== undefined ? perPhaseTotals[index] : null,
+          }),
+        )
+        .filter(
+          (group) =>
+            group &&
+            Object.keys(group).length > 0 &&
+            Object.values(group).some((spec) =>
+              operationPatchHasConfiguredValues(spec),
+            ),
+        );
+      if (groups.length === phaseClauses.length && groups.length > 0) {
+        applyStructuredPromptInsertShapeHints(groups, text);
+        applyStructuredPromptSelectionHints(groups, text, schemaHints);
+        applyStructuredPromptScanLengthHints(groups, text);
+        return [{ groups }];
+      }
+    }
     if (Array.isArray(sectionClauses) && sectionClauses.length > 0) {
+      const perSectionTotals = splitIntegerTotalAcrossClauses(
+        defaultTotalPerClause,
+        sectionClauses.length,
+      );
       const sections = sectionClauses
-        .map((sectionText) => {
+        .map((sectionText, index) => {
           const groups = buildStructuredGroupsFromPromptText(
             sectionText,
             schemaHints,
+            {
+              defaultPercentTotalCount:
+                perSectionTotals[index] !== undefined
+                  ? perSectionTotals[index]
+                  : null,
+            },
           );
           return groups ? { groups } : null;
         })
@@ -504,18 +724,15 @@ export function createPromptParser(deps = {}) {
       }
     }
 
-    const groups = buildStructuredGroupsFromPromptText(text, schemaHints);
+    const groups = buildStructuredGroupsFromPromptText(text, schemaHints, {
+      defaultPercentTotalCount:
+        declaredPhaseCount && defaultTotalPerClause !== null
+          ? defaultTotalPerClause
+          : null,
+    });
     if (!Array.isArray(groups) || groups.length === 0) {
       return null;
     }
-
-    const declaredPhaseCount = /\bthree[- ]phase\b/.test(lowerPrompt)
-      ? 3
-      : /\btwo[- ]phase\b/.test(lowerPrompt)
-        ? 2
-        : /\bsingle[- ]shot\b|\bone[- ]phase\b/.test(lowerPrompt)
-          ? 1
-          : null;
     if (declaredPhaseCount !== null && groups.length < declaredPhaseCount) {
       return null;
     }
@@ -789,17 +1006,17 @@ export function createPromptParser(deps = {}) {
 
     let defaultPercents = null;
     if (isWriteOnly) {
-      operations = uniqueStrings(["updates", ...operations]);
-      defaultPercents = { updates: 100 };
+      operations = uniqueStrings(["inserts", ...operations]);
+      defaultPercents = { inserts: 100 };
     } else if (isWriteHeavy) {
       const readOperation = operations.includes("range_queries")
         ? "range_queries"
         : operations.includes("point_queries")
           ? "point_queries"
           : "point_queries";
-      operations = uniqueStrings(["updates", ...operations, readOperation]);
+      operations = uniqueStrings(["inserts", ...operations, readOperation]);
       defaultPercents = {
-        updates: writeHeavyDefaultSplit.write,
+        inserts: writeHeavyDefaultSplit.write,
         [readOperation]: writeHeavyDefaultSplit.read,
       };
     }
@@ -915,6 +1132,16 @@ export function createPromptParser(deps = {}) {
       const token = match && match[1] ? match[1] : null;
       const matchIndex = Number.isInteger(match && match.index) ? match.index : -1;
       if (!token || matchIndex < 0) {
+        continue;
+      }
+      const suffix = text
+        .slice(matchIndex + token.length, matchIndex + token.length + 20)
+        .toLowerCase();
+      if (
+        /^\s*-\s*(?:byte|bytes?|kb|kilobytes?|mb|megabytes?)\b/.test(suffix) ||
+        /^\s*(?:byte|bytes?|kb|kilobytes?|mb|megabytes?)\b/.test(suffix) ||
+        /^\s*-\s*phase\b/.test(suffix)
+      ) {
         continue;
       }
       const prefix = text

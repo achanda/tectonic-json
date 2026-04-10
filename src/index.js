@@ -165,7 +165,7 @@ const STRING_PATTERN_DEFAULTS = {
   val_hot_probability: 0.8,
 };
 const STRUCTURED_WORKLOAD_PATTERN =
-  /\b(?:single[- ]shot|one[- ]phase|two[- ]phase|three[- ]phase|preload|interleave|interleaved|phase\s+[123]|(?:first|second|third|next|later|new|another)\s+phase|write[- ]heavy|write[- ]only|followed\s+by)\b/i;
+  /\b(?:single[- ]shot|(?:one|two|three|\d+)[- ]phase|preload|interleave|interleaved|phase\s+[123]|(?:first|second|third|next|later|new|another)\s+phase|write[- ]heavy|write[- ]only|followed\s+by)\b/i;
 const RANGE_QUERY_SELECTIVITY_PROFILES = {
   short: 0.001,
   long: 0.1,
@@ -2804,6 +2804,8 @@ function normalizeAssistPayload(
   const structuredPromptOwnsLayout =
     structuredPrompt &&
     promptDefinesFreshStructuredWorkload(prompt, formState, schemaHints);
+  const patchAlreadyHasStructuredLayout =
+    Array.isArray(patch.sections) && patch.sections.length > 0;
   if (
     !structuredPrompt &&
     !structuredLayoutEditRequested &&
@@ -2816,12 +2818,14 @@ function normalizeAssistPayload(
     }
   }
   const structuredPatchApplied =
-    structuredPromptOwnsLayout &&
-    options.allowDeterministicStructureFallback === false
-      ? false
-      : structuredPromptOwnsLayout
-        ? applyPromptStructuredWorkloadFallback(patch, prompt, schemaHints)
-        : false;
+    structuredPromptOwnsLayout && patchAlreadyHasStructuredLayout
+      ? true
+      : structuredPromptOwnsLayout &&
+          options.allowDeterministicStructureFallback === false
+        ? false
+        : structuredPromptOwnsLayout
+          ? applyPromptStructuredWorkloadFallback(patch, prompt, schemaHints)
+          : false;
   const structuredLayoutEditApplied =
     structuredLayoutEditRequested &&
     !aiSatisfiedStructuredLayoutEditIntent(
@@ -5639,6 +5643,15 @@ function buildDeterministicAssistPayload(prompt, formState, schemaHints) {
     return null;
   }
 
+  const structuredPayload = buildDeterministicStructuredWorkloadPayload(
+    interpretedPrompt,
+    formState,
+    schemaHints,
+  );
+  if (structuredPayload) {
+    return structuredPayload;
+  }
+
   if (!isAiPreferredInsertReadMixPrompt(prompt, formState, schemaHints)) {
     const percentMixPayload = buildDeterministicPercentMixWorkloadPayload(
       interpretedPrompt,
@@ -5704,9 +5717,56 @@ function buildDeterministicAssistPayload(prompt, formState, schemaHints) {
   return null;
 }
 
+function buildDeterministicStructuredWorkloadPayload(
+  prompt,
+  formState,
+  schemaHints,
+) {
+  if (
+    getEnabledOperationNames(formState || { operations: {} }, schemaHints)
+      .length > 0
+  ) {
+    return null;
+  }
+  const sections = deriveStructuredSectionsFromPrompt(prompt, schemaHints);
+  if (!Array.isArray(sections) || sections.length === 0) {
+    return null;
+  }
+  const normalizedSections = normalizeSectionsValue(sections, schemaHints);
+  const operations = buildAggregateOperationsFromSections(
+    normalizedSections,
+    schemaHints,
+    null,
+  );
+  const enabledOperations = {};
+  schemaHints.operation_order.forEach((operationName) => {
+    const operationPatch = operations[operationName];
+    if (!operationPatch || operationPatch.enabled !== true) {
+      return;
+    }
+    enabledOperations[operationName] = operationPatch;
+  });
+  return {
+    summary: "Created a phased workload matching the requested structure.",
+    patch: {
+      sections_count: normalizedSections.length,
+      groups_per_section: maxGroupsPerSection(normalizedSections),
+      sections: normalizedSections,
+      operations: enabledOperations,
+    },
+    clarifications: [],
+    assumptions: [],
+    questions: [],
+    assumption_texts: [],
+  };
+}
+
 function isAiPreferredInsertReadMixPrompt(prompt, formState, schemaHints) {
   const lowerPrompt = String(prompt || "").toLowerCase();
   if (!lowerPrompt) {
+    return false;
+  }
+  if (isStructuredWorkloadPrompt(prompt)) {
     return false;
   }
   if (
@@ -5812,6 +5872,9 @@ function applyAiPreferredInsertReadMixPromptFallback(
   prompt,
   schemaHints,
 ) {
+  if (isStructuredWorkloadPrompt(prompt)) {
+    return false;
+  }
   const fallbackPayload = getInsertReadMixFallbackPayload(
     prompt,
     formState,

@@ -1411,6 +1411,113 @@ test("worker assist endpoint falls back to deterministic phased parsing when AI 
   assert.equal(body.patch.sections[0].groups[1].updates.op_count, 100000);
 });
 
+test("worker assist endpoint preserves multi-phase fresh workloads instead of collapsing to a flat mix", async () => {
+  const prompt =
+    "Generate a 3-phase workload with 200K total operations. Phase 1 should be write-heavy with 90% inserts and 10% point queries. Phase 2 should be read-heavy with 80% point queries and 20% inserts using a zipfian selection distribution. Phase 3 should be balanced with 50% inserts and 50% range queries. Use 1 KB values, 20-byte alphanumeric keys, and keep all phases in the same workload.";
+  const request = new Request("https://example.com/api/assist", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      prompt,
+      form_state: createFormState({}),
+      schema_hints: SCHEMA_HINTS,
+      current_json: null,
+      conversation: [],
+      answers: {},
+    }),
+  });
+
+  const response = await workerEntrypoint.fetch(request, {
+    ASSETS: {
+      fetch: async () => new Response("not found", { status: 404 }),
+    },
+  });
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.source, "deterministic");
+  assert.equal(Array.isArray(body.patch.sections), true);
+  assert.equal(body.patch.sections.length, 1);
+  assert.equal(body.patch.sections[0].groups.length, 3);
+
+  const [phase1, phase2, phase3] = body.patch.sections[0].groups;
+  assert.equal(phase1.inserts.op_count, 60000);
+  assert.equal(phase1.point_queries.op_count, 6667);
+  assert.deepEqual(phase1.inserts.key, {
+    uniform: {
+      len: 20,
+      character_set: "alphanumeric",
+    },
+  });
+  assert.deepEqual(phase1.inserts.val, {
+    uniform: {
+      len: 1024,
+      character_set: "alphanumeric",
+    },
+  });
+
+  assert.equal(phase2.inserts.op_count, 13333);
+  assert.equal(phase2.point_queries.op_count, 53334);
+  assert.deepEqual(phase2.point_queries.selection, {
+    zipf: {
+      n: 60000,
+      s: 1.5,
+    },
+  });
+
+  assert.equal(phase3.inserts.op_count, 33333);
+  assert.equal(phase3.range_queries.op_count, 33333);
+  assert.equal(phase3.range_queries.range_format, "StartCount");
+  assert.equal(phase3.range_queries.selectivity, 0.01);
+});
+
+test("worker assist endpoint reconciles empty AI output back to the requested multi-phase structure", async () => {
+  const prompt =
+    "Generate a 3-phase workload with 200K total operations. Phase 1 should be write-heavy with 90% inserts and 10% point queries. Phase 2 should be read-heavy with 80% point queries and 20% inserts using a zipfian selection distribution. Phase 3 should be balanced with 50% inserts and 50% range queries. Use 1 KB values, 20-byte alphanumeric keys, and keep all phases in the same workload.";
+  const request = new Request("https://example.com/api/assist", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      prompt,
+      form_state: createFormState({}),
+      schema_hints: SCHEMA_HINTS,
+      current_json: null,
+      conversation: [],
+      answers: {},
+    }),
+  });
+
+  const response = await workerEntrypoint.fetch(request, {
+    AI: {
+      run: async () => ({
+        response: JSON.stringify({
+          summary: "Create the workload.",
+          patch: {},
+          clarifications: [],
+          assumptions: [],
+        }),
+      }),
+    },
+    ASSETS: {
+      fetch: async () => new Response("not found", { status: 404 }),
+    },
+  });
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.source, "ai");
+  assert.equal(Array.isArray(body.patch.sections), true);
+  assert.equal(body.patch.sections.length, 1);
+  assert.equal(body.patch.sections[0].groups.length, 3);
+  assert.equal(body.patch.sections[0].groups[0].inserts.op_count, 60000);
+  assert.equal(body.patch.sections[0].groups[1].point_queries.op_count, 53334);
+  assert.equal(body.patch.sections[0].groups[2].range_queries.op_count, 33333);
+});
+
 test("point query paraphrases normalize to the same operation patch", () => {
   const prompts = [
     "Add 50k point queries",
