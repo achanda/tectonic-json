@@ -701,8 +701,8 @@ export function createPromptParser(deps = {}) {
       }
       const amountPatternSource =
         operationName === "range_queries" || operationName === "range_deletes"
-          ? `(?:short\\s+|long\\s+)?(?:${patternSource}|scan(?:s)?)`
-          : patternSource;
+          ? `(?:short\\s+|long\\s+)?(?:(?:${patternSource})|scan(?:s)?)`
+          : `(?:${patternSource})`;
       const patterns = [
         new RegExp(
           `\\b(\\d[\\d,]*(?:\\.\\d+)?\\s*[kmb]?|\\d+(?:\\.\\d+)?)\\s*(%)?\\s+(?:of\\s+)?(?:the\\s+)?${amountPatternSource}\\b`,
@@ -757,6 +757,11 @@ export function createPromptParser(deps = {}) {
     }
     const lowerClause = text.toLowerCase();
     let operations = getMentionedOperationsFromPrompt(lowerClause, schemaHints);
+    const mentionsGenericReads =
+      /\breads?\b/.test(lowerClause) &&
+      !/\bpoint\s+reads?\b/.test(lowerClause) &&
+      !/\bempty\s+point\s+reads?\b/.test(lowerClause) &&
+      !/\bread[- ]?modify[- ]?write\b|\brmw\b/.test(lowerClause);
     const isPreload =
       /\bpreload\b|\bseed\b|\bprime\b|\bload\s+the\s+db\b|\bload\s+the\s+database\b|\bload\s+database\b/.test(
         lowerClause,
@@ -772,6 +777,14 @@ export function createPromptParser(deps = {}) {
       !operations.includes("range_queries")
     ) {
       operations.push("range_queries");
+    }
+    if (
+      mentionsGenericReads &&
+      !operations.includes("point_queries") &&
+      !operations.includes("range_queries") &&
+      !operations.includes("empty_point_queries")
+    ) {
+      operations.push("point_queries");
     }
 
     let defaultPercents = null;

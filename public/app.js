@@ -799,18 +799,7 @@ async function initApp() {
     copyBtn.addEventListener("click", () => {
       const text = jsonOutput ? jsonOutput.value : "";
       if (!text) return;
-      if (
-        !navigator.clipboard ||
-        typeof navigator.clipboard.writeText !== "function"
-      ) {
-        setValidationStatus(
-          "Clipboard not available in this browser context.",
-          "invalid",
-        );
-        return;
-      }
-      navigator.clipboard
-        .writeText(text)
+      copyTextToClipboard(text)
         .then(() => {
           copyBtn.textContent = "Copied!";
           setTimeout(() => {
@@ -819,9 +808,73 @@ async function initApp() {
             }
           }, 1500);
         })
-        .catch((e) => reportUiIssue("Failed to copy JSON", e));
+        .catch((e) => {
+          setValidationStatus("Copy unavailable in this browser context.", "invalid");
+          reportUiIssue("Failed to copy JSON", e);
+        });
     });
   }
+}
+
+function copyTextToClipboard(text) {
+  const value = typeof text === "string" ? text : String(text || "");
+  if (!value) {
+    return Promise.resolve(false);
+  }
+  if (
+    navigator.clipboard &&
+    typeof navigator.clipboard.writeText === "function"
+  ) {
+    return navigator.clipboard.writeText(value).catch(() => {
+      if (legacyCopyTextToClipboard(value)) {
+        return true;
+      }
+      throw new Error("Clipboard write failed");
+    });
+  }
+  if (legacyCopyTextToClipboard(value)) {
+    return Promise.resolve(true);
+  }
+  return Promise.reject(new Error("Clipboard not available"));
+}
+
+function legacyCopyTextToClipboard(text) {
+  if (!document || typeof document.createElement !== "function") {
+    return false;
+  }
+  const helper = document.createElement("textarea");
+  helper.value = text;
+  helper.setAttribute("readonly", "readonly");
+  helper.style.position = "fixed";
+  helper.style.top = "0";
+  helper.style.left = "-9999px";
+  helper.style.opacity = "0";
+  const root = document.body || document.documentElement;
+  if (!root || typeof root.appendChild !== "function") {
+    return false;
+  }
+  root.appendChild(helper);
+  if (typeof helper.focus === "function") {
+    helper.focus();
+  }
+  if (typeof helper.select === "function") {
+    helper.select();
+  }
+  helper.setSelectionRange?.(0, helper.value.length);
+  let copied = false;
+  try {
+    copied =
+      typeof document.execCommand === "function" &&
+      document.execCommand("copy") === true;
+  } catch (_error) {
+    copied = false;
+  }
+  if (typeof helper.remove === "function") {
+    helper.remove();
+  } else if (helper.parentNode && typeof helper.parentNode.removeChild === "function") {
+    helper.parentNode.removeChild(helper);
+  }
+  return copied;
 }
 
 window.addEventListener("error", (event) => {

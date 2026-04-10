@@ -1085,14 +1085,13 @@ test("worker assist endpoint defaults total count for fresh percentage-only work
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.source, "deterministic");
-  assert.equal(body.patch.sections_count, 1);
-  assert.equal(body.patch.groups_per_section, 1);
   assert.deepEqual(
-    sortedKeys(body.patch.sections[0].groups[0]),
-    ["inserts", "updates"],
+    sortedKeys(body.patch.operations),
+    ["inserts", "point_queries", "updates"],
   );
-  assert.equal(body.patch.sections[0].groups[0].inserts.op_count, 900000);
-  assert.equal(body.patch.sections[0].groups[0].updates.op_count, 100000);
+  assert.equal(body.patch.operations.inserts.op_count, 900000);
+  assert.equal(body.patch.operations.updates.op_count, 100000);
+  assert.equal(body.patch.operations.point_queries.op_count, null);
   assert.equal(
     body.assumption_texts.includes(
       "Assumed 1000000 total operations because the prompt specified percentages without an explicit total operation count.",
@@ -1127,21 +1126,188 @@ test("worker assist endpoint maps GET to point queries in fresh percentage-only 
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.source, "deterministic");
-  assert.equal(body.patch.sections_count, 1);
-  assert.equal(body.patch.groups_per_section, 1);
   assert.deepEqual(
-    sortedKeys(body.patch.sections[0].groups[0]),
+    sortedKeys(body.patch.operations),
     ["inserts", "point_queries", "updates"],
   );
-  assert.equal(body.patch.sections[0].groups[0].point_queries.op_count, 500000);
-  assert.equal(body.patch.sections[0].groups[0].updates.op_count, 250000);
-  assert.equal(body.patch.sections[0].groups[0].inserts.op_count, 250000);
+  assert.equal(body.patch.operations.point_queries.op_count, 500000);
+  assert.equal(body.patch.operations.updates.op_count, 250000);
+  assert.equal(body.patch.operations.inserts.op_count, 250000);
   assert.equal(
     body.assumption_texts.includes(
       "Assumed 1000000 total operations because the prompt specified percentages without an explicit total operation count.",
     ),
     true,
   );
+});
+
+test("worker assist endpoint handles explicit total counts with insert/read percentage mixes", async () => {
+  let callCount = 0;
+  const request = new Request("https://example.com/api/assist", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      prompt:
+        "Generate an insert-heavy workload with 1 KB key-value size and 100K operations, with 80% inserts and 20% reads using a zipfian distribution.",
+      form_state: createFormState({}),
+      schema_hints: SCHEMA_HINTS,
+      current_json: null,
+      conversation: [],
+      answers: {},
+    }),
+  });
+
+  const response = await workerEntrypoint.fetch(request, {
+    AI: {
+      run: async () => {
+        callCount += 1;
+        return {
+          response: JSON.stringify({
+            summary: "Create the workload.",
+            patch: {
+              operations: {
+                inserts: {
+                  enabled: true,
+                  op_count: 80000,
+                },
+                point_queries: {
+                  enabled: true,
+                  op_count: 20000,
+                },
+              },
+            },
+            clarifications: [],
+            assumptions: [],
+          }),
+        };
+      },
+    },
+    ASSETS: {
+      fetch: async () => new Response("not found", { status: 404 }),
+    },
+  });
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(callCount, 1);
+  assert.equal(body.source, "ai");
+  assert.deepEqual(sortedKeys(body.patch.operations), ["inserts", "point_queries"]);
+  assert.equal(body.patch.operations.inserts.op_count, 80000);
+  assert.equal(body.patch.operations.point_queries.op_count, 20000);
+});
+
+test("worker assist endpoint reconciles explicit insert/read mixes when AI returns contradictory counts", async () => {
+  const request = new Request("https://example.com/api/assist", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      prompt:
+        "Generate an insert-heavy workload with 1 KB key-value size and 100K operations, with 80% inserts and 20% reads using a zipfian distribution.",
+      form_state: createFormState({}),
+      schema_hints: SCHEMA_HINTS,
+      current_json: null,
+      conversation: [],
+      answers: {},
+    }),
+  });
+
+  const response = await workerEntrypoint.fetch(request, {
+    AI: {
+      run: async () => ({
+        response: JSON.stringify({
+          summary: "Create the workload.",
+          patch: {
+            sections: [
+              {
+                groups: [
+                  {
+                    inserts: {
+                      op_count: 500000,
+                      key: "alphanumeric",
+                      val: {
+                        uniform: {
+                          len: 1024,
+                          character_set: "alphanumeric",
+                        },
+                      },
+                    },
+                    point_queries: {
+                      op_count: 500000,
+                      selection: {
+                        uniform: {
+                          min: 0,
+                          max: 1,
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+          clarifications: [],
+          assumptions: [],
+        }),
+      }),
+    },
+    ASSETS: {
+      fetch: async () => new Response("not found", { status: 404 }),
+    },
+  });
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.source, "ai");
+  assert.deepEqual(sortedKeys(body.patch.operations), ["inserts", "point_queries"]);
+  assert.equal(body.patch.operations.inserts.op_count, 80000);
+  assert.equal(body.patch.operations.point_queries.op_count, 20000);
+  assert.deepEqual(body.patch.operations.inserts.val, {
+    uniform: {
+      len: 1024,
+      character_set: "alphanumeric",
+    },
+  });
+  assert.deepEqual(body.patch.operations.point_queries.selection, {
+    zipf: {
+      n: 1000000,
+      s: 1.5,
+    },
+  });
+});
+
+test("worker assist endpoint falls back to deterministic parsing for explicit insert/read mixes when AI is unavailable", async () => {
+  const request = new Request("https://example.com/api/assist", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      prompt:
+        "Generate an insert-heavy workload with 1 KB key-value size and 100K operations, with 80% inserts and 20% reads using a zipfian distribution.",
+      form_state: createFormState({}),
+      schema_hints: SCHEMA_HINTS,
+      current_json: null,
+      conversation: [],
+      answers: {},
+    }),
+  });
+
+  const response = await workerEntrypoint.fetch(request, {
+    ASSETS: {
+      fetch: async () => new Response("not found", { status: 404 }),
+    },
+  });
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.source, "deterministic_fallback");
+  assert.deepEqual(sortedKeys(body.patch.operations), ["inserts", "point_queries"]);
+  assert.equal(body.patch.operations.inserts.op_count, 80000);
+  assert.equal(body.patch.operations.point_queries.op_count, 20000);
 });
 
 test("worker assist endpoint preserves explicit beta distribution parameters in sequential fresh workloads", async () => {

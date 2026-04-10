@@ -754,12 +754,39 @@ async function handleAssistRequest(request, env) {
   if (!prompt) {
     return jsonResponse({ error: "Prompt is required." }, 400);
   }
+  const interpretedPrompt = canonicalizeAssistRequest(prompt);
 
   const schemaHints = normalizeSchemaHints(body.schema_hints);
   const formState = normalizeFormState(body.form_state, schemaHints);
   const currentJson = normalizeCurrentJson(body.current_json);
   const conversation = normalizeConversation(body.conversation);
   const answers = normalizeAssistantAnswers(body.answers);
+  const prefersAiInsertReadMix = isAiPreferredInsertReadMixPrompt(
+    prompt,
+    formState,
+    schemaHints,
+  );
+  const insertReadFallbackPayload = prefersAiInsertReadMix
+    ? buildDeterministicInsertReadMixPayload(
+        interpretedPrompt,
+        formState,
+        schemaHints,
+      )
+    : null;
+  const normalizeDeterministicFallback = (payload, source) => {
+    const normalized = normalizeAssistPayload(
+      payload,
+      schemaHints,
+      formState,
+      interpretedPrompt,
+      {
+        allowDeterministicStructureFallback: false,
+        answers,
+      },
+    );
+    normalized.source = source;
+    return normalized;
+  };
   const deterministicPayload = buildDeterministicAssistPayload(
     prompt,
     formState,
@@ -770,7 +797,7 @@ async function handleAssistRequest(request, env) {
       deterministicPayload,
       schemaHints,
       formState,
-      prompt,
+      interpretedPrompt,
       {
         allowDeterministicStructureFallback: false,
         answers,
@@ -780,6 +807,15 @@ async function handleAssistRequest(request, env) {
     return jsonResponse(normalized, 200);
   }
   if (!env.AI || typeof env.AI.run !== "function") {
+    if (insertReadFallbackPayload) {
+      return jsonResponse(
+        normalizeDeterministicFallback(
+          insertReadFallbackPayload,
+          "deterministic_fallback",
+        ),
+        200,
+      );
+    }
     const configError =
       typeof env.AI_CONFIG_ERROR === "string" && env.AI_CONFIG_ERROR.trim()
         ? env.AI_CONFIG_ERROR.trim()
@@ -819,6 +855,15 @@ async function handleAssistRequest(request, env) {
   } catch (error) {
     console.error("Assist AI call failed:", error);
     logAssistFailureAiOutput("assist-error.exception", error, null);
+    if (insertReadFallbackPayload) {
+      return jsonResponse(
+        normalizeDeterministicFallback(
+          insertReadFallbackPayload,
+          "deterministic_fallback",
+        ),
+        200,
+      );
+    }
     return jsonResponse(
       {
         error: "AI request failed.",
@@ -831,6 +876,15 @@ async function handleAssistRequest(request, env) {
 
   if (!outcome || !outcome.payload || typeof outcome.payload !== "object") {
     logAssistFailureAiOutput("assist-error.ai_invalid_output", null, outcome);
+    if (insertReadFallbackPayload) {
+      return jsonResponse(
+        normalizeDeterministicFallback(
+          insertReadFallbackPayload,
+          "deterministic_fallback",
+        ),
+        200,
+      );
+    }
     return jsonResponse(
       {
         error: "AI response could not be normalized into an assist payload.",
@@ -845,7 +899,7 @@ async function handleAssistRequest(request, env) {
     outcome.payload,
     schemaHints,
     formState,
-    prompt,
+    interpretedPrompt,
     {
       allowDeterministicStructureFallback: false,
       answers,
@@ -1352,7 +1406,11 @@ function canonicalizeAssistRequest(prompt) {
   return input
     .replace(/\bread[- ]?modify[- ]?write\b/gi, "merges")
     .replace(/\brmw\b/gi, "merges")
-    .replace(/\bpoint reads\b/gi, "point queries");
+    .replace(/\bpoint reads\b/gi, "point queries")
+    .replace(/\bzero\s+reads?\b/gi, "zero point queries")
+    .replace(/(\b\d+(?:\.\d+)?%\s+)reads?\b/gi, "$1point queries")
+    .replace(/\breads?\b(?=\s+using\b)/gi, "point queries")
+    .replace(/\breads?\b(?=\s*(?:,|\.|$))/gi, "point queries");
 }
 
 function compactAssistSchemaHints(schemaHints) {
@@ -2885,6 +2943,12 @@ function normalizeAssistPayload(
     );
   }
   canonicalizePhasedSectionsLayout(patch, prompt, schemaHints);
+  applyAiPreferredInsertReadMixPromptFallback(
+    patch,
+    formState,
+    prompt,
+    schemaHints,
+  );
   applyPromptRangeProfileFallback(patch, prompt);
   const clarificationContext = {
     patch,
@@ -5569,18 +5633,21 @@ function applyPromptFixedRangeScanLengthFallback(
 }
 
 function buildDeterministicAssistPayload(prompt, formState, schemaHints) {
-  const lowerPrompt = String(prompt || "").toLowerCase();
+  const interpretedPrompt = canonicalizeAssistRequest(prompt);
+  const lowerPrompt = String(interpretedPrompt || "").toLowerCase();
   if (!lowerPrompt) {
     return null;
   }
 
-  const percentMixPayload = buildDeterministicPercentMixWorkloadPayload(
-    prompt,
-    formState,
-    schemaHints,
-  );
-  if (percentMixPayload) {
-    return percentMixPayload;
+  if (!isAiPreferredInsertReadMixPrompt(prompt, formState, schemaHints)) {
+    const percentMixPayload = buildDeterministicPercentMixWorkloadPayload(
+      interpretedPrompt,
+      formState,
+      schemaHints,
+    );
+    if (percentMixPayload) {
+      return percentMixPayload;
+    }
   }
 
   if (promptRequestsAllOperationCountScaling(lowerPrompt)) {
@@ -5600,9 +5667,13 @@ function buildDeterministicAssistPayload(prompt, formState, schemaHints) {
     }
   }
 
-  const scanLength = extractPromptRangeScanLengthHint(prompt);
+  const scanLength = extractPromptRangeScanLengthHint(interpretedPrompt);
   if (scanLength !== null) {
-    const target = resolveRangeScanPromptTarget(formState, prompt, schemaHints);
+    const target = resolveRangeScanPromptTarget(
+      formState,
+      interpretedPrompt,
+      schemaHints,
+    );
     if (target) {
       return {
         summary:
@@ -5633,11 +5704,143 @@ function buildDeterministicAssistPayload(prompt, formState, schemaHints) {
   return null;
 }
 
-function buildDeterministicPercentMixWorkloadPayload(
-  prompt,
+function isAiPreferredInsertReadMixPrompt(prompt, formState, schemaHints) {
+  const lowerPrompt = String(prompt || "").toLowerCase();
+  if (!lowerPrompt) {
+    return false;
+  }
+  if (
+    getEnabledOperationNames(formState || { operations: {} }, schemaHints)
+      .length > 0
+  ) {
+    return false;
+  }
+  if (!/\b(?:generate|create|make|build)\b/.test(lowerPrompt)) {
+    return false;
+  }
+  if (!/\binsert/.test(lowerPrompt)) {
+    return false;
+  }
+  if (extractPromptCountHint(prompt) === null) {
+    return false;
+  }
+  const hasGenericReads =
+    /\breads?\b/.test(lowerPrompt) &&
+    !/\bpoint\s+queries\b/.test(lowerPrompt) &&
+    !/\bpoint\s+reads?\b/.test(lowerPrompt) &&
+    !/\bget(?:s)?\b/.test(lowerPrompt) &&
+    !/\bempty\s+point\s+reads?\b/.test(lowerPrompt) &&
+    !/\bread[- ]?modify[- ]?write\b|\brmw\b/.test(lowerPrompt);
+  if (!hasGenericReads) {
+    return false;
+  }
+  return (
+    /\b(\d+(?:\.\d+)?)\s*%\s+inserts?\b/.test(lowerPrompt) &&
+    /\b(\d+(?:\.\d+)?)\s*%\s+reads?\b/.test(lowerPrompt)
+  );
+}
+
+function getInsertReadMixFallbackPayload(prompt, formState, schemaHints) {
+  return (
+    buildDeterministicInsertReadMixPayload(prompt, formState, schemaHints) ||
+    buildDeterministicInsertReadMixPayload(
+      canonicalizeAssistRequest(prompt),
+      formState,
+      schemaHints,
+    )
+  );
+}
+
+function aiPreferredInsertReadMixPatchSatisfied(
+  patch,
+  fallbackPayload,
+) {
+  if (!patch || typeof patch !== "object") {
+    return false;
+  }
+  const expectedOperations =
+    fallbackPayload &&
+    fallbackPayload.patch &&
+    fallbackPayload.patch.operations &&
+    typeof fallbackPayload.patch.operations === "object"
+      ? fallbackPayload.patch.operations
+      : null;
+  const actualOperations =
+    patch.operations && typeof patch.operations === "object"
+      ? patch.operations
+      : {};
+  if (!expectedOperations) {
+    return true;
+  }
+  return ["inserts", "point_queries"].every((operationName) => {
+    const expectedPatch = expectedOperations[operationName];
+    const actualPatch = actualOperations[operationName];
+    if (!expectedPatch || typeof expectedPatch !== "object") {
+      return true;
+    }
+    if (!actualPatch || typeof actualPatch !== "object") {
+      return false;
+    }
+    if (
+      expectedPatch.op_count !== null &&
+      expectedPatch.op_count !== undefined &&
+      actualPatch.op_count !== expectedPatch.op_count
+    ) {
+      return false;
+    }
+    if (
+      operationName === "inserts" &&
+      JSON.stringify(actualPatch.val || null) !==
+        JSON.stringify(expectedPatch.val || null)
+    ) {
+      return false;
+    }
+    if (
+      operationName === "point_queries" &&
+      JSON.stringify(actualPatch.selection || null) !==
+        JSON.stringify(expectedPatch.selection || null)
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function applyAiPreferredInsertReadMixPromptFallback(
+  patch,
   formState,
+  prompt,
   schemaHints,
 ) {
+  const fallbackPayload = getInsertReadMixFallbackPayload(
+    prompt,
+    formState,
+    schemaHints,
+  );
+  if (!fallbackPayload) {
+    return false;
+  }
+  if (aiPreferredInsertReadMixPatchSatisfied(patch, fallbackPayload)) {
+    return false;
+  }
+  const fallbackPatch =
+    fallbackPayload &&
+    fallbackPayload.patch &&
+    typeof fallbackPayload.patch === "object"
+      ? normalizePatch(fallbackPayload.patch, schemaHints)
+      : null;
+  if (!fallbackPatch) {
+    return false;
+  }
+  patch.clear_operations = false;
+  patch.sections = null;
+  patch.sections_count = null;
+  patch.groups_per_section = null;
+  patch.operations = cloneJsonValue(fallbackPatch.operations || {});
+  return true;
+}
+
+function buildDeterministicInsertReadMixPayload(prompt, formState, schemaHints) {
   const lowerPrompt = String(prompt || "").toLowerCase();
   if (!lowerPrompt) {
     return null;
@@ -5651,41 +5854,269 @@ function buildDeterministicPercentMixWorkloadPayload(
   if (!/\b(?:generate|create|make|build)\b/.test(lowerPrompt)) {
     return null;
   }
-  if (extractPromptCountHint(prompt) !== null) {
+  if (!/\binsert/.test(lowerPrompt)) {
     return null;
   }
-  const group = deriveStructuredGroupFromClause(prompt, schemaHints, {
-    defaultPercentTotalCount: DEFAULT_PERCENT_MIX_TOTAL_OPERATIONS,
-  });
-  if (!group || typeof group !== "object") {
+  if (!/\b(?:point\s+queries|get(?:s)?|reads?)\b/.test(lowerPrompt)) {
     return null;
   }
-  const operationNames = Object.keys(group);
-  if (operationNames.length === 0) {
+  const insertMatch = lowerPrompt.match(/\b(\d+(?:\.\d+)?)\s*%\s+inserts?\b/);
+  const readMatch = lowerPrompt.match(
+    /\b(\d+(?:\.\d+)?)\s*%\s+(?:point\s+queries|get(?:s)?|reads?)\b/,
+  );
+  if (!insertMatch || !readMatch) {
     return null;
+  }
+  const insertPercent = numberOrNull(insertMatch[1]);
+  const readPercent = numberOrNull(readMatch[1]);
+  if (insertPercent === null || readPercent === null) {
+    return null;
+  }
+  const totalCount =
+    extractPromptCountHint(prompt) ?? DEFAULT_PERCENT_MIX_TOTAL_OPERATIONS;
+  const characterSet =
+    formState && typeof formState.character_set === "string"
+      ? formState.character_set
+      : "alphanumeric";
+  const pointQuerySpec = {
+    op_count: Math.round((totalCount * readPercent) / 100),
+  };
+  const detectedDistribution = detectSelectionDistribution(
+    lowerPrompt,
+    schemaHints.selection_distributions,
+  );
+  if (detectedDistribution) {
+    applyDetectedSelectionDistributionToOperationPatch(
+      pointQuerySpec,
+      {},
+      prompt,
+      detectedDistribution,
+    );
+  }
+  const insertSpec = {
+    op_count: Math.round((totalCount * insertPercent) / 100),
+    key: {
+      uniform: {
+        len: 20,
+        character_set: characterSet,
+      },
+    },
+  };
+  const valueSizeBytes = extractPromptValueSizeBytes(prompt);
+  if (valueSizeBytes !== null) {
+    insertSpec.val = {
+      uniform: {
+        len: valueSizeBytes,
+        character_set: characterSet,
+      },
+    };
+  }
+  return {
+    summary: "Created a mixed workload using the requested percentage split.",
+    patch: {
+      sections_count: 1,
+      groups_per_section: 1,
+      sections: [
+        {
+          groups: [
+            {
+              inserts: insertSpec,
+              point_queries: pointQuerySpec,
+            },
+          ],
+        },
+      ],
+      operations: {
+        inserts: {
+          enabled: true,
+          ...insertSpec,
+        },
+        point_queries: {
+          enabled: true,
+          ...pointQuerySpec,
+        },
+      },
+    },
+    clarifications: [],
+    assumptions:
+      extractPromptCountHint(prompt) === null
+        ? [
+            "Assumed 1000000 total operations because the prompt specified percentages without an explicit total operation count.",
+          ]
+        : [],
+    questions: [],
+    assumption_texts: [],
+  };
+}
+
+function buildDeterministicPercentMixWorkloadPayload(
+  prompt,
+  formState,
+  schemaHints,
+) {
+  const lowerPrompt = String(prompt || "").toLowerCase();
+  const explicitTotalCount = extractPromptCountHint(prompt);
+  if (!lowerPrompt) {
+    return null;
+  }
+  if (
+    getEnabledOperationNames(formState || { operations: {} }, schemaHints)
+      .length > 0
+  ) {
+    return null;
+  }
+  if (!/\b(?:generate|create|make|build)\b/.test(lowerPrompt)) {
+    return null;
+  }
+  const totalCount =
+    explicitTotalCount !== null
+      ? explicitTotalCount
+      : DEFAULT_PERCENT_MIX_TOTAL_OPERATIONS;
+  const operationNames = (schemaHints.operation_order || []).filter((operationName) =>
+    promptMentionsOperation(lowerPrompt, operationName),
+  );
+  const genericReadMixMention =
+    /\breads?\b/.test(lowerPrompt) &&
+    !/\bpoint\s+reads?\b/.test(lowerPrompt) &&
+    !/\bempty\s+point\s+reads?\b/.test(lowerPrompt) &&
+    !/\bread[- ]?modify[- ]?write\b|\brmw\b/.test(lowerPrompt);
+  if (genericReadMixMention && !operationNames.includes("point_queries")) {
+    operationNames.push("point_queries");
   }
   const amountHints = extractOperationAmountHints(prompt, operationNames);
+  if (genericReadMixMention && !amountHints.point_queries) {
+    const genericReadMatch = lowerPrompt.match(
+      /\b(\d[\d,]*(?:\.\d+)?\s*[kmb]?|\d+(?:\.\d+)?)\s*(%)?\s+(?:of\s+)?(?:the\s+)?reads?\b/i,
+    );
+    if (genericReadMatch && genericReadMatch[1]) {
+      if (genericReadMatch[2] === "%") {
+        amountHints.point_queries = {
+          type: "percent",
+          value: numberOrNull(genericReadMatch[1]),
+        };
+      } else {
+        const count = parseHumanCountToken(genericReadMatch[1]);
+        if (count !== null) {
+          amountHints.point_queries = {
+            type: "count",
+            value: count,
+          };
+        }
+      }
+    }
+  }
   const hasPercentMix = Object.values(amountHints).some(
     (entry) => entry && entry.type === "percent",
   );
-  if (!hasPercentMix) {
+  if (!hasPercentMix || operationNames.length === 0) {
+    return null;
+  }
+  const group = {};
+  operationNames.forEach((operationName) => {
+    const spec = {};
+    const hint = amountHints[operationName] || null;
+    if (hint && hint.type === "count") {
+      spec.op_count = hint.value;
+    } else if (hint && hint.type === "percent") {
+      spec.op_count = Math.round((totalCount * hint.value) / 100);
+    } else if (operationNames.length === 1) {
+      spec.op_count = totalCount;
+    }
+    const capabilities = getOperationCapabilities(schemaHints, operationName);
+    if (capabilities.has_selection) {
+      const detectedDistribution = detectSelectionDistribution(
+        lowerPrompt,
+        schemaHints.selection_distributions,
+      );
+      if (detectedDistribution) {
+        applyDetectedSelectionDistributionToOperationPatch(
+          spec,
+          {},
+          prompt,
+          detectedDistribution,
+        );
+      }
+    }
+    if (operationName === "inserts") {
+      const characterSet =
+        formState && typeof formState.character_set === "string"
+          ? formState.character_set
+          : "alphanumeric";
+      if (!spec.key) {
+        spec.key = {
+          uniform: {
+            len: 20,
+            character_set: characterSet,
+          },
+        };
+      }
+      const valueSizeBytes = extractPromptValueSizeBytes(prompt);
+      if (valueSizeBytes !== null && !spec.val) {
+        spec.val = {
+          uniform: {
+            len: valueSizeBytes,
+            character_set: characterSet,
+          },
+        };
+      }
+    }
+    group[operationName] = spec;
+  });
+  const configuredOperationNames = Object.keys(group);
+  if (configuredOperationNames.length === 0) {
     return null;
   }
   return {
     summary: "Created a mixed workload using the requested percentage split.",
-    program: [
-      {
-        kind: "replace_sections",
-        sections: [{ groups: [group] }],
-      },
-    ],
+    patch: {
+      sections_count: 1,
+      groups_per_section: 1,
+      sections: [{ groups: [group] }],
+      operations: Object.fromEntries(
+        Object.entries(group).map(([operationName, spec]) => [
+          operationName,
+          {
+            enabled: true,
+            ...(spec && typeof spec === "object" ? spec : {}),
+          },
+        ]),
+      ),
+    },
     clarifications: [],
-    assumptions: [
-      "Assumed 1000000 total operations because the prompt specified percentages without an explicit total operation count.",
-    ],
+    assumptions:
+      explicitTotalCount === null
+        ? [
+            "Assumed 1000000 total operations because the prompt specified percentages without an explicit total operation count.",
+          ]
+        : [],
     questions: [],
     assumption_texts: [],
   };
+}
+
+function extractPromptValueSizeBytes(prompt) {
+  const text = String(prompt || "");
+  if (!text) {
+    return null;
+  }
+  const match = text.match(
+    /\b(\d[\d,]*(?:\.\d+)?)\s*(b|bytes?|kb|kilobytes?|mb|megabytes?)\b[\s\S]{0,24}\b(?:key[- ]?value|value)\s+size\b/i,
+  );
+  if (!match) {
+    return null;
+  }
+  const amount = Number.parseFloat(String(match[1]).replace(/,/g, ""));
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return null;
+  }
+  const unit = String(match[2] || "").toLowerCase();
+  if (unit === "kb" || unit === "kilobyte" || unit === "kilobytes") {
+    return Math.round(amount * 1024);
+  }
+  if (unit === "mb" || unit === "megabyte" || unit === "megabytes") {
+    return Math.round(amount * 1024 * 1024);
+  }
+  return Math.round(amount);
 }
 
 function buildStructuredGroupsFromPromptText(text, schemaHints) {

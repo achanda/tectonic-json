@@ -3,6 +3,52 @@ document.getElementById("ctaBtn").addEventListener("click", function () {
     document.getElementById("landingForms").scrollIntoView({ behavior: "smooth" });
 });
 
+function copyTextToClipboard(text) {
+    var value = typeof text === "string" ? text : String(text || "");
+    if (!value) return Promise.resolve(false);
+
+    function legacyCopy() {
+        if (!document || typeof document.createElement !== "function") return false;
+        var helper = document.createElement("textarea");
+        helper.value = value;
+        helper.setAttribute("readonly", "readonly");
+        helper.style.position = "fixed";
+        helper.style.top = "0";
+        helper.style.left = "-9999px";
+        helper.style.opacity = "0";
+        var root = document.body || document.documentElement;
+        if (!root || typeof root.appendChild !== "function") return false;
+        root.appendChild(helper);
+        if (typeof helper.focus === "function") helper.focus();
+        if (typeof helper.select === "function") helper.select();
+        if (typeof helper.setSelectionRange === "function") {
+            helper.setSelectionRange(0, helper.value.length);
+        }
+        var copied = false;
+        try {
+            copied = typeof document.execCommand === "function" &&
+                document.execCommand("copy") === true;
+        } catch (_error) {
+            copied = false;
+        }
+        if (typeof helper.remove === "function") {
+            helper.remove();
+        } else if (helper.parentNode && typeof helper.parentNode.removeChild === "function") {
+            helper.parentNode.removeChild(helper);
+        }
+        return copied;
+    }
+
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        return navigator.clipboard.writeText(value).catch(function () {
+            if (legacyCopy()) return true;
+            throw new Error("Clipboard write failed");
+        });
+    }
+    if (legacyCopy()) return Promise.resolve(true);
+    return Promise.reject(new Error("Clipboard not available"));
+}
+
 // ── Animated floating labels around tectonic icon ──
 (function () {
     var zoneL = document.getElementById("floatZoneLeft");
@@ -903,11 +949,16 @@ document.getElementById("ctaBtn").addEventListener("click", function () {
     document.getElementById("specCopyBtn").addEventListener("click", function () {
         var jsonOutput = document.getElementById("jsonOutput");
         if (jsonOutput && jsonOutput.value) {
-            navigator.clipboard.writeText(jsonOutput.value).then(function () {
-                var btn = document.getElementById("specCopyBtn");
-                var orig = btn.innerHTML;
-                btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Copied!';
+            var btn = document.getElementById("specCopyBtn");
+            var orig = btn.innerHTML;
+            function flashLabel(label) {
+                btn.innerHTML = label;
                 setTimeout(function () { btn.innerHTML = orig; }, 1500);
+            }
+            copyTextToClipboard(jsonOutput.value).then(function () {
+                flashLabel('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Copied!');
+            }).catch(function () {
+                flashLabel("Copy unavailable");
             });
         }
     });
