@@ -539,18 +539,65 @@
     return rounded.toLocaleString();
   }
 
+  function formatAxisTickValue(value, step, options = {}) {
+    const parsed = Number.parseFloat(value);
+    if (!Number.isFinite(parsed)) {
+      return "—";
+    }
+    if (options.compact === true && Math.abs(parsed) >= 1000) {
+      return new Intl.NumberFormat(undefined, {
+        notation: "compact",
+        maximumFractionDigits: 1,
+      }).format(parsed);
+    }
+    const safeStep = Number.isFinite(step) && step > 0 ? step : 1;
+    let maximumFractionDigits = 0;
+    if (safeStep < 1) {
+      maximumFractionDigits = Math.min(
+        3,
+        Math.max(0, Math.ceil(-Math.log10(safeStep))),
+      );
+    }
+    return parsed.toLocaleString(undefined, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits,
+    });
+  }
+
+  function niceAxisStep(value) {
+    const safeValue = Number.isFinite(value) && value > 0 ? value : 1;
+    const exponent = Math.floor(Math.log10(safeValue));
+    const fraction = safeValue / Math.pow(10, exponent);
+    let niceFraction = 1;
+    if (fraction <= 1) {
+      niceFraction = 1;
+    } else if (fraction <= 2) {
+      niceFraction = 2;
+    } else if (fraction <= 2.5) {
+      niceFraction = 2.5;
+    } else if (fraction <= 5) {
+      niceFraction = 5;
+    } else {
+      niceFraction = 10;
+    }
+    return niceFraction * Math.pow(10, exponent);
+  }
+
   function buildWholeNumberAxis(maxValue, divisor = 1, intervalCount = 4) {
     const safeDivisor =
       Number.isFinite(divisor) && divisor > 0 ? divisor : 1;
     const safeIntervals =
       Number.isInteger(intervalCount) && intervalCount > 0 ? intervalCount : 4;
     const displayMax = Number.isFinite(maxValue) ? maxValue / safeDivisor : 0;
-    const displayStep = Math.max(1, Math.ceil(displayMax / safeIntervals));
-    const axisDisplayMax = displayStep * safeIntervals;
+    const targetStep = Math.max(displayMax / safeIntervals, 0.0001);
+    const displayStep = niceAxisStep(targetStep);
+    const tickCount = Math.max(1, Math.ceil(displayMax / displayStep));
+    const axisDisplayMax = displayStep * tickCount;
     return {
       axisMaxRaw: axisDisplayMax * safeDivisor,
-      ticks: Array.from({ length: safeIntervals + 1 }, (_, index) =>
-        axisDisplayMax - displayStep * index,
+      stepDisplay: displayStep,
+      ticks: Array.from({ length: tickCount + 1 }, (_, index) =>
+        Math.max(0, axisDisplayMax - displayStep * index),
       ),
     };
   }
@@ -589,8 +636,11 @@
         formatAxisValue(value) {
           return formatChartDecimalValue(value) + " " + unit;
         },
-        formatAxisBucketValue(value) {
-          return formatWholeNumberAxisValue(value);
+        formatAxisBucketValue(value, axisDescriptor) {
+          return formatAxisTickValue(
+            value,
+            axisDescriptor && axisDescriptor.stepDisplay,
+          );
         },
         formatValue(value) {
           return formatThroughputLabel(value, unit);
@@ -613,8 +663,11 @@
         formatAxisValue(value) {
           return formatChartDecimalValue(value / latencyUnit.divisor) + " " + latencyUnit.unit;
         },
-        formatAxisBucketValue(value) {
-          return formatWholeNumberAxisValue(value / latencyUnit.divisor);
+        formatAxisBucketValue(value, axisDescriptor) {
+          return formatAxisTickValue(
+            value,
+            axisDescriptor && axisDescriptor.stepDisplay,
+          );
         },
         formatValue(value) {
           return formatChartDecimalValue(value / latencyUnit.divisor) + " " + latencyUnit.unit;
@@ -632,8 +685,12 @@
       formatAxisValue(value) {
         return formatChartDecimalValue(value, { compact: true });
       },
-      formatAxisBucketValue(value) {
-        return formatWholeNumberAxisValue(value, { compact: true });
+      formatAxisBucketValue(value, axisDescriptor) {
+          return formatAxisTickValue(
+            value,
+            axisDescriptor && axisDescriptor.stepDisplay,
+            { compact: true },
+          );
       },
       formatValue(value) {
         return formatChartDecimalValue(value);
@@ -1045,8 +1102,9 @@
     plotBg.setAttribute("stroke", "#dde8f1");
     svg.appendChild(plotBg);
 
+    const tickDivisor = Math.max(1, axisDescriptor.ticks.length - 1);
     axisDescriptor.ticks.forEach((tickValue, index) => {
-      const ratio = index / 4;
+      const ratio = index / tickDivisor;
       const y = margin.top + plotHeight * ratio;
       const grid = document.createElementNS(ns, "line");
       grid.setAttribute("x1", String(margin.left));
@@ -1063,7 +1121,10 @@
       axisLabel.setAttribute("text-anchor", "end");
       axisLabel.setAttribute("font-size", "12");
       axisLabel.setAttribute("fill", "#5f7388");
-      axisLabel.textContent = chartDescriptor.formatAxisBucketValue(tickValue);
+      axisLabel.textContent = chartDescriptor.formatAxisBucketValue(
+        tickValue,
+        axisDescriptor,
+      );
       svg.appendChild(axisLabel);
     });
 
