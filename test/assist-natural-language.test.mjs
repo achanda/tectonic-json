@@ -1441,8 +1441,12 @@ test("worker assist endpoint preserves multi-phase fresh workloads instead of co
   assert.equal(Array.isArray(body.patch.sections), true);
   assert.equal(body.patch.sections.length, 1);
   assert.equal(body.patch.sections[0].groups.length, 3);
+  assert.equal(body.patch.sections[0].name, "Section 1");
+  assert.equal(body.patch.sections[0].enable_granular_stats, true);
 
   const [phase1, phase2, phase3] = body.patch.sections[0].groups;
+  assert.equal(phase1.name, "Group 1");
+  assert.equal(phase1.enable_granular_stats, true);
   assert.equal(phase1.inserts.op_count, 60000);
   assert.equal(phase1.point_queries.op_count, 6667);
   assert.deepEqual(phase1.inserts.key, {
@@ -1458,6 +1462,8 @@ test("worker assist endpoint preserves multi-phase fresh workloads instead of co
     },
   });
 
+  assert.equal(phase2.name, "Group 2");
+  assert.equal(phase2.enable_granular_stats, true);
   assert.equal(phase2.inserts.op_count, 13333);
   assert.equal(phase2.point_queries.op_count, 53334);
   assert.deepEqual(phase2.point_queries.selection, {
@@ -1467,6 +1473,8 @@ test("worker assist endpoint preserves multi-phase fresh workloads instead of co
     },
   });
 
+  assert.equal(phase3.name, "Group 3");
+  assert.equal(phase3.enable_granular_stats, true);
   assert.equal(phase3.inserts.op_count, 33333);
   assert.equal(phase3.range_queries.op_count, 33333);
   assert.equal(phase3.range_queries.range_format, "StartCount");

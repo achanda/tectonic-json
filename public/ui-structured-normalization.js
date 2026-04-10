@@ -12,14 +12,27 @@
   }
 
   function createEmptyGroupSpec() {
-    return {};
+    return {
+      name: "Group 1",
+      enable_granular_stats: true,
+    };
   }
 
   function createEmptySectionState() {
     return {
+      name: "Section 1",
+      enable_granular_stats: true,
       skip_key_contains_check: false,
       groups: [createEmptyGroupSpec()],
     };
+  }
+
+  function buildDefaultSectionName(sectionIndex) {
+    return "Section " + String(sectionIndex + 1);
+  }
+
+  function buildDefaultGroupName(groupIndex) {
+    return "Group " + String(groupIndex + 1);
   }
 
   function buildDefaultStringExprFromDefaults(
@@ -280,7 +293,7 @@
       config && typeof config.defaultCharacterSet === "string"
         ? config.defaultCharacterSet
         : "";
-    return rawSections.map((section) => {
+    return rawSections.map((section, sectionIndex) => {
       const explicitSectionCharacterSet =
         section &&
         typeof section === "object" &&
@@ -288,6 +301,13 @@
         section.character_set.trim()
           ? section.character_set.trim()
           : "";
+      const sectionName =
+        section &&
+        typeof section === "object" &&
+        typeof section.name === "string" &&
+        section.name.trim()
+          ? section.name.trim()
+          : buildDefaultSectionName(sectionIndex);
       const sectionCharacterSet =
         explicitSectionCharacterSet || defaultCharacterSet;
       const groups =
@@ -295,9 +315,14 @@
         typeof section === "object" &&
         Array.isArray(section.groups) &&
         section.groups.length > 0
-          ? section.groups.map((group) => {
+          ? section.groups.map((group, groupIndex) => {
               const normalizedGroup = {};
               if (group && typeof group === "object" && !Array.isArray(group)) {
+                normalizedGroup.name =
+                  typeof group.name === "string" && group.name.trim()
+                    ? group.name.trim()
+                    : buildDefaultGroupName(groupIndex);
+                normalizedGroup.enable_granular_stats = true;
                 const explicitGroupCharacterSet =
                   typeof group.character_set === "string" &&
                   group.character_set.trim()
@@ -320,10 +345,15 @@
                 }
                 return normalizedGroup;
               }
-              return createEmptyGroupSpec();
+              return {
+                name: buildDefaultGroupName(groupIndex),
+                enable_granular_stats: true,
+              };
             })
           : [createEmptyGroupSpec()];
       const normalizedSection = {
+        name: sectionName,
+        enable_granular_stats: true,
         skip_key_contains_check: !!(
           section &&
           typeof section === "object" &&

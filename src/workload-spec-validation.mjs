@@ -53,6 +53,21 @@ export function validateWorkloadSpec(spec) {
       );
     }
     if (
+      section.name !== undefined &&
+      (typeof section.name !== "string" || !section.name.trim())
+    ) {
+      errors.push(sectionPath + ".name must be a non-empty string when provided.");
+    }
+    if (
+      section.enable_granular_stats !== undefined &&
+      typeof section.enable_granular_stats !== "boolean"
+    ) {
+      errors.push(
+        sectionPath +
+          ".enable_granular_stats must be boolean when provided.",
+      );
+    }
+    if (
       section.skip_key_contains_check !== undefined &&
       typeof section.skip_key_contains_check !== "boolean"
     ) {
@@ -77,11 +92,28 @@ export function validateWorkloadSpec(spec) {
             ".character_set must be alphanumeric, alphabetic, numeric, null, or omitted.",
         );
       }
+      if (
+        group.name !== undefined &&
+        (typeof group.name !== "string" || !group.name.trim())
+      ) {
+        errors.push(groupPath + ".name must be a non-empty string when provided.");
+      }
+      if (
+        group.enable_granular_stats !== undefined &&
+        typeof group.enable_granular_stats !== "boolean"
+      ) {
+        errors.push(
+          groupPath +
+            ".enable_granular_stats must be boolean when provided.",
+        );
+      }
 
       const groupKeys = Object.keys(group);
       const unknownKeys = groupKeys.filter(
         (key) =>
           key !== "character_set" &&
+          key !== "name" &&
+          key !== "enable_granular_stats" &&
           !Object.prototype.hasOwnProperty.call(OPERATION_VALIDATORS, key),
       );
       unknownKeys.forEach((key) => {

@@ -74,6 +74,66 @@ test(
 );
 
 test(
+  "structured ui normalization preserves explicit section and group metadata",
+  async () => {
+    const normalizer = await loadStructuredUiNormalizer();
+    const sections = normalizer.normalizePatchedStructureSections(
+      [
+        {
+          name: "Load Phase",
+          enable_granular_stats: false,
+          groups: [
+            {
+              name: "Warmup Group",
+              enable_granular_stats: false,
+              inserts: {
+                op_count: 1,
+                key: "key",
+                val: "value",
+              },
+            },
+          ],
+        },
+      ],
+      createNormalizerConfig(),
+    );
+
+    assert.equal(sections[0].name, "Load Phase");
+    assert.equal(sections[0].enable_granular_stats, true);
+    assert.equal(sections[0].groups[0].name, "Warmup Group");
+    assert.equal(sections[0].groups[0].enable_granular_stats, true);
+  },
+);
+
+test(
+  "structured ui normalization injects default section and group metadata when missing",
+  async () => {
+    const normalizer = await loadStructuredUiNormalizer();
+    const sections = normalizer.normalizePatchedStructureSections(
+      [
+        {
+          groups: [
+            {
+              inserts: {
+                op_count: 1,
+                key: "key",
+                val: "value",
+              },
+            },
+          ],
+        },
+      ],
+      createNormalizerConfig(),
+    );
+
+    assert.equal(sections[0].name, "Section 1");
+    assert.equal(sections[0].enable_granular_stats, true);
+    assert.equal(sections[0].groups[0].name, "Group 1");
+    assert.equal(sections[0].groups[0].enable_granular_stats, true);
+  },
+);
+
+test(
   "structured ui normalization does not synthesize section or group character_set from defaults",
   async () => {
     const normalizer = await loadStructuredUiNormalizer();

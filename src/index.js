@@ -3045,7 +3045,15 @@ function stripEnabledFromOperationPatch(value) {
   return stripped;
 }
 
-function normalizeGroupValue(rawGroup, schemaHints) {
+function buildDefaultSectionName(sectionIndex) {
+  return "Section " + String(sectionIndex + 1);
+}
+
+function buildDefaultGroupName(groupIndex) {
+  return "Group " + String(groupIndex + 1);
+}
+
+function normalizeGroupValue(rawGroup, schemaHints, options = {}) {
   const input =
     rawGroup && typeof rawGroup === "object" && !Array.isArray(rawGroup)
       ? rawGroup
@@ -3073,6 +3081,18 @@ function normalizeGroupValue(rawGroup, schemaHints) {
     }
     group[op] = stripEnabledFromOperationPatch(normalized);
   });
+  const fallbackGroupIndex = Number.isInteger(options.groupIndex)
+    ? options.groupIndex
+    : 0;
+  group.name =
+    typeof input.name === "string" && input.name.trim()
+      ? input.name.trim()
+      : buildDefaultGroupName(fallbackGroupIndex);
+  group.enable_granular_stats = true;
+  const characterSet = normalizeCharacterSetValue(input.character_set, schemaHints);
+  if (characterSet) {
+    group.character_set = characterSet;
+  }
   return group;
 }
 
@@ -3080,7 +3100,7 @@ function normalizeSectionsValue(rawSections, schemaHints) {
   if (!Array.isArray(rawSections)) {
     return [];
   }
-  return rawSections.map((rawSection) => {
+  return rawSections.map((rawSection, sectionIndex) => {
     const sectionInput =
       rawSection && typeof rawSection === "object" && !Array.isArray(rawSection)
         ? rawSection
@@ -3090,9 +3110,18 @@ function normalizeSectionsValue(rawSections, schemaHints) {
         ? sectionInput.groups
         : [{}];
     const section = {
-      groups: groupsInput.map((group) =>
-        normalizeGroupValue(group, schemaHints),
-      ),
+      name:
+        typeof sectionInput.name === "string" && sectionInput.name.trim()
+          ? sectionInput.name.trim()
+          : buildDefaultSectionName(sectionIndex),
+      enable_granular_stats: true,
+      groups: groupsInput.map((group, groupIndex) => {
+        const normalizedGroup = normalizeGroupValue(group, schemaHints, {
+          groupIndex,
+        });
+        normalizedGroup.enable_granular_stats = true;
+        return normalizedGroup;
+      }),
     };
     const characterSet = normalizeCharacterSetValue(
       sectionInput.character_set,

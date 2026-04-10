@@ -1241,11 +1241,16 @@ function clearPersistedCustomBuilderState() {
 }
 
 function createEmptyGroupSpec() {
-  return {};
+  return {
+    name: "Group 1",
+    enable_granular_stats: true,
+  };
 }
 
 function createEmptySectionState() {
   return {
+    name: "Section 1",
+    enable_granular_stats: true,
     skip_key_contains_check: false,
     groups: [createEmptyGroupSpec()],
   };
@@ -4041,6 +4046,10 @@ function sanitizeStoredGroupSpecForJson(group) {
   }
 
   const sanitized = {};
+  if (typeof group.name === "string" && group.name.trim()) {
+    sanitized.name = group.name.trim();
+  }
+  sanitized.enable_granular_stats = true;
   if (typeof group.character_set === "string" && group.character_set.trim()) {
     sanitized.character_set = group.character_set.trim();
   }
@@ -4076,6 +4085,14 @@ function buildJsonFromForm() {
         ? sectionState.groups.map((group) => sanitizeStoredGroupSpecForJson(group))
         : [],
     };
+    if (
+      sectionState &&
+      typeof sectionState.name === "string" &&
+      sectionState.name.trim()
+    ) {
+      section.name = sectionState.name.trim();
+    }
+    section.enable_granular_stats = true;
     if (
       sectionState &&
       typeof sectionState.character_set === "string" &&
