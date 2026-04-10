@@ -818,10 +818,45 @@
       entry && typeof entry.name === "string"
         ? entry.name.trim().toLowerCase()
         : "";
-    if (!name) {
+    const metrics = normalizeMetricsList(entry && entry.metrics);
+    if (name && (/\bphase\b|\bgroup\b/.test(name) || /\bsection\b/.test(name))) {
+      return true;
+    }
+    if (name) {
+      const operationBucketNames = new Set([
+        "insert",
+        "inserts",
+        "update",
+        "updates",
+        "merge",
+        "merges",
+        "point query",
+        "point queries",
+        "range query",
+        "range queries",
+        "point delete",
+        "point deletes",
+        "range delete",
+        "range deletes",
+        "empty point query",
+        "empty point queries",
+        "empty point delete",
+        "empty point deletes",
+        "sorted",
+      ]);
+      if (operationBucketNames.has(name)) {
+        return false;
+      }
+    }
+    if (metrics.length === 0) {
       return false;
     }
-    return /\bphase\b|\bgroup\b/.test(name) || /\bsection\b/.test(name);
+
+    const phaseMetricPrefixPattern =
+      /^(?:overall|insert|update|merge|point query|range query|point delete|range delete|empty point query|empty point delete|sorted)\b/i;
+    return metrics.some((metric) =>
+      phaseMetricPrefixPattern.test(String(metric && metric.label ? metric.label : "").trim()),
+    );
   }
 
   function formatStatsBucketTitle(name) {

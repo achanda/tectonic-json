@@ -792,7 +792,11 @@ async function handleAssistRequest(request, env) {
     formState,
     schemaHints,
   );
-  if (deterministicPayload) {
+  const shouldPreferAiForStructuredPrompt =
+    !!env.AI &&
+    typeof env.AI.run === "function" &&
+    isStructuredWorkloadPrompt(interpretedPrompt);
+  if (deterministicPayload && !shouldPreferAiForStructuredPrompt) {
     const normalized = normalizeAssistPayload(
       deterministicPayload,
       schemaHints,

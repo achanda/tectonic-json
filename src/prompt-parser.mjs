@@ -756,7 +756,7 @@ export function createPromptParser(deps = {}) {
 
   function applyStructuredPromptSelectionHints(groups, prompt, schemaHints) {
     const lowerPrompt = String(prompt || "").toLowerCase();
-    if (!/\bskew(?:ed)?\s+distribution\b|\bskewed\b/.test(lowerPrompt)) {
+    if (!/\b(?:zipf|zipfian|skew(?:ed)?)\b/.test(lowerPrompt)) {
       return;
     }
     if (!Array.isArray(groups) || groups.length === 0) {
@@ -794,7 +794,7 @@ export function createPromptParser(deps = {}) {
             operationPatch.selection_distribution.trim()) ||
           distributionNameFromValue(explicitSelection) ||
           null;
-        if (explicitSelection && currentDistribution !== "zipf") {
+        if (currentDistribution !== "zipf") {
           return;
         }
 
