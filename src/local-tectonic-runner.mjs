@@ -517,8 +517,18 @@ async function queueRun({
   const runDir = path.join(RUNS_DIR, runId);
   const specPath = path.join(runDir, SPEC_FILENAME);
   const outputPath = path.join(runDir, OUTPUT_FILENAME);
+  const databasePath = resolvePerRunDatabasePath(
+    runDir,
+    database,
+    benchmarkOptions && typeof benchmarkOptions.databasePath === "string"
+      ? benchmarkOptions.databasePath
+      : "",
+  );
 
   await fs.mkdir(runDir, { recursive: true });
+  if (databasePath) {
+    await fs.mkdir(databasePath, { recursive: true });
+  }
   await fs.writeFile(specPath, specText, "utf8");
 
   const run = {
@@ -537,10 +547,7 @@ async function queueRun({
     latest_output_path: LATEST_OUTPUT_PATH,
     timeout_seconds: timeoutSeconds,
     database,
-    database_path:
-      benchmarkOptions && typeof benchmarkOptions.databasePath === "string"
-        ? benchmarkOptions.databasePath
-        : "",
+    database_path: databasePath,
     config:
       benchmarkOptions && typeof benchmarkOptions.config === "string"
         ? benchmarkOptions.config
@@ -1290,6 +1297,18 @@ function databaseKeyForEnv(database) {
     .replace(/^_+|_+$/g, "");
 }
 
+function resolvePerRunDatabasePath(runDir, database, configuredPath) {
+  const explicitPath = normalizeOptionalString(configuredPath);
+  if (explicitPath) {
+    return explicitPath;
+  }
+  const normalizedDatabase = normalizeDatabaseName(database).toLowerCase();
+  if (normalizedDatabase === "rocksdb") {
+    return path.join(runDir, "db", normalizedDatabase);
+  }
+  return "";
+}
+
 function readDatabaseOptionMap(mapValue, database) {
   if (!mapValue || typeof mapValue !== "object" || Array.isArray(mapValue)) {
     return "";
@@ -1370,5 +1389,6 @@ export const __test = {
   buildTectonicBenchmarkArgs,
   parseBenchmarkStats,
   parseStatsSectionHeader,
+  resolvePerRunDatabasePath,
   resolveDatabaseBenchmarkOptions,
 };

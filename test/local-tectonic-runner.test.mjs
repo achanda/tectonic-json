@@ -6,6 +6,7 @@ import { __test } from "../src/local-tectonic-runner.mjs";
 const {
   buildTectonicBenchmarkArgs,
   parseBenchmarkStats,
+  resolvePerRunDatabasePath,
   resolveDatabaseBenchmarkOptions,
 } = __test;
 
@@ -76,6 +77,21 @@ test("runner resolves benchmark options with cassandra path defaults", () => {
     databasePath: "",
     config: "",
   });
+});
+
+test("runner assigns a per-run rocksdb data path when none is configured", () => {
+  assert.equal(
+    resolvePerRunDatabasePath("/tmp/run-123", "rocksdb", ""),
+    "/tmp/run-123/db/rocksdb",
+  );
+
+  assert.equal(
+    resolvePerRunDatabasePath("/tmp/run-123", "rocksdb", "/custom/rocks"),
+    "/custom/rocks",
+  );
+
+  assert.equal(resolvePerRunDatabasePath("/tmp/run-123", "cassandra", ""), "");
+  assert.equal(resolvePerRunDatabasePath("/tmp/run-123", "printdb", ""), "");
 });
 
 test("runner parses benchmark output into overall, phase, and operation stats", () => {
